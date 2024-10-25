@@ -166,6 +166,13 @@ public class Main {
             FibuBelegposition firstPosition = new FibuBelegposition();
             firstPosition.setBuchungsschluessel("210");
             firstPosition.setKontonummer(firstRecord.get("Konto"));
+
+            if ("AT".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))) {
+                firstPosition.setKontonummer(mapKononummer(firstRecord.get("Konto")));
+            } else if ("DE".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))) {
+                firstPosition.setKontonummer(firstRecord.get("Konto"));
+            }
+
             firstPosition.setBetrag(firstRecord.get("Umsatz (ohne Soll/Haben-Kz)".replace(',', '.')));
 
             // Set Opinfos for the first position
@@ -180,6 +187,9 @@ public class Main {
             // Summiere Werte aus den folgenden Belegpositionen und integriere in die Schleife
             for (int i = 0; i < records.size(); i++) {
                 CSVRecord record = records.get(i);
+                if("8120".equals(record.get("Gegenkonto (ohne BU-Schlüssel)"))){
+                    continue;
+                }
                 String SoderH = record.get("Soll/Haben-Kennzeichen");
                 double betrag = Double.parseDouble(record.get("Basis-Umsatz").replace(',', '.'));
                 if ("S".equals(SoderH)) {
@@ -196,12 +206,14 @@ public class Main {
                 if ("AT".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
                     position.setSteuerschluessel(mapSteuersatz(record.get("EU-Steuersatz (Bestimmung)")));
                 } else if ("DE".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
-                    position.setSteuerschluessel(record.get("BU-Schlüssel"));
+                    position.setSteuerschluessel(mapSteuersatz(record.get("BU-Schlüssel")));
                 }
 
                 positionList.add(position);
 
             }
+            aggregatedAmount = Math.round(aggregatedAmount * 100.0) / 100.0;
+            //aggregatedAmount = Double.parseDouble(String.format("%.2f", aggregatedAmount).replace(',', '.')); hier kam es aber vor, dass -0.0 raus kam
             firstPosition.setBetrag(String.valueOf(aggregatedAmount));
             opAngaben.setOpBetrag(String.valueOf(aggregatedAmount));
             opinfos.setOpAngaben(opAngaben);
@@ -214,18 +226,36 @@ public class Main {
         }
 
         private String mapSteuersatz(String steuersatz) {
-            Map<String, String> steuersatzMapping = new HashMap<>();
-            steuersatzMapping.put("10", "meg10");
-            steuersatzMapping.put("20", "meg20");
-            steuersatzMapping.put("3", "50");
-            steuersatzMapping.put("2", "22");
-            steuersatzMapping.put("173", "mnull");
-            return steuersatzMapping.getOrDefault(steuersatz, steuersatz);
+            switch (steuersatz) {
+                case "20,00":
+                    return "meg20";
+                case "10,00":
+                    return "meg10";
+                case "3":
+                    return "50";
+                case "2":
+                    return "22";
+                case "173":
+                    return "mnull";
+                default:
+                    return steuersatz;
+            }
+        }
+
+        private String mapKononummer(String kontonummer) {
+            switch (kontonummer) {
+                case "200001":
+                    return "20013";
+                case "20002":
+                    return "20014";
+                default:
+                    return kontonummer;
+            }
         }
 
         private String formatLeistungsdatum(String leistungsdatum) {
-            if (leistungsdatum.length() == 4) {
-                return leistungsdatum.substring(0, 2) + "." + leistungsdatum.substring(2) + "." + belegJahr;
+            if (leistungsdatum.length() == 8) {
+                return leistungsdatum.substring(0, 2) + "." + leistungsdatum.substring(2,4) + "." + leistungsdatum.substring(4);
             }
             return leistungsdatum;
         }
@@ -236,7 +266,7 @@ public class Main {
             marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
 
             String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-            String fileName = "export_" + timestamp + ".xml";
+            String fileName = "export_erloese_" + timestamp + ".xml";
             Path exportFilePath = Paths.get(exportPath, fileName);
 
             try (FileOutputStream fos = new FileOutputStream(exportFilePath.toFile())) {
