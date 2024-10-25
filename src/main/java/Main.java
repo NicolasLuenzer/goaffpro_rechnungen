@@ -61,8 +61,9 @@ public class Main {
 
         private void removeFirstLine(Path csvFilePath) throws IOException {
             List<String> lines = Files.readAllLines(csvFilePath, Charset.forName("windows-1252"));
-            if (!lines.isEmpty() && lines.get(0).startsWith("EXTF")) {
+            if (!lines.isEmpty() && lines.get(0).startsWith("\"EXTF")) {
                 lines.remove(0); // Entferne die erste Zeile, wenn sie mit "EXTF" anfängt
+                Files.write(csvFilePath, lines, Charset.forName("windows-1252"), StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING); // Entferne die erste Zeile, wenn sie mit "EXTF" anfängt
                 Files.write(csvFilePath, lines, Charset.forName("windows-1252"), StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
             }
         }
@@ -96,7 +97,7 @@ public class Main {
 
         private void extractTransformLoad(Path csvFilePath) {
             try (BufferedReader bufferedReader = Files.newBufferedReader(csvFilePath, Charset.forName("windows-1252"))) {
-                Iterable<CSVRecord> records = CSVFormat.DEFAULT.withDelimiter(';').withSkipHeaderRecord(true).withFirstRecordAsHeader().parse(bufferedReader);
+                Iterable<CSVRecord> records = CSVFormat.DEFAULT.withDelimiter(';').withQuote('"').withSkipHeaderRecord(true).withFirstRecordAsHeader().parse(bufferedReader);
                 Map<String, List<CSVRecord>> groupedRecords = new HashMap<>();
                 // Transform each group to FibuBelege and add to a list
                 FibuBelege fibuBelege = new FibuBelege();
@@ -149,11 +150,13 @@ public class Main {
             belegkopf.setBelegdatum(leistungsdatum);
 
             belegkopf.setBruttoErfassung("j");
-            belegkopf.setBuchungstext(firstRecord.get("Buchungstext").replaceAll("AA-(\\d+)", "#$1"));
+            belegkopf.setBuchungstext(firstRecord.get("Buchungstext"));
+
             belegkopf.setBucherKz("ACCOUNTONE");
             belegkopf.setBelegwaehrungskurs("1");
             belegkopf.setBelegwaehrung("EUR");
-            belegkopf.setReferenznr(firstRecord.get("Belegfeld 1"));
+            String belegFeld1 = firstRecord.get("Belegfeld 1").replaceAll("AA-(\\d+)", "#$1");
+            belegkopf.setReferenznr(belegFeld1);
             fibuBeleg.setBelegkopf(belegkopf);
 
             FibuBelegpositionen fibuBelegpositionen = new FibuBelegpositionen();
@@ -168,9 +171,9 @@ public class Main {
             // Set Opinfos for the first position
             FibuBelegposition.Opinfos opinfos = new FibuBelegposition.Opinfos();
             FibuBelegposition.Opinfos.OpAngaben opAngaben = new FibuBelegposition.Opinfos.OpAngaben();
-            opAngaben.setOpNr(firstRecord.get("Belegfeld 1"));
-            opAngaben.setOpText(firstRecord.get("Buchungstext").replaceAll("AA-(\\d+)", "#$1"));
-            opAngaben.setVerwendungszweck(firstRecord.get("Belegfeld 1"));
+            opAngaben.setOpNr(belegFeld1);
+            opAngaben.setOpText(firstRecord.get("Buchungstext"));
+            opAngaben.setVerwendungszweck(belegFeld1);
 
             double aggregatedAmount = 0.0;
 
@@ -189,7 +192,13 @@ public class Main {
                 position.setKontonummer(record.get("Gegenkonto (ohne BU-Schlüssel)"));
                 position.setBetrag(record.get("Basis-Umsatz").replace(',', '.'));
                 position.setPosLeistungsdatum(leistungsdatum);
-                position.setSteuerschluessel(mapSteuersatz(record.get("EU-Steuersatz")));
+
+                if ("AT".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
+                    position.setSteuerschluessel(mapSteuersatz(record.get("EU-Steuersatz (Bestimmung)")));
+                } else if ("DE".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
+                    position.setSteuerschluessel(record.get("BU-Schlüssel"));
+                }
+
                 positionList.add(position);
 
             }
@@ -206,8 +215,11 @@ public class Main {
 
         private String mapSteuersatz(String steuersatz) {
             Map<String, String> steuersatzMapping = new HashMap<>();
-            steuersatzMapping.put("20", "meg20");
             steuersatzMapping.put("10", "meg10");
+            steuersatzMapping.put("20", "meg20");
+            steuersatzMapping.put("3", "50");
+            steuersatzMapping.put("2", "22");
+            steuersatzMapping.put("173", "mnull");
             return steuersatzMapping.getOrDefault(steuersatz, steuersatz);
         }
 
