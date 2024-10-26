@@ -79,6 +79,7 @@
                           <xs:element name="buchungsschluessel" type="xs:string"/>
                           <xs:element name="kontonummer" type="xs:string"/>
                           <xs:element name="betrag" type="xs:string"/>
+                          <xs:element name="posLeistungsdatum" type="xs:string" minOccurs="0"/>
                           <xs:element name="Opinfos" minOccurs="0">
                             <xs:complexType>
                               <xs:sequence>
@@ -95,7 +96,7 @@
                               </xs:sequence>
                             </xs:complexType>
                           </xs:element>
-                          <xs:element name="posLeistungsdatum" type="xs:string" minOccurs="0"/>
+
                           <xs:element name="steuerschluessel" type="xs:string" minOccurs="0"/>
                         </xs:sequence>
                       </xs:complexType>

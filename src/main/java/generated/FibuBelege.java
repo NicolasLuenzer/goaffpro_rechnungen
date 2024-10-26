@@ -2,7 +2,7 @@
 // Diese Datei wurde mit der JavaTM Architecture for XML Binding(JAXB) Reference Implementation, v2.3.2 generiert 
 // Siehe <a href="https://javaee.github.io/jaxb-v2/">https://javaee.github.io/jaxb-v2/</a> 
 // Änderungen an dieser Datei gehen bei einer Neukompilierung des Quellschemas verloren. 
-// Generiert: 2024.10.24 um 06:38:05 PM CEST 
+// Generiert: 2024.10.26 um 05:10:38 PM CEST 
 //
 
 
@@ -101,6 +101,7 @@ import javax.xml.bind.annotation.XmlType;
  *                                       &lt;element name="buchungsschluessel" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
  *                                       &lt;element name="kontonummer" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
  *                                       &lt;element name="betrag" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+ *                                       &lt;element name="posLeistungsdatum" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
  *                                       &lt;element name="Opinfos" minOccurs="0"&gt;
  *                                         &lt;complexType&gt;
  *                                           &lt;complexContent&gt;
@@ -125,7 +126,6 @@ import javax.xml.bind.annotation.XmlType;
  *                                           &lt;/complexContent&gt;
  *                                         &lt;/complexType&gt;
  *                                       &lt;/element&gt;
- *                                       &lt;element name="posLeistungsdatum" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
  *                                       &lt;element name="steuerschluessel" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
  *                                     &lt;/sequence&gt;
  *                                   &lt;/restriction&gt;
@@ -289,6 +289,7 @@ public class FibuBelege {
      *                             &lt;element name="buchungsschluessel" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
      *                             &lt;element name="kontonummer" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
      *                             &lt;element name="betrag" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+     *                             &lt;element name="posLeistungsdatum" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
      *                             &lt;element name="Opinfos" minOccurs="0"&gt;
      *                               &lt;complexType&gt;
      *                                 &lt;complexContent&gt;
@@ -313,7 +314,6 @@ public class FibuBelege {
      *                                 &lt;/complexContent&gt;
      *                               &lt;/complexType&gt;
      *                             &lt;/element&gt;
-     *                             &lt;element name="posLeistungsdatum" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
      *                             &lt;element name="steuerschluessel" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
      *                           &lt;/sequence&gt;
      *                         &lt;/restriction&gt;
@@ -721,6 +721,7 @@ public class FibuBelege {
          *                   &lt;element name="buchungsschluessel" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
          *                   &lt;element name="kontonummer" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
          *                   &lt;element name="betrag" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+         *                   &lt;element name="posLeistungsdatum" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
          *                   &lt;element name="Opinfos" minOccurs="0"&gt;
          *                     &lt;complexType&gt;
          *                       &lt;complexContent&gt;
@@ -745,7 +746,6 @@ public class FibuBelege {
          *                       &lt;/complexContent&gt;
          *                     &lt;/complexType&gt;
          *                   &lt;/element&gt;
-         *                   &lt;element name="posLeistungsdatum" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
          *                   &lt;element name="steuerschluessel" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
          *                 &lt;/sequence&gt;
          *               &lt;/restriction&gt;
@@ -812,6 +812,7 @@ public class FibuBelege {
              *         &lt;element name="buchungsschluessel" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
              *         &lt;element name="kontonummer" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
              *         &lt;element name="betrag" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+             *         &lt;element name="posLeistungsdatum" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
              *         &lt;element name="Opinfos" minOccurs="0"&gt;
              *           &lt;complexType&gt;
              *             &lt;complexContent&gt;
@@ -836,7 +837,6 @@ public class FibuBelege {
              *             &lt;/complexContent&gt;
              *           &lt;/complexType&gt;
              *         &lt;/element&gt;
-             *         &lt;element name="posLeistungsdatum" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
              *         &lt;element name="steuerschluessel" type="{http://www.w3.org/2001/XMLSchema}string" minOccurs="0"/&gt;
              *       &lt;/sequence&gt;
              *     &lt;/restriction&gt;
@@ -851,8 +851,8 @@ public class FibuBelege {
                 "buchungsschluessel",
                 "kontonummer",
                 "betrag",
-                "opinfos",
                 "posLeistungsdatum",
+                "opinfos",
                 "steuerschluessel"
             })
             public static class FibuBelegposition {
@@ -863,9 +863,9 @@ public class FibuBelege {
                 protected String kontonummer;
                 @XmlElement(required = true)
                 protected String betrag;
+                protected String posLeistungsdatum;
                 @XmlElement(name = "Opinfos")
                 protected FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos opinfos;
-                protected String posLeistungsdatum;
                 protected String steuerschluessel;
 
                 /**
@@ -941,30 +941,6 @@ public class FibuBelege {
                 }
 
                 /**
-                 * Ruft den Wert der opinfos-Eigenschaft ab.
-                 * 
-                 * @return
-                 *     possible object is
-                 *     {@link FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos }
-                 *     
-                 */
-                public FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos getOpinfos() {
-                    return opinfos;
-                }
-
-                /**
-                 * Legt den Wert der opinfos-Eigenschaft fest.
-                 * 
-                 * @param value
-                 *     allowed object is
-                 *     {@link FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos }
-                 *     
-                 */
-                public void setOpinfos(FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos value) {
-                    this.opinfos = value;
-                }
-
-                /**
                  * Ruft den Wert der posLeistungsdatum-Eigenschaft ab.
                  * 
                  * @return
@@ -986,6 +962,30 @@ public class FibuBelege {
                  */
                 public void setPosLeistungsdatum(String value) {
                     this.posLeistungsdatum = value;
+                }
+
+                /**
+                 * Ruft den Wert der opinfos-Eigenschaft ab.
+                 * 
+                 * @return
+                 *     possible object is
+                 *     {@link FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos }
+                 *     
+                 */
+                public FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos getOpinfos() {
+                    return opinfos;
+                }
+
+                /**
+                 * Legt den Wert der opinfos-Eigenschaft fest.
+                 * 
+                 * @param value
+                 *     allowed object is
+                 *     {@link FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos }
+                 *     
+                 */
+                public void setOpinfos(FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos value) {
+                    this.opinfos = value;
                 }
 
                 /**

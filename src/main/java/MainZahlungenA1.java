@@ -127,10 +127,9 @@ public class MainZahlungenA1 {
             FibuBeleg fibuBeleg = new FibuBeleg();
             Belegkopf belegkopf = new Belegkopf();
             String SoderH = record.get("Soll/Haben-Kennzeichen");
-            String belegart = record.get("Umsatz (ohne Soll/Haben-Kz)");
-            belegkopf.setBelegart("H".equals(belegart) ? "za" : "S".equals(belegart) ? "ze" : null);
+            belegkopf.setBelegart("H".equals(SoderH) ? "za" : "S".equals(SoderH) ? "ze" : null);
             belegkopf.setBelegnummer("AUTO");
-            String leistungsdatum = formatLeistungsdatum(record.get("Leistungsdatum"));
+            String leistungsdatum = formatLeistungsdatum(record.get("Belegdatum"));
             belegkopf.setBelegdatum(leistungsdatum);
             belegkopf.setBruttoErfassung("j");
             belegkopf.setBuchungstext(record.get("Buchungstext"));
@@ -247,7 +246,10 @@ public class MainZahlungenA1 {
         private String formatLeistungsdatum(String leistungsdatum) {
             if (leistungsdatum.length() == 8) {
                 return leistungsdatum.substring(0, 2) + "." + leistungsdatum.substring(2, 4) + "." + leistungsdatum.substring(4);
+            } else if (leistungsdatum.length() == 4) {
+                return leistungsdatum.substring(0, 2) + "." + leistungsdatum.substring(2, 4) + "." + belegJahr;
             }
+
             return leistungsdatum;
         }
 
