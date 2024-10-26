@@ -15,8 +15,8 @@ import java.util.*;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVRecord;
 
-public class Main {
-    private static String importBelegePath;
+public class MainZahlungenA1 {
+
     private static String importZahlungenPath;
     private static String processedPath;
     private static String exportPath;
@@ -46,7 +46,6 @@ public class Main {
             Properties prop = new Properties();
             prop.load(input);
 
-            importBelegePath = prop.getProperty("importBelegePath");
             importZahlungenPath = prop.getProperty("importZahlungenPath");
             processedPath = prop.getProperty("processedPath");
             exportPath = prop.getProperty("exportPath");
@@ -71,7 +70,7 @@ public class Main {
         @Override
         public void run() {
             try {
-                DirectoryStream<Path> directoryStream = Files.newDirectoryStream(Paths.get(importBelegePath));
+                DirectoryStream<Path> directoryStream = Files.newDirectoryStream(Paths.get(importZahlungenPath));
                 for (Path filePath : directoryStream) {
                     if (Files.isRegularFile(filePath)) {
                         try {
@@ -98,22 +97,12 @@ public class Main {
         private void extractTransformLoad(Path csvFilePath) {
             try (BufferedReader bufferedReader = Files.newBufferedReader(csvFilePath, Charset.forName("windows-1252"))) {
                 Iterable<CSVRecord> records = CSVFormat.DEFAULT.withDelimiter(';').withQuote('"').withSkipHeaderRecord(true).withFirstRecordAsHeader().parse(bufferedReader);
-                Map<String, List<CSVRecord>> groupedRecords = new HashMap<>();
-                // Transform each group to FibuBelege and add to a list
                 FibuBelege fibuBelege = new FibuBelege();
                 fibuBelege.setFirmaNr("20");
 
-                // Group records by "Belegfeld 1" and filter out records with "CH" in "EU-Land u. UStID (Bestimmung)"
+                // Transform each record to FibuBelege and save as XML
                 for (CSVRecord record : records) {
-                    if (!"CH".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
-                        String belegfeld1 = record.get("Belegfeld 1");
-                        groupedRecords.computeIfAbsent(belegfeld1, k -> new ArrayList<>()).add(record);
-                    }
-                }
-
-                // Transform each group to FibuBelege and save as XML
-                for (Map.Entry<String, List<CSVRecord>> entry : groupedRecords.entrySet()) {
-                    FibuBeleg fibuBeleg = transformToFibuBeleg(entry.getValue());
+                    FibuBeleg fibuBeleg = transformToFibuBeleg(record);
                     if (fibuBeleg != null) {
                         fibuBelege.getFibuBeleg().add(fibuBeleg);
                     }
@@ -134,29 +123,30 @@ public class Main {
             }
         }
 
-        private FibuBeleg transformToFibuBeleg(List<CSVRecord> records) {
-            if (records.isEmpty()) {
-                return null;
-            }
-
-            CSVRecord firstRecord = records.get(0);
+        private FibuBeleg transformToFibuBeleg(CSVRecord record) {
             FibuBeleg fibuBeleg = new FibuBeleg();
             Belegkopf belegkopf = new Belegkopf();
-            belegkopf.setBelegart("ra");
+            String SoderH = record.get("Soll/Haben-Kennzeichen");
+            String belegart = record.get("Umsatz (ohne Soll/Haben-Kz)");
+            belegkopf.setBelegart("H".equals(belegart) ? "za" : "S".equals(belegart) ? "ze" : null);
             belegkopf.setBelegnummer("AUTO");
-
-            // Set Leistungsdatum using a separate method to format it
-            String leistungsdatum = formatLeistungsdatum(firstRecord.get("Leistungsdatum"));
+            String leistungsdatum = formatLeistungsdatum(record.get("Leistungsdatum"));
             belegkopf.setBelegdatum(leistungsdatum);
-
             belegkopf.setBruttoErfassung("j");
-            belegkopf.setBuchungstext(firstRecord.get("Buchungstext"));
-
+            belegkopf.setBuchungstext(record.get("Buchungstext"));
             belegkopf.setBucherKz("ACCOUNTONE");
             belegkopf.setBelegwaehrungskurs("1");
             belegkopf.setBelegwaehrung("EUR");
-            String belegFeld1 = firstRecord.get("Belegfeld 1").replaceAll("AA-(\\d+)", "#$1");
-            belegkopf.setReferenznr(belegFeld1);
+            String belegFeld1 = record.get("Belegfeld 1").replaceAll("AA-(\\d+)", "#$1");
+
+            boolean isGebuehren = belegFeld1.isEmpty();
+            boolean isTransit = "Transit".equals(belegFeld1);
+            boolean isZahlung = !isGebuehren && !isTransit;
+            boolean isZA = "za".equals(belegkopf.getBelegart());
+            boolean isZE = "ze".equals(belegkopf.getBelegart());
+            boolean isCH = "173".equals(record.get("BU-Schlüssel")) && isZahlung;
+
+            belegkopf.setReferenznr(isGebuehren ? "Gebühr" : isTransit ? "Transit" : belegFeld1);
             fibuBeleg.setBelegkopf(belegkopf);
 
             FibuBelegpositionen fibuBelegpositionen = new FibuBelegpositionen();
@@ -164,65 +154,66 @@ public class Main {
 
             // Add first position based on the first record
             FibuBelegposition firstPosition = new FibuBelegposition();
-            firstPosition.setBuchungsschluessel("210");
-            firstPosition.setKontonummer(firstRecord.get("Konto"));
 
-            if ("AT".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))) {
-                firstPosition.setKontonummer(mapKononummer(firstRecord.get("Konto")));
-            } else if ("DE".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))) {
-                firstPosition.setKontonummer(firstRecord.get("Konto"));
+
+
+            firstPosition.setBuchungsschluessel(isZE ? "110" : isZA ? "150" : null);
+            firstPosition.setKontonummer(record.get("Konto"));
+            double betrag = Double.parseDouble(record.get("Basis-Umsatz").replace(',', '.'));
+            firstPosition.setBetrag(String.valueOf(betrag));
+            positionList.add(firstPosition);
+
+            FibuBelegposition secondPosition = new FibuBelegposition();
+
+            // wenn transit oder gebühr dann 110
+            // sonst (bei Zahlungen) wenn za dann 230 oder wenn ze dann 260
+            String buchungsschluessel = isTransit || isGebuehren ? "110" : isZA ? "230" : isZE ? "260" : null;
+            secondPosition.setBuchungsschluessel(buchungsschluessel);
+
+            // für die Schweizer
+            // wenn zahlung und bu-schlüssel = 173  und gegenkonto 20002 oder 20001 dann setzte 50001 sonst gegenkonto (ohne BU-Schlüssel)
+            String gegenkonto = record.get("Gegenkonto (ohne BU-Schlüssel)");
+            if (isCH && ("20002".equals(gegenkonto) || "20001".equals(gegenkonto))) {
+                secondPosition.setKontonummer("50001");
+            } else {
+                secondPosition.setKontonummer(gegenkonto);
             }
+            secondPosition.setBetrag(record.get("Basis-Umsatz").replace(',', '.'));
+            secondPosition.setPosLeistungsdatum(leistungsdatum);
+            if(isGebuehren) secondPosition.setSteuerschluessel("v13b_Inl");
+            positionList.add(secondPosition);
 
-            firstPosition.setBetrag(firstRecord.get("Umsatz (ohne Soll/Haben-Kz)".replace(',', '.')));
-
-            // Set Opinfos for the first position
-            FibuBelegposition.Opinfos opinfos = new FibuBelegposition.Opinfos();
-            FibuBelegposition.Opinfos.OpAngaben opAngaben = new FibuBelegposition.Opinfos.OpAngaben();
-            opAngaben.setOpNr(belegFeld1);
-            opAngaben.setOpText(firstRecord.get("Buchungstext"));
-            opAngaben.setVerwendungszweck(belegFeld1);
-
-            double aggregatedAmount = 0.0;
-
-            // Summiere Werte aus den folgenden Belegpositionen und integriere in die Schleife
-            for (int i = 0; i < records.size(); i++) {
-                CSVRecord record = records.get(i);
-                if("8120".equals(record.get("Gegenkonto (ohne BU-Schlüssel)"))){
-                    continue;
+            if(isZahlung) {
+                // Set Opinfos for the second position
+                FibuBelegposition.Opinfos opinfos = new FibuBelegposition.Opinfos();
+                FibuBelegposition.Opinfos.OpAngaben opAngaben = new FibuBelegposition.Opinfos.OpAngaben();
+                opAngaben.setOpNr(belegFeld1);
+                if(isCH)
+                {
+                    opAngaben.setOpNr(leistungsdatum.replaceAll("(\\d{2})\\.(\\d{2})\\.\\d{4}", "$2/$1"));
                 }
-                String SoderH = record.get("Soll/Haben-Kennzeichen");
-                double betrag = Double.parseDouble(record.get("Basis-Umsatz").replace(',', '.'));
-                if ("S".equals(SoderH)) {
-                    aggregatedAmount += betrag;
-                } else if ("H".equals(SoderH)) {
-                    aggregatedAmount -= betrag;
-                }
-                FibuBelegposition position = new FibuBelegposition();
-                position.setBuchungsschluessel("S".equals(SoderH) ? "150" : "110");
-                position.setKontonummer(record.get("Gegenkonto (ohne BU-Schlüssel)"));
-                position.setBetrag(record.get("Basis-Umsatz").replace(',', '.'));
-                position.setPosLeistungsdatum(leistungsdatum);
-
-                if ("AT".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
-                    position.setSteuerschluessel(mapSteuersatz(record.get("EU-Steuersatz (Bestimmung)")));
-                } else if ("DE".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
-                    position.setSteuerschluessel(mapSteuersatz(record.get("BU-Schlüssel")));
-                }
-
-                positionList.add(position);
-
+                opAngaben.setOpText(record.get("Buchungstext"));
+                opAngaben.setVerwendungszweck(belegFeld1);
+                opAngaben.setOpBetrag(secondPosition.getBetrag());
+                opinfos.setOpAngaben(opAngaben);
+                secondPosition.setOpinfos(opinfos);
             }
-            aggregatedAmount = Math.round(aggregatedAmount * 100.0) / 100.0;
-            //aggregatedAmount = Double.parseDouble(String.format("%.2f", aggregatedAmount).replace(',', '.')); hier kam es aber vor, dass -0.0 raus kam
-            firstPosition.setBetrag(String.valueOf(aggregatedAmount));
-            opAngaben.setOpBetrag(String.valueOf(aggregatedAmount));
-            opinfos.setOpAngaben(opAngaben);
-            firstPosition.setOpinfos(opinfos);
-            positionList.add(0, firstPosition);
 
             fibuBeleg.setFibuBelegpositionen(fibuBelegpositionen);
 
             return fibuBeleg;
+        }
+
+        private Boolean isPersonenkonto(String kontonummer) {
+            Map<String, Boolean> mappingTabelle = new HashMap<>();
+            mappingTabelle.put("20001", true);
+            mappingTabelle.put("20002", true);
+            mappingTabelle.put("20004", true);
+            mappingTabelle.put("2151", false);
+            mappingTabelle.put("1360", false);
+            mappingTabelle.put("4970", false);
+
+            return mappingTabelle.getOrDefault(kontonummer, false);
         }
 
         private String mapSteuersatz(String steuersatz) {
@@ -244,7 +235,7 @@ public class Main {
 
         private String mapKononummer(String kontonummer) {
             switch (kontonummer) {
-                case "200001":
+                case "20001":
                     return "20013";
                 case "20002":
                     return "20014";
@@ -255,7 +246,7 @@ public class Main {
 
         private String formatLeistungsdatum(String leistungsdatum) {
             if (leistungsdatum.length() == 8) {
-                return leistungsdatum.substring(0, 2) + "." + leistungsdatum.substring(2,4) + "." + leistungsdatum.substring(4);
+                return leistungsdatum.substring(0, 2) + "." + leistungsdatum.substring(2, 4) + "." + leistungsdatum.substring(4);
             }
             return leistungsdatum;
         }
@@ -266,7 +257,7 @@ public class Main {
             marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
 
             String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-            String fileName = "export_erloese_" + timestamp + ".xml";
+            String fileName = "export_zahlungen_" + timestamp + ".xml";
             Path exportFilePath = Paths.get(exportPath, fileName);
 
             try (FileOutputStream fos = new FileOutputStream(exportFilePath.toFile())) {
