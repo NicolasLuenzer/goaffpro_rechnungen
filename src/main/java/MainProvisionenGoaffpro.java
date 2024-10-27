@@ -1,38 +1,30 @@
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
-import javax.xml.parsers.ParserConfigurationException;
-import javax.xml.transform.OutputKeys;
-import javax.xml.transform.Transformer;
-import javax.xml.transform.TransformerException;
-import javax.xml.transform.TransformerFactory;
-import javax.xml.transform.dom.DOMSource;
-import javax.xml.transform.stream.StreamResult;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import generated.FibuBelege;
 
-import org.w3c.dom.Document;
-import org.w3c.dom.Element;
+import generated.FibuBelege.FibuBeleg;
+import generated.FibuBelege.FibuBeleg.Belegkopf;
 
-import java.io.File;
-import java.io.BufferedReader;
-import java.io.FileInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
+import generated.FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition;
+import javax.xml.bind.JAXBContext;
+import javax.xml.bind.JAXBException;
+import javax.xml.bind.Marshaller;
+import javax.xml.bind.annotation.*;
+import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
+import java.util.List;
 import java.util.Properties;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+
 
 public class MainProvisionenGoaffpro {
 
-    private static String API_URL = "https://api.goaffpro.com/v1/admin/affiliates?id=%s&fields=id,avatar,honorific,date_of_birth,gender,name,first_name,last_name,email,ref_code,company_name,ref_codes,coupon,coupons,phone,website,facebook,twitter,instagram,address_1,address_2,city,state,zip,country,phone,admin_note,extra_1,extra_2,extra_3,group_id,registration_ip,personal_message,payment_method,payment_details,commission,status,last_login,total_referral_earnings,total_network_earnings,total_amount_paid,total_amount_pending,total_other_earnings,number_of_orders,tax_identification_number,login_token,signup_page,comments,tags,approved_at,blocked_at,created_at,updated_at";
+    private static String API_URL = "https://api.goaffpro.com/v1/admin/payments?since_id=1454894&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,created_at";
 
     private static String API_KEY;
     private static String exportPath;
@@ -40,8 +32,7 @@ public class MainProvisionenGoaffpro {
     public static void main(String[] args) {
         loadConfig();
         try {
-            String affiliateId = "13637495";
-            String jsonResponse = makeApiRequest(String.format(API_URL, affiliateId));
+            String jsonResponse = makeApiRequest(API_URL);
             if (jsonResponse != null) {
                 generateXMLFromResponse(jsonResponse);
             }
@@ -84,224 +75,112 @@ public class MainProvisionenGoaffpro {
         }
     }
 
-    private static void generateXMLFromResponse(String jsonResponse) throws ParserConfigurationException, TransformerException, IOException {
+    private static void generateXMLFromResponse(String jsonResponse) throws JAXBException, IOException {
         ObjectMapper objectMapper = new ObjectMapper();
         JsonNode rootNode = objectMapper.readTree(jsonResponse);
-        JsonNode affiliateNode = rootNode.get("affiliates");
+        JsonNode paymentsNode = rootNode.get("payments");
 
-        if (affiliateNode != null && affiliateNode.size() > 0) {
-            DocumentBuilderFactory documentFactory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder documentBuilder = documentFactory.newDocumentBuilder();
-            Document document = documentBuilder.newDocument();
+        if (paymentsNode != null && paymentsNode.size() > 0) {
+            FibuBelege fibuBelege = new FibuBelege();
+            fibuBelege.setFirmaNr("20");
 
-            // Root element
-            Element root = document.createElement("EGeckoPersonenkonten");
-            root.setAttribute("objectgroupNr", "20");
-            root.setAttribute("datumFormat", "dd.MM.yyyy");
-            document.appendChild(root);
+            for (JsonNode payment : paymentsNode) {
+                FibuBeleg fibuBeleg = new FibuBeleg();
 
-            for (JsonNode affiliate : affiliateNode) {
-                // Personenkonto element
-                Element personenkonto = document.createElement("Personenkonto");
-                root.appendChild(personenkonto);
-
-                // Add child elements to Personenkonto
-                Element kontenart = document.createElement("kontenart");
-                kontenart.appendChild(document.createTextNode("K"));
-                personenkonto.appendChild(kontenart);
-
-                Element kontonummer = document.createElement("kontonummer");
-                kontonummer.appendChild(document.createTextNode(affiliate.get("id").asText()));
-                personenkonto.appendChild(kontonummer);
-
-                Element bezeichnung = document.createElement("bezeichnung");
-                bezeichnung.appendChild(document.createTextNode(affiliate.get("name").asText()));
-                personenkonto.appendChild(bezeichnung);
-
-                // Geschaeftspartner element
-                Element geschaeftspartner = document.createElement("Geschaeftspartner");
-                personenkonto.appendChild(geschaeftspartner);
-
-                Element nummer = document.createElement("nummer");
-                nummer.appendChild(document.createTextNode("AUTO"));
-                geschaeftspartner.appendChild(nummer);
-
-                Element kzJuristischePerson = document.createElement("kzJuristischePerson");
-                kzJuristischePerson.appendChild(document.createTextNode("n"));
-                geschaeftspartner.appendChild(kzJuristischePerson);
-
-                Element anzeigename = document.createElement("anzeigename");
-                anzeigename.appendChild(document.createTextNode(affiliate.get("name").asText() + " - " + affiliate.get("email").asText()));
-                geschaeftspartner.appendChild(anzeigename);
-
-                // Personendaten element
-                Element personendaten = document.createElement("Personendaten");
-                geschaeftspartner.appendChild(personendaten);
-
-                Element gueltigVon = document.createElement("gueltigVon");
-                gueltigVon.appendChild(document.createTextNode("01.01.1900"));
-                personendaten.appendChild(gueltigVon);
-
-                Element name1 = document.createElement("name1");
-                name1.appendChild(document.createTextNode(affiliate.get("first_name").asText()));
-                personendaten.appendChild(name1);
-
-                Element name2 = document.createElement("name2");
-                name2.appendChild(document.createTextNode(affiliate.get("last_name").asText()));
-                personendaten.appendChild(name2);
-
-                // Anschrift element
-                Element anschrift = document.createElement("Anschrift");
-                geschaeftspartner.appendChild(anschrift);
-
-                Element anschriftGueltigVon = document.createElement("gueltigVon");
-                anschriftGueltigVon.appendChild(document.createTextNode("01.01.1900"));
-                anschrift.appendChild(anschriftGueltigVon);
-
-                Element anschriftName1 = document.createElement("name1");
-                anschriftName1.appendChild(document.createTextNode(affiliate.get("first_name").asText()));
-                anschrift.appendChild(anschriftName1);
-
-                Element anschriftName2 = document.createElement("name2");
-                anschriftName2.appendChild(document.createTextNode(affiliate.get("last_name").asText()));
-                anschrift.appendChild(anschriftName2);
-
-                // Extract house number from address using regex
-                String address = affiliate.get("address_1").asText();
-                String hausnummerValue = "";
-                Pattern pattern = Pattern.compile("(\\d+\\s?[a-zA-Z]*)$");
-                Matcher matcher = pattern.matcher(address);
-                if (matcher.find()) {
-                    hausnummerValue = matcher.group(1);
-                    address = address.replace(hausnummerValue, "").trim();
+                // Belegkopf
+                Belegkopf belegkopf = new Belegkopf();
+                belegkopf.setBelegart("re");
+                belegkopf.setBelegnummer("AUTO");
+                String belegdatum = getValueAsString(payment, "created_at");
+                if (belegdatum != null) {
+                    try {
+                        Date date = new SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss").parse(belegdatum);
+                        belegdatum = new SimpleDateFormat("dd.MM.yyyy").format(date);
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
                 }
+                belegkopf.setBelegdatum(belegdatum);
+                belegkopf.setBruttoErfassung("j");
 
-                Element strasse = document.createElement("strasse");
-                strasse.appendChild(document.createTextNode(address));
-                anschrift.appendChild(strasse);
-
-                Element hausnummer = document.createElement("hausnummer");
-                hausnummer.appendChild(document.createTextNode(hausnummerValue));
-                anschrift.appendChild(hausnummer);
-
-                Element plz = document.createElement("plz");
-                plz.appendChild(document.createTextNode(affiliate.get("zip").asText()));
-                anschrift.appendChild(plz);
-
-                Element ort = document.createElement("ort");
-                ort.appendChild(document.createTextNode(affiliate.get("city").asText()));
-
-                Element landkennzeichen = document.createElement("landkennzeichen");
-                landkennzeichen.appendChild(document.createTextNode(affiliate.get("country").asText()));
-                anschrift.appendChild(landkennzeichen);
-
-                // TeleKommunikationen element
-                Element teleKommunikationen = document.createElement("TeleKommunikationen");
-                geschaeftspartner.appendChild(teleKommunikationen);
-
-                Element teleKommunikation = document.createElement("TeleKommunikation");
-                teleKommunikationen.appendChild(teleKommunikation);
-
-                Element qualifier = document.createElement("qualifier");
-                qualifier.appendChild(document.createTextNode("update"));
-                teleKommunikation.appendChild(qualifier);
-
-                Element art = document.createElement("art");
-                art.appendChild(document.createTextNode("geschäftlich"));
-                teleKommunikation.appendChild(art);
-
-                Element vorwahl = document.createElement("vorwahl");
-                teleKommunikation.appendChild(vorwahl);
-
-                Element rufnummer = document.createElement("rufnummer");
-                String phoneNumber = affiliate.get("phone").asText();
-                if (phoneNumber != null && !phoneNumber.isEmpty()) {
-                    rufnummer.appendChild(document.createTextNode(phoneNumber));
+                String affiliateId = getValueAsString(payment, "affiliate_id");
+                String affiliateName = "";
+                if (affiliateId != null) {
+                    try {
+                        String affiliateResponse = makeAffiliateNameRequest(affiliateId);
+                        if (affiliateResponse != null) {
+                            JsonNode affiliateNode = objectMapper.readTree(affiliateResponse).get("affiliates").get(0);
+                            affiliateName = getValueAsString(affiliateNode, "name");
+                        }
+                    } catch (Exception e) {
+                        e.printStackTrace();
+                    }
                 }
-                teleKommunikation.appendChild(rufnummer);
+                belegkopf.setBuchungstext(affiliateName);
 
-                // OnlineKommunikationen element
-                Element onlineKommunikationen = document.createElement("OnlineKommunikationen");
-                geschaeftspartner.appendChild(onlineKommunikationen);
+                belegkopf.setBucherKz("ACCOUNTONE");
+                belegkopf.setBelegwaehrungskurs("1");
+                belegkopf.setBelegwaehrung("EUR");
+                belegkopf.setReferenznr(getValueAsString(payment, "id"));
+                fibuBeleg.setBelegkopf(belegkopf);
 
-                Element onlineKommunikation = document.createElement("OnlineKommunikation");
-                onlineKommunikationen.appendChild(onlineKommunikation);
+                // FibuBelegposition
+                FibuBelegposition positionFirst = new FibuBelegposition();
+                positionFirst.setBuchungsschluessel("350");
+                positionFirst.setKontonummer(getValueAsString(payment, "affiliate_id"));
+                positionFirst.setBetrag(getValueAsString(payment, "amount"));
 
-                Element onlineQualifier = document.createElement("qualifier");
-                onlineQualifier.appendChild(document.createTextNode("update"));
-                onlineKommunikation.appendChild(onlineQualifier);
 
-                Element onlineArt = document.createElement("art");
-                onlineArt.appendChild(document.createTextNode("geschäftlich"));
-                onlineKommunikation.appendChild(onlineArt);
+                // Set Opinfos for the first position
+                FibuBelegposition.Opinfos opinfos = new FibuBelegposition.Opinfos();
+                FibuBelegposition.Opinfos.OpAngaben opAngaben = new FibuBelegposition.Opinfos.OpAngaben();
 
-                Element email = document.createElement("email");
-                email.appendChild(document.createTextNode(affiliate.get("email").asText()));
-                onlineKommunikation.appendChild(email);
+                opAngaben.setOpNr(getValueAsString(payment, "id"));
+                opAngaben.setOpText(affiliateName);
+                opAngaben.setVerwendungszweck(getValueAsString(payment, "id"));
+                opAngaben.setOpBetrag(getValueAsString(payment, "amount"));
+                opinfos.setOpAngaben(opAngaben);
+                positionFirst.setOpinfos(opinfos);
 
-                // Bankverbindungen element
-                Element bankverbindungen = document.createElement("Bankverbindungen");
-                geschaeftspartner.appendChild(bankverbindungen);
 
-                Element bankverbindung = document.createElement("Bankverbindung");
-                bankverbindungen.appendChild(bankverbindung);
+                // FibuBelegposition Second
+                FibuBelegposition positionSecond = new FibuBelegposition();
+                positionSecond.setBuchungsschluessel("110");
+                positionSecond.setKontonummer(getValueAsString(payment, "affiliate_id")); // hier gucken
+                positionSecond.setBetrag(getValueAsString(payment, "amount"));
+                positionSecond.setPosLeistungsdatum(belegdatum);
 
-                Element bankQualifier = document.createElement("qualifier");
-                bankQualifier.appendChild(document.createTextNode("update"));
-                bankverbindung.appendChild(bankQualifier);
+                FibuBeleg.FibuBelegpositionen fibuBelegpositionen = new FibuBeleg.FibuBelegpositionen();
+                List<FibuBelegposition> positionList = fibuBelegpositionen.getFibuBelegposition();
+                positionList.add(positionFirst);
+                positionList.add(positionSecond);
 
-                Element hauptbank = document.createElement("hauptbank");
-                hauptbank.appendChild(document.createTextNode("j"));
-                bankverbindung.appendChild(hauptbank);
-
-                Element iban = document.createElement("iban");
-                String accountNumber = affiliate.get("payment_details").get("account_number").asText();
-                if (accountNumber != null && !accountNumber.isEmpty()) {
-                    iban.appendChild(document.createTextNode(accountNumber));
-                }
-                bankverbindung.appendChild(iban);
-
-                Element kontobezeichnung = document.createElement("kontobezeichnung");
-                String accountName = affiliate.get("payment_details").get("account_name").asText();
-                if (accountName != null && !accountName.isEmpty()) {
-                    kontobezeichnung.appendChild(document.createTextNode(accountName));
-                }
-                bankverbindung.appendChild(kontobezeichnung);
-
-                // festkontoForderung element
-                Element festkontoForderung = document.createElement("festkontoForderung");
-                festkontoForderung.appendChild(document.createTextNode("1400"));
-                personenkonto.appendChild(festkontoForderung);
-
-                // rechnungskonditionNr element
-                Element rechnungskonditionNr = document.createElement("rechnungskonditionNr");
-                rechnungskonditionNr.appendChild(document.createTextNode("1012"));
-                personenkonto.appendChild(rechnungskonditionNr);
-
-                // zahlartNr element
-                Element zahlartNr = document.createElement("zahlartNr");
-                zahlartNr.appendChild(document.createTextNode("31"));
-                personenkonto.appendChild(zahlartNr);
-                anschrift.appendChild(ort);
-
+                fibuBeleg.setFibuBelegpositionen(fibuBelegpositionen);
+                fibuBelege.getFibuBeleg().add(fibuBeleg);
             }
 
-            // Write the content into an XML file
-            TransformerFactory transformerFactory = TransformerFactory.newInstance();
-            Transformer transformer = transformerFactory.newTransformer();
-            transformer.setOutputProperty(OutputKeys.INDENT, "yes");
+            // Write the content into an XML file using JAXB
+            JAXBContext jaxbContext = JAXBContext.newInstance(FibuBelege.class);
+            Marshaller marshaller = jaxbContext.createMarshaller();
+            marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, Boolean.TRUE);
 
             String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-            String fileName = "egecko_personenkonten_" + timestamp + ".xml";
+            String fileName = "fibu_belege_" + timestamp + ".xml";
             Path exportFilePath = Paths.get(exportPath, fileName);
 
             try (FileOutputStream fos = new FileOutputStream(exportFilePath.toFile())) {
-                DOMSource domSource = new DOMSource(document);
-                StreamResult streamResult = new StreamResult(fos);
-                transformer.transform(domSource, streamResult);
+                marshaller.marshal(fibuBelege, fos);
             }
 
             System.out.println("XML file generated and saved successfully: " + exportFilePath);
         }
+    }
+    private static String makeAffiliateNameRequest(String affiliateId) throws Exception {
+        String apiUrl = String.format("https://api.goaffpro.com/v1/admin/affiliates?id=%s&fields=name", affiliateId);
+        return makeApiRequest(apiUrl);
+    }
+    private static String getValueAsString(JsonNode node, String fieldName) {
+        JsonNode valueNode = node.get(fieldName);
+        return valueNode != null && !valueNode.isNull() ? valueNode.asText() : null;
     }
 }
