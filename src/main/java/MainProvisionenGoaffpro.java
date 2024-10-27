@@ -40,7 +40,6 @@ public class MainProvisionenGoaffpro {
     public static void main(String[] args) {
         loadConfig();
         try {
-            // String affiliateId = "15325677";   // Kempfle
             String affiliateId = "13637495";
             String jsonResponse = makeApiRequest(String.format(API_URL, affiliateId));
             if (jsonResponse != null) {
@@ -191,11 +190,100 @@ public class MainProvisionenGoaffpro {
 
                 Element ort = document.createElement("ort");
                 ort.appendChild(document.createTextNode(affiliate.get("city").asText()));
-                anschrift.appendChild(ort);
 
                 Element landkennzeichen = document.createElement("landkennzeichen");
                 landkennzeichen.appendChild(document.createTextNode(affiliate.get("country").asText()));
                 anschrift.appendChild(landkennzeichen);
+
+                // TeleKommunikationen element
+                Element teleKommunikationen = document.createElement("TeleKommunikationen");
+                geschaeftspartner.appendChild(teleKommunikationen);
+
+                Element teleKommunikation = document.createElement("TeleKommunikation");
+                teleKommunikationen.appendChild(teleKommunikation);
+
+                Element qualifier = document.createElement("qualifier");
+                qualifier.appendChild(document.createTextNode("update"));
+                teleKommunikation.appendChild(qualifier);
+
+                Element art = document.createElement("art");
+                art.appendChild(document.createTextNode("geschäftlich"));
+                teleKommunikation.appendChild(art);
+
+                Element vorwahl = document.createElement("vorwahl");
+                teleKommunikation.appendChild(vorwahl);
+
+                Element rufnummer = document.createElement("rufnummer");
+                String phoneNumber = affiliate.get("phone").asText();
+                if (phoneNumber != null && !phoneNumber.isEmpty()) {
+                    rufnummer.appendChild(document.createTextNode(phoneNumber));
+                }
+                teleKommunikation.appendChild(rufnummer);
+
+                // OnlineKommunikationen element
+                Element onlineKommunikationen = document.createElement("OnlineKommunikationen");
+                geschaeftspartner.appendChild(onlineKommunikationen);
+
+                Element onlineKommunikation = document.createElement("OnlineKommunikation");
+                onlineKommunikationen.appendChild(onlineKommunikation);
+
+                Element onlineQualifier = document.createElement("qualifier");
+                onlineQualifier.appendChild(document.createTextNode("update"));
+                onlineKommunikation.appendChild(onlineQualifier);
+
+                Element onlineArt = document.createElement("art");
+                onlineArt.appendChild(document.createTextNode("geschäftlich"));
+                onlineKommunikation.appendChild(onlineArt);
+
+                Element email = document.createElement("email");
+                email.appendChild(document.createTextNode(affiliate.get("email").asText()));
+                onlineKommunikation.appendChild(email);
+
+                // Bankverbindungen element
+                Element bankverbindungen = document.createElement("Bankverbindungen");
+                geschaeftspartner.appendChild(bankverbindungen);
+
+                Element bankverbindung = document.createElement("Bankverbindung");
+                bankverbindungen.appendChild(bankverbindung);
+
+                Element bankQualifier = document.createElement("qualifier");
+                bankQualifier.appendChild(document.createTextNode("update"));
+                bankverbindung.appendChild(bankQualifier);
+
+                Element hauptbank = document.createElement("hauptbank");
+                hauptbank.appendChild(document.createTextNode("j"));
+                bankverbindung.appendChild(hauptbank);
+
+                Element iban = document.createElement("iban");
+                String accountNumber = affiliate.get("payment_details").get("account_number").asText();
+                if (accountNumber != null && !accountNumber.isEmpty()) {
+                    iban.appendChild(document.createTextNode(accountNumber));
+                }
+                bankverbindung.appendChild(iban);
+
+                Element kontobezeichnung = document.createElement("kontobezeichnung");
+                String accountName = affiliate.get("payment_details").get("account_name").asText();
+                if (accountName != null && !accountName.isEmpty()) {
+                    kontobezeichnung.appendChild(document.createTextNode(accountName));
+                }
+                bankverbindung.appendChild(kontobezeichnung);
+
+                // festkontoForderung element
+                Element festkontoForderung = document.createElement("festkontoForderung");
+                festkontoForderung.appendChild(document.createTextNode("1400"));
+                personenkonto.appendChild(festkontoForderung);
+
+                // rechnungskonditionNr element
+                Element rechnungskonditionNr = document.createElement("rechnungskonditionNr");
+                rechnungskonditionNr.appendChild(document.createTextNode("1012"));
+                personenkonto.appendChild(rechnungskonditionNr);
+
+                // zahlartNr element
+                Element zahlartNr = document.createElement("zahlartNr");
+                zahlartNr.appendChild(document.createTextNode("31"));
+                personenkonto.appendChild(zahlartNr);
+                anschrift.appendChild(ort);
+
             }
 
             // Write the content into an XML file
