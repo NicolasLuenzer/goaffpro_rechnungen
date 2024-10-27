@@ -18,7 +18,8 @@ import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 import java.util.Properties;
-
+import java.util.Timer;
+import java.util.TimerTask;
 
 public class MainProvisionenGoaffpro {
 
@@ -29,16 +30,23 @@ public class MainProvisionenGoaffpro {
     private static String lastImportedComission;
 
     public static void main(String[] args) {
-        loadConfig();
-        API_URL = "https://api.goaffpro.com/v1/admin/payments?since_id=" + lastImportedComission + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,created_at";
-        try {
-            String jsonResponse = makeApiRequest(API_URL);
-            if (jsonResponse != null) {
-                generateXMLFromResponse(jsonResponse);
+        Timer timer = new Timer();
+        timer.schedule(new TimerTask() {
+
+            @Override
+            public void run() {
+                    loadConfig();
+                API_URL = "https://api.goaffpro.com/v1/admin/payments?since_id=" + lastImportedComission + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,created_at";
+                try {
+                    String jsonResponse = makeApiRequest(API_URL);
+                    if (jsonResponse != null) {
+                        generateXMLFromResponse(jsonResponse);
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
+        }, 0, 60000); // Schedule to run every 1 minute
     }
 
     private static void loadConfig() {
@@ -76,7 +84,7 @@ public class MainProvisionenGoaffpro {
         }
     }
 
-    private static void generateXMLFromResponse(String jsonResponse) throws JAXBException, IOException {
+    private static void generateXMLFromResponse(String jsonResponse) throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
         JsonNode rootNode = objectMapper.readTree(jsonResponse);
         JsonNode paymentsNode = rootNode.get("payments");
@@ -174,7 +182,7 @@ public class MainProvisionenGoaffpro {
             marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, Boolean.TRUE);
 
             String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-            String fileName = "fibu_belege_" + timestamp + ".xml";
+            String fileName = "export_fibu_beleg_übernahme_provisionen" + timestamp + ".xml";
             Path exportFilePath = Paths.get(exportPath, fileName);
 
             try (FileOutputStream fos = new FileOutputStream(exportFilePath.toFile())) {
@@ -182,9 +190,18 @@ public class MainProvisionenGoaffpro {
             }
 
             System.out.println("XML file generated and saved successfully: " + exportFilePath);
+            System.out.println("Up: " + exportFilePath);
+
+            String affiliateId = "13637495,15654476";
+            String jsonResponse2 = ExportAffiliatesFromGoaffproHandler.makeApiRequest(affiliateId);
+            if (jsonResponse2 != null) {
+                ExportAffiliatesFromGoaffproHandler.generateXMLFromResponse(jsonResponse2);
+            }
+
 
             // Update the lastImportedComission in the config file
             updateConfigPropertyWithoutReloading("lastImportedComission", highestId);
+            System.out.println("Updated lastImportedComission from: " + lastImportedComission + " to " + highestId);
         }
     }
 
@@ -212,7 +229,7 @@ public class MainProvisionenGoaffpro {
         return makeApiRequest(apiUrl);
     }
     private static String getValueAsString(JsonNode node, String fieldName) {
-        JsonNode valueNode = node.get(fieldName);
-        return valueNode != null && !valueNode.isNull() ? valueNode.asText() : null;
+        JsonNode valueNode = node != null ? node.get(fieldName) : null;
+        return valueNode != null && !valueNode.isNull() ? valueNode.asText() : "Kein Wert gefunden für " + fieldName;
     }
 }

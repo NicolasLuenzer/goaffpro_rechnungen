@@ -189,7 +189,7 @@ public class MainZahlungenBillbee {
             marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
 
             String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-            String fileName = "export_zahlungen_" + timestamp + ".xml";
+            String fileName = "export_fibue_beleg_übernahme_zahlungen_billbee" + timestamp + ".xml";
             Path exportFilePath = Paths.get(exportPath, fileName);
 
             try (FileOutputStream fos = new FileOutputStream(exportFilePath.toFile())) {

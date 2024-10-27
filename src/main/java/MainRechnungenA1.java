@@ -266,7 +266,7 @@ public class MainRechnungenA1 {
             marshaller.setProperty(Marshaller.JAXB_FORMATTED_OUTPUT, true);
 
             String timestamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
-            String fileName = "export_erloese_" + timestamp + ".xml";
+            String fileName = "export_fibu_beleg_übernahme_erlöse_accountOne" + timestamp + ".xml";
             Path exportFilePath = Paths.get(exportPath, fileName);
 
             try (FileOutputStream fos = new FileOutputStream(exportFilePath.toFile())) {

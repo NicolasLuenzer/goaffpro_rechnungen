@@ -80,7 +80,7 @@ public class ExportAffiliatesFromGoaffproHandler {
         JsonNode rootNode = objectMapper.readTree(jsonResponse);
         JsonNode affiliateNode = rootNode.get("affiliates");
 
-        if (affiliateNode != null && affiliateNode.size() > 0) {
+        if (affiliateNode != null && affiliateNode.size() >= 0) {
             DocumentBuilderFactory documentFactory = DocumentBuilderFactory.newInstance();
             DocumentBuilder documentBuilder = documentFactory.newDocumentBuilder();
             Document document = documentBuilder.newDocument();
