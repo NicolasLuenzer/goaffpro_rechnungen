@@ -2,7 +2,7 @@
 public class MainProvisionenGoaffproBackup {
     public static void main(String[] args) {
         try {
-            String affiliateId = "13637495,15654476";
+            String affiliateId = "15233060";
             String jsonResponse = ExportAffiliatesFromGoaffproHandler.makeApiRequest(affiliateId);
             if (jsonResponse != null) {
                 ExportAffiliatesFromGoaffproHandler.generateXMLFromResponse(jsonResponse);

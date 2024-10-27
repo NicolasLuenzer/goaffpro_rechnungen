@@ -15,6 +15,7 @@ import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Properties;
@@ -28,14 +29,14 @@ public class MainProvisionenGoaffpro {
     private static String API_KEY;
     private static String exportPath;
     private static String lastImportedComission;
+    private static List<String> affiliateIds = new ArrayList<>();
 
     public static void main(String[] args) {
         Timer timer = new Timer();
         timer.schedule(new TimerTask() {
-
             @Override
             public void run() {
-                    loadConfig();
+                loadConfig();
                 API_URL = "https://api.goaffpro.com/v1/admin/payments?since_id=" + lastImportedComission + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,created_at";
                 try {
                     String jsonResponse = makeApiRequest(API_URL);
@@ -115,13 +116,18 @@ public class MainProvisionenGoaffpro {
                 belegkopf.setBruttoErfassung("j");
 
                 String affiliateId = getValueAsString(payment, "affiliate_id");
+                if (affiliateId != null && !affiliateIds.contains(affiliateId)) {
+                    affiliateIds.add(affiliateId);
+                }
                 String affiliateName = "";
                 if (affiliateId != null) {
                     try {
                         String affiliateResponse = makeAffiliateNameRequest(affiliateId);
                         if (affiliateResponse != null) {
-                            JsonNode affiliateNode = objectMapper.readTree(affiliateResponse).get("affiliates").get(0);
-                            affiliateName = getValueAsString(affiliateNode, "name");
+                            JsonNode affiliateNode = objectMapper.readTree(affiliateResponse).get("affiliates");
+                            if (affiliateNode != null && affiliateNode.size() > 0) {
+                                affiliateName = getValueAsString(affiliateNode.get(0), "name");
+                            }
                         }
                     } catch (Exception e) {
                         e.printStackTrace();
@@ -163,7 +169,7 @@ public class MainProvisionenGoaffpro {
                 // FibuBelegposition Second
                 FibuBelegposition positionSecond = new FibuBelegposition();
                 positionSecond.setBuchungsschluessel("110");
-                positionSecond.setKontonummer(getValueAsString(payment, "affiliate_id")); // hier gucken
+                positionSecond.setKontonummer(getValueAsString(payment, "affiliate_id"));
                 positionSecond.setBetrag(getValueAsString(payment, "amount"));
                 positionSecond.setPosLeistungsdatum(belegdatum);
 
@@ -192,12 +198,11 @@ public class MainProvisionenGoaffpro {
             System.out.println("XML file generated and saved successfully: " + exportFilePath);
             System.out.println("Up: " + exportFilePath);
 
-            String affiliateId = "13637495,15654476";
+            String affiliateId = String.join(",", affiliateIds);
             String jsonResponse2 = ExportAffiliatesFromGoaffproHandler.makeApiRequest(affiliateId);
             if (jsonResponse2 != null) {
                 ExportAffiliatesFromGoaffproHandler.generateXMLFromResponse(jsonResponse2);
             }
-
 
             // Update the lastImportedComission in the config file
             updateConfigPropertyWithoutReloading("lastImportedComission", highestId);

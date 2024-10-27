@@ -80,7 +80,7 @@ public class ExportAffiliatesFromGoaffproHandler {
         JsonNode rootNode = objectMapper.readTree(jsonResponse);
         JsonNode affiliateNode = rootNode.get("affiliates");
 
-        if (affiliateNode != null && affiliateNode.size() >= 0) {
+        if (affiliateNode != null && !affiliateNode.isEmpty()) {
             DocumentBuilderFactory documentFactory = DocumentBuilderFactory.newInstance();
             DocumentBuilder documentBuilder = documentFactory.newDocumentBuilder();
             Document document = documentBuilder.newDocument();
@@ -256,12 +256,12 @@ public class ExportAffiliatesFromGoaffproHandler {
                 bankverbindung.appendChild(hauptbank);
 
                 Element iban = document.createElement("iban");
-                String accountNumber = getValueAsString(affiliate, "payment_details/account_number");
+                String accountNumber = affiliate.get("payment_details") != null ? affiliate.get("payment_details").get("account_number").asText() : null;
                 iban.appendChild(document.createTextNode(accountNumber != null ? accountNumber : ""));
                 bankverbindung.appendChild(iban);
 
                 Element kontobezeichnung = document.createElement("kontobezeichnung");
-                String accountName = getValueAsString(affiliate, "payment_details/account_name");
+                String accountName = affiliate.get("payment_details") != null ? affiliate.get("payment_details").get("account_name").asText() : null;
                 kontobezeichnung.appendChild(document.createTextNode(accountName != null ? accountName : ""));
                 bankverbindung.appendChild(kontobezeichnung);
 
