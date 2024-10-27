@@ -2,7 +2,7 @@
 // Diese Datei wurde mit der JavaTM Architecture for XML Binding(JAXB) Reference Implementation, v2.3.2 generiert 
 // Siehe <a href="https://javaee.github.io/jaxb-v2/">https://javaee.github.io/jaxb-v2/</a> 
 // Änderungen an dieser Datei gehen bei einer Neukompilierung des Quellschemas verloren. 
-// Generiert: 2024.10.26 um 05:10:38 PM CEST 
+// Generiert: 2024.10.27 um 12:50:24 PM CET 
 //
 
 
@@ -45,6 +45,54 @@ public class ObjectFactory {
     }
 
     /**
+     * Create an instance of {@link EGeckoPersonenkonten }
+     * 
+     */
+    public EGeckoPersonenkonten createEGeckoPersonenkonten() {
+        return new EGeckoPersonenkonten();
+    }
+
+    /**
+     * Create an instance of {@link EGeckoPersonenkonten.Personenkonto }
+     * 
+     */
+    public EGeckoPersonenkonten.Personenkonto createEGeckoPersonenkontenPersonenkonto() {
+        return new EGeckoPersonenkonten.Personenkonto();
+    }
+
+    /**
+     * Create an instance of {@link EGeckoPersonenkonten.Personenkonto.Geschaeftspartner }
+     * 
+     */
+    public EGeckoPersonenkonten.Personenkonto.Geschaeftspartner createEGeckoPersonenkontenPersonenkontoGeschaeftspartner() {
+        return new EGeckoPersonenkonten.Personenkonto.Geschaeftspartner();
+    }
+
+    /**
+     * Create an instance of {@link EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Bankverbindungen }
+     * 
+     */
+    public EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Bankverbindungen createEGeckoPersonenkontenPersonenkontoGeschaeftspartnerBankverbindungen() {
+        return new EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Bankverbindungen();
+    }
+
+    /**
+     * Create an instance of {@link EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.OnlineKommunikationen }
+     * 
+     */
+    public EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.OnlineKommunikationen createEGeckoPersonenkontenPersonenkontoGeschaeftspartnerOnlineKommunikationen() {
+        return new EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.OnlineKommunikationen();
+    }
+
+    /**
+     * Create an instance of {@link EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.TeleKommunikationen }
+     * 
+     */
+    public EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.TeleKommunikationen createEGeckoPersonenkontenPersonenkontoGeschaeftspartnerTeleKommunikationen() {
+        return new EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.TeleKommunikationen();
+    }
+
+    /**
      * Create an instance of {@link FibuBelege.FibuBeleg }
      * 
      */
@@ -74,6 +122,46 @@ public class ObjectFactory {
      */
     public FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos createFibuBelegeFibuBelegFibuBelegpositionenFibuBelegpositionOpinfos() {
         return new FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition.Opinfos();
+    }
+
+    /**
+     * Create an instance of {@link EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Personendaten }
+     * 
+     */
+    public EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Personendaten createEGeckoPersonenkontenPersonenkontoGeschaeftspartnerPersonendaten() {
+        return new EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Personendaten();
+    }
+
+    /**
+     * Create an instance of {@link EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Anschrift }
+     * 
+     */
+    public EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Anschrift createEGeckoPersonenkontenPersonenkontoGeschaeftspartnerAnschrift() {
+        return new EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Anschrift();
+    }
+
+    /**
+     * Create an instance of {@link EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Bankverbindungen.Bankverbindung }
+     * 
+     */
+    public EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Bankverbindungen.Bankverbindung createEGeckoPersonenkontenPersonenkontoGeschaeftspartnerBankverbindungenBankverbindung() {
+        return new EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.Bankverbindungen.Bankverbindung();
+    }
+
+    /**
+     * Create an instance of {@link EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.OnlineKommunikationen.OnlineKommunikation }
+     * 
+     */
+    public EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.OnlineKommunikationen.OnlineKommunikation createEGeckoPersonenkontenPersonenkontoGeschaeftspartnerOnlineKommunikationenOnlineKommunikation() {
+        return new EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.OnlineKommunikationen.OnlineKommunikation();
+    }
+
+    /**
+     * Create an instance of {@link EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.TeleKommunikationen.TeleKommunikation }
+     * 
+     */
+    public EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.TeleKommunikationen.TeleKommunikation createEGeckoPersonenkontenPersonenkontoGeschaeftspartnerTeleKommunikationenTeleKommunikation() {
+        return new EGeckoPersonenkonten.Personenkonto.Geschaeftspartner.TeleKommunikationen.TeleKommunikation();
     }
 
     /**
