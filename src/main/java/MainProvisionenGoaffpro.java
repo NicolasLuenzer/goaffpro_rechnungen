@@ -9,14 +9,12 @@ import generated.FibuBelege.FibuBeleg.FibuBelegpositionen.FibuBelegposition;
 import javax.xml.bind.JAXBContext;
 import javax.xml.bind.JAXBException;
 import javax.xml.bind.Marshaller;
-import javax.xml.bind.annotation.*;
 import java.io.*;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 import java.util.Properties;
@@ -24,13 +22,15 @@ import java.util.Properties;
 
 public class MainProvisionenGoaffpro {
 
-    private static String API_URL = "https://api.goaffpro.com/v1/admin/payments?since_id=1454894&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,created_at";
-
+    public static final String CONFIG_PROPERTIES_PATH = "C:\\Users\\nluenzer\\IdeaProjects\\untitled\\src\\main\\java\\config.properties";
+    private static String API_URL;
     private static String API_KEY;
     private static String exportPath;
+    private static String lastImportedComission;
 
     public static void main(String[] args) {
         loadConfig();
+        API_URL = "https://api.goaffpro.com/v1/admin/payments?since_id=" + lastImportedComission + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,created_at";
         try {
             String jsonResponse = makeApiRequest(API_URL);
             if (jsonResponse != null) {
@@ -42,11 +42,12 @@ public class MainProvisionenGoaffpro {
     }
 
     private static void loadConfig() {
-        try (InputStream input = new FileInputStream("C:\\Users\\nluenzer\\IdeaProjects\\untitled\\src\\main\\java\\config.properties")) {
+        try (InputStream input = new FileInputStream(CONFIG_PROPERTIES_PATH)) {
             Properties prop = new Properties();
             prop.load(input);
             API_KEY = prop.getProperty("goaffproAPIKey");
             exportPath = prop.getProperty("exportPath");
+            lastImportedComission = prop.getProperty("lastImportedComission");
         } catch (IOException ex) {
             ex.printStackTrace();
         }
@@ -83,6 +84,8 @@ public class MainProvisionenGoaffpro {
         if (paymentsNode != null && paymentsNode.size() > 0) {
             FibuBelege fibuBelege = new FibuBelege();
             fibuBelege.setFirmaNr("20");
+
+            String highestId = lastImportedComission;
 
             for (JsonNode payment : paymentsNode) {
                 FibuBeleg fibuBeleg = new FibuBeleg();
@@ -123,6 +126,12 @@ public class MainProvisionenGoaffpro {
                 belegkopf.setBelegwaehrung("EUR");
                 belegkopf.setReferenznr(getValueAsString(payment, "id"));
                 fibuBeleg.setBelegkopf(belegkopf);
+
+                // Update highestId if current payment id is greater
+                String currentId = getValueAsString(payment, "id");
+                if (currentId != null && currentId.compareTo(highestId) > 0) {
+                    highestId = currentId;
+                }
 
                 // FibuBelegposition
                 FibuBelegposition positionFirst = new FibuBelegposition();
@@ -173,6 +182,29 @@ public class MainProvisionenGoaffpro {
             }
 
             System.out.println("XML file generated and saved successfully: " + exportFilePath);
+
+            // Update the lastImportedComission in the config file
+            updateConfigPropertyWithoutReloading("lastImportedComission", highestId);
+        }
+    }
+
+    private static void updateConfigPropertyWithoutReloading(String key, String value) {
+        try (RandomAccessFile raf = new RandomAccessFile(CONFIG_PROPERTIES_PATH, "rw")) {
+            String line;
+            long writePosition = 0;
+
+            while ((line = raf.readLine()) != null) {
+                if (line.startsWith(key + "=")) {
+                    break;
+                }
+                writePosition = raf.getFilePointer();
+            }
+
+            raf.seek(writePosition);
+            raf.writeBytes(key + "=" + value + System.lineSeparator());
+
+        } catch (IOException ex) {
+            ex.printStackTrace();
         }
     }
     private static String makeAffiliateNameRequest(String affiliateId) throws Exception {
