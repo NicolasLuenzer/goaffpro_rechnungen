@@ -157,6 +157,9 @@ public class MainZahlungenA1 {
 
 
             firstPosition.setBuchungsschluessel(isZE ? "110" : isZA ? "150" : null);
+            if(isTransit || isGebuehren) firstPosition.setBuchungsschluessel(isZE ? "150" : isZA ? "110" : null);
+
+
             firstPosition.setKontonummer(record.get("Konto"));
             double betrag = Double.parseDouble(record.get("Basis-Umsatz").replace(',', '.'));
             firstPosition.setBetrag(String.valueOf(betrag));
@@ -167,11 +170,15 @@ public class MainZahlungenA1 {
             // wenn transit oder gebühr dann 110
             // sonst (bei Zahlungen) wenn za dann 230 oder wenn ze dann 260
             String buchungsschluessel = isTransit || isGebuehren ? "110" : isZA ? "230" : isZE ? "260" : null;
+            if(isTransit || isGebuehren) buchungsschluessel= isTransit || isGebuehren && isZE ? "110" : "150";
+
             secondPosition.setBuchungsschluessel(buchungsschluessel);
 
             // für die Schweizer
             // wenn zahlung und bu-schlüssel = 173  und gegenkonto 20002 oder 20001 dann setzte 50001 sonst gegenkonto (ohne BU-Schlüssel)
             String gegenkonto = record.get("Gegenkonto (ohne BU-Schlüssel)");
+            if("1452".equals(gegenkonto)) return null;
+
             if (isCH && ("20002".equals(gegenkonto) || "20001".equals(gegenkonto))) {
                 secondPosition.setKontonummer("50001");
             } else {
@@ -266,6 +273,7 @@ public class MainZahlungenA1 {
                 marshaller.setProperty("com.sun.xml.bind.xmlHeaders", "<!-- Erstellt am: " + timestamp + " -->\n");
                 marshaller.marshal(fibuBelege, fos);
             }
+            System.out.println("Datei geschrieben");
         }
     }
 }
