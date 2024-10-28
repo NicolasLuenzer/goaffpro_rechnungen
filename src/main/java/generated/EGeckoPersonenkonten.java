@@ -2,7 +2,7 @@
 // Diese Datei wurde mit der JavaTM Architecture for XML Binding(JAXB) Reference Implementation, v2.3.2 generiert 
 // Siehe <a href="https://javaee.github.io/jaxb-v2/">https://javaee.github.io/jaxb-v2/</a> 
 // Änderungen an dieser Datei gehen bei einer Neukompilierung des Quellschemas verloren. 
-// Generiert: 2024.10.27 um 12:50:24 PM CET 
+// Generiert: 2024.10.28 um 09:01:03 AM CET 
 //
 
 
@@ -67,6 +67,7 @@ import javax.xml.bind.annotation.XmlType;
  *                                       &lt;element name="name2" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
  *                                       &lt;element name="strasse" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
  *                                       &lt;element name="hausnummer" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+ *                                       &lt;element name="hausnummerZusatz" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
  *                                       &lt;element name="plz" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
  *                                       &lt;element name="ort" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
  *                                       &lt;element name="landkennzeichen" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
@@ -305,6 +306,7 @@ public class EGeckoPersonenkonten {
      *                             &lt;element name="name2" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
      *                             &lt;element name="strasse" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
      *                             &lt;element name="hausnummer" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+     *                             &lt;element name="hausnummerZusatz" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
      *                             &lt;element name="plz" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
      *                             &lt;element name="ort" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
      *                             &lt;element name="landkennzeichen" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
@@ -632,6 +634,7 @@ public class EGeckoPersonenkonten {
          *                   &lt;element name="name2" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
          *                   &lt;element name="strasse" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
          *                   &lt;element name="hausnummer" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+         *                   &lt;element name="hausnummerZusatz" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
          *                   &lt;element name="plz" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
          *                   &lt;element name="ort" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
          *                   &lt;element name="landkennzeichen" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
@@ -957,6 +960,7 @@ public class EGeckoPersonenkonten {
              *         &lt;element name="name2" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
              *         &lt;element name="strasse" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
              *         &lt;element name="hausnummer" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+             *         &lt;element name="hausnummerZusatz" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
              *         &lt;element name="plz" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
              *         &lt;element name="ort" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
              *         &lt;element name="landkennzeichen" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
@@ -975,6 +979,7 @@ public class EGeckoPersonenkonten {
                 "name2",
                 "strasse",
                 "hausnummer",
+                "hausnummerZusatz",
                 "plz",
                 "ort",
                 "landkennzeichen"
@@ -991,6 +996,8 @@ public class EGeckoPersonenkonten {
                 protected String strasse;
                 @XmlElement(required = true)
                 protected String hausnummer;
+                @XmlElement(required = true)
+                protected String hausnummerZusatz;
                 @XmlElement(required = true)
                 protected String plz;
                 @XmlElement(required = true)
@@ -1116,6 +1123,30 @@ public class EGeckoPersonenkonten {
                  */
                 public void setHausnummer(String value) {
                     this.hausnummer = value;
+                }
+
+                /**
+                 * Ruft den Wert der hausnummerZusatz-Eigenschaft ab.
+                 * 
+                 * @return
+                 *     possible object is
+                 *     {@link String }
+                 *     
+                 */
+                public String getHausnummerZusatz() {
+                    return hausnummerZusatz;
+                }
+
+                /**
+                 * Legt den Wert der hausnummerZusatz-Eigenschaft fest.
+                 * 
+                 * @param value
+                 *     allowed object is
+                 *     {@link String }
+                 *     
+                 */
+                public void setHausnummerZusatz(String value) {
+                    this.hausnummerZusatz = value;
                 }
 
                 /**

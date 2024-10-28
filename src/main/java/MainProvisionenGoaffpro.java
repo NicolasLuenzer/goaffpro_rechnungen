@@ -24,7 +24,7 @@ import java.util.TimerTask;
 
 public class MainProvisionenGoaffpro {
 
-    public static final String CONFIG_PROPERTIES_PATH = "C:\\Users\\nluenzer\\IdeaProjects\\untitled\\src\\main\\java\\config.properties";
+    public static final String CONFIG_PROPERTIES_PATH = "/Users/nicolas/IdeaProjects/java_pds_converter/src/main/java/config.properties";
     private static String API_URL;
     private static String API_KEY;
     private static String exportPath;
@@ -191,6 +191,7 @@ public class MainProvisionenGoaffpro {
             Path exportFilePath = Paths.get(exportPath, fileName);
 
             try (FileOutputStream fos = new FileOutputStream(exportFilePath.toFile())) {
+                marshaller.setProperty("com.sun.xml.bind.xmlHeaders", "<!-- Erstellt am: " + timestamp + " -->\n");
                 marshaller.marshal(fibuBelege, fos);
             }
 

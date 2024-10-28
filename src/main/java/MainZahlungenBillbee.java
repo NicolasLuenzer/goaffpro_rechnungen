@@ -42,7 +42,7 @@ public class MainZahlungenBillbee {
     }
 
     private static void loadConfig() {
-        try (InputStream input = new FileInputStream("C:\\Users\\nluenzer\\IdeaProjects\\untitled\\src\\main\\java\\config.properties")) {
+        try (InputStream input = new FileInputStream("/Users/nicolas/IdeaProjects/java_pds_converter/src/main/java/config.properties")) {
             Properties prop = new Properties();
             prop.load(input);
 
@@ -131,7 +131,7 @@ public class MainZahlungenBillbee {
             belegkopf.setBelegdatum(formatLeistungsdatum(record.get("Belegdatum")));
             belegkopf.setBruttoErfassung("j");
             belegkopf.setBuchungstext(record.get("Belegfeld 1"));
-            belegkopf.setBucherKz("ACCOUNTONE");
+            belegkopf.setBucherKz("BILLBEE");
             belegkopf.setBelegwaehrungskurs("1");
             belegkopf.setBelegwaehrung("EUR");
 
@@ -193,6 +193,7 @@ public class MainZahlungenBillbee {
             Path exportFilePath = Paths.get(exportPath, fileName);
 
             try (FileOutputStream fos = new FileOutputStream(exportFilePath.toFile())) {
+                marshaller.setProperty("com.sun.xml.bind.xmlHeaders", "<!-- Erstellt am: " + timestamp + " -->\n");
                 marshaller.marshal(fibuBelege, fos);
             }
         }

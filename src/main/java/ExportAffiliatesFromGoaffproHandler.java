@@ -41,7 +41,7 @@ public class ExportAffiliatesFromGoaffproHandler {
     }
 
     public static void loadConfig() {
-        try (InputStream input = new FileInputStream("C:\\Users\\nluenzer\\IdeaProjects\\untitled\\src\\main\\java\\config.properties")) {
+        try (InputStream input = new FileInputStream("/Users/nicolas/IdeaProjects/java_pds_converter/src/main/java/config.properties")) {
             Properties prop = new Properties();
             prop.load(input);
             API_KEY = prop.getProperty("goaffproAPIKey");
@@ -165,12 +165,16 @@ public class ExportAffiliatesFromGoaffproHandler {
                 // Extract house number from address using regex
                 String address = getValueAsString(affiliate, "address_1");
                 String hausnummerValue = "";
+                String hausnummerZusatzValue = "";
                 if (address != null) {
-                    Pattern pattern = Pattern.compile("(\\d+\\s?[a-zA-Z]*)$");
+                    Pattern pattern = Pattern.compile("(\\d+)(\\s?[a-zA-Z]*)$");
                     Matcher matcher = pattern.matcher(address);
                     if (matcher.find()) {
                         hausnummerValue = matcher.group(1);
-                        address = address.replace(hausnummerValue, "").trim();
+                        if (matcher.groupCount() > 1) {
+                            hausnummerZusatzValue = matcher.group(2).trim();
+                        }
+                        address = address.replace(matcher.group(0), "").trim();
                     }
                 }
 
@@ -181,6 +185,10 @@ public class ExportAffiliatesFromGoaffproHandler {
                 Element hausnummer = document.createElement("hausnummer");
                 hausnummer.appendChild(document.createTextNode(hausnummerValue != null ? hausnummerValue : ""));
                 anschrift.appendChild(hausnummer);
+
+                Element hausnummerZusatz = document.createElement("hausnummerZusatz");
+                hausnummerZusatz.appendChild(document.createTextNode(hausnummerZusatzValue != null ? hausnummerZusatzValue : ""));
+                anschrift.appendChild(hausnummerZusatz);
 
                 Element plz = document.createElement("plz");
                 String plzValue = getValueAsString(affiliate, "zip");

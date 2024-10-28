@@ -42,7 +42,7 @@ public class MainRechnungenA1 {
     }
 
     private static void loadConfig() {
-        try (InputStream input = new FileInputStream("C:\\Users\\nluenzer\\IdeaProjects\\untitled\\src\\main\\java\\config.properties")) {
+        try (InputStream input = new FileInputStream("/Users/nicolas/IdeaProjects/java_pds_converter/src/main/java/config.properties")) {
             Properties prop = new Properties();
             prop.load(input);
 
@@ -270,6 +270,7 @@ public class MainRechnungenA1 {
             Path exportFilePath = Paths.get(exportPath, fileName);
 
             try (FileOutputStream fos = new FileOutputStream(exportFilePath.toFile())) {
+                marshaller.setProperty("com.sun.xml.bind.xmlHeaders", "<!-- Erstellt am: " + timestamp + " -->\n");
                 marshaller.marshal(fibuBelege, fos);
             }
         }
