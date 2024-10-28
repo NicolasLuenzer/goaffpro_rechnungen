@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<jaxb:bindings version="2.1" xmlns:jaxb="http://java.sun.com/xml/ns/jaxb">
+  <!--
+
+Diese Datei wurde mit der JavaTM Architecture for XML Binding(JAXB) Reference Implementation, v2.3.2 generiert 
+Siehe <a href="https://javaee.github.io/jaxb-v2/">https://javaee.github.io/jaxb-v2/</a> 
+Änderungen an dieser Datei gehen bei einer Neukompilierung des Quellschemas verloren. 
+Generiert: 2024.10.28 um 09:01:03 AM CET 
+
+  -->
+  <jaxb:bindings scd="x-schema::">
+    <jaxb:schemaBindings map="false">
+      <jaxb:package name="generated"/>
+    </jaxb:schemaBindings>
+    <jaxb:bindings scd="FibuBelege">
+      <jaxb:class ref="generated.FibuBelege"/>
+    </jaxb:bindings>
+    <jaxb:bindings scd="EGeckoPersonenkonten">
+      <jaxb:class ref="generated.EGeckoPersonenkonten"/>
+    </jaxb:bindings>
+  </jaxb:bindings>
+</jaxb:bindings>
+
