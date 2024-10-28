@@ -264,12 +264,12 @@ public class ExportAffiliatesFromGoaffproHandler {
                 bankverbindung.appendChild(hauptbank);
 
                 Element iban = document.createElement("iban");
-                String accountNumber = affiliate.get("payment_details") != null ? affiliate.get("payment_details").get("account_number").asText() : null;
+                String accountNumber = affiliate.get("payment_details") != null && affiliate.get("payment_details").get("account_number") != null ? affiliate.get("payment_details").get("account_number").asText() : null;
                 iban.appendChild(document.createTextNode(accountNumber != null ? accountNumber : ""));
                 bankverbindung.appendChild(iban);
 
                 Element kontobezeichnung = document.createElement("kontobezeichnung");
-                String accountName = affiliate.get("payment_details") != null ? affiliate.get("payment_details").get("account_name").asText() : null;
+                String accountName = affiliate.get("payment_details") != null && affiliate.get("payment_details").get("account_name") != null ? affiliate.get("payment_details").get("account_name").asText() : null;
                 kontobezeichnung.appendChild(document.createTextNode(accountName != null ? accountName : ""));
                 bankverbindung.appendChild(kontobezeichnung);
 

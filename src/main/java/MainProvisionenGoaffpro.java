@@ -120,6 +120,8 @@ public class MainProvisionenGoaffpro {
                     affiliateIds.add(affiliateId);
                 }
                 String affiliateName = "";
+                String affiliateCountry = "";
+                String affiliateSteuernummer = "";
                 if (affiliateId != null) {
                     try {
                         String affiliateResponse = makeAffiliateNameRequest(affiliateId);
@@ -127,6 +129,8 @@ public class MainProvisionenGoaffpro {
                             JsonNode affiliateNode = objectMapper.readTree(affiliateResponse).get("affiliates");
                             if (affiliateNode != null && affiliateNode.size() > 0) {
                                 affiliateName = getValueAsString(affiliateNode.get(0), "name");
+                                affiliateCountry = getValueAsString(affiliateNode.get(0), "country");
+                                affiliateSteuernummer = getValueAsString(affiliateNode.get(0), "tax_identification_number");
                             }
                         }
                     } catch (Exception e) {
@@ -168,7 +172,25 @@ public class MainProvisionenGoaffpro {
                 // FibuBelegposition Second
                 FibuBelegposition positionSecond = new FibuBelegposition();
                 positionSecond.setBuchungsschluessel("110");
-                positionSecond.setKontonummer(getValueAsString(payment, "affiliate_id"));
+
+                switch (affiliateCountry) {
+                    case "DE":
+                        if (affiliateSteuernummer != null && !affiliateSteuernummer.isEmpty()) {
+                            positionSecond.setKontonummer("4767");
+                        } else {
+                            positionSecond.setKontonummer("4766");
+                        }
+                        break;
+                    case "AT":
+                        positionSecond.setKontonummer("4768");
+                        break;
+                    case "CH":
+                        positionSecond.setKontonummer("4769");
+                        break;
+                    default:
+                        positionSecond.setKontonummer(getValueAsString(payment, "affiliate_id"));
+                }
+
                 positionSecond.setBetrag(getValueAsString(payment, "amount"));
                 positionSecond.setPosLeistungsdatum(belegdatum);
 
@@ -230,7 +252,7 @@ public class MainProvisionenGoaffpro {
         }
     }
     private static String makeAffiliateNameRequest(String affiliateId) throws Exception {
-        String apiUrl = String.format("https://api.goaffpro.com/v1/admin/affiliates?id=%s&fields=name", affiliateId);
+        String apiUrl = String.format("https://api.goaffpro.com/v1/admin/affiliates?id=%s&fields=name,country,tax_identification_number", affiliateId);
         return makeApiRequest(apiUrl);
     }
     private static String getValueAsString(JsonNode node, String fieldName) {

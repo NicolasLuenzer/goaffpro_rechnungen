@@ -248,6 +248,12 @@ public class MainRechnungenA1 {
                     return "20013";
                 case "20002":
                     return "20014";
+                case "20004":
+                    return "20015";
+                case "20005":
+                    return "20016";
+                case "20008":
+                    return "20017";
                 default:
                     return kontonummer;
             }
