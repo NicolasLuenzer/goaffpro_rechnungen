@@ -165,7 +165,6 @@ public class MainProvisionenGoaffpro {
                 opinfos.setOpAngaben(opAngaben);
                 positionFirst.setOpinfos(opinfos);
 
-
                 // FibuBelegposition Second
                 FibuBelegposition positionSecond = new FibuBelegposition();
                 positionSecond.setBuchungsschluessel("110");
