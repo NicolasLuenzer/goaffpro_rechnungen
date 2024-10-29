@@ -175,7 +175,7 @@ public class MainProvisionenGoaffpro {
 
                 switch (affiliateCountry) {
                     case "DE":
-                        if (affiliateSteuernummer != null && !affiliateSteuernummer.isEmpty()) {
+                        if (affiliateSteuernummer != null && !"Kein Wert gefunden für tax_identification_number".equals(affiliateSteuernummer)) {
                             positionSecond.setKontonummer("4767");
                         } else {
                             positionSecond.setKontonummer("4766");

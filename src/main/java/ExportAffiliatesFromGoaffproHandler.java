@@ -263,10 +263,14 @@ public class ExportAffiliatesFromGoaffproHandler {
                 hauptbank.appendChild(document.createTextNode("j"));
                 bankverbindung.appendChild(hauptbank);
 
+
                 Element iban = document.createElement("iban");
-                String accountNumber = affiliate.get("payment_details") != null && affiliate.get("payment_details").get("account_number") != null ? affiliate.get("payment_details").get("account_number").asText() : null;
+                String accountNumber = affiliate.get("payment_details") != null && affiliate.get("payment_details").get("account_number") != null
+                        ? affiliate.get("payment_details").get("account_number").asText().replace(" ", "")
+                        : null;
                 iban.appendChild(document.createTextNode(accountNumber != null ? accountNumber : ""));
                 bankverbindung.appendChild(iban);
+
 
                 Element kontobezeichnung = document.createElement("kontobezeichnung");
                 String accountName = affiliate.get("payment_details") != null && affiliate.get("payment_details").get("account_name") != null ? affiliate.get("payment_details").get("account_name").asText() : null;
@@ -280,7 +284,7 @@ public class ExportAffiliatesFromGoaffproHandler {
 
                 // rechnungskonditionNr element
                 Element rechnungskonditionNr = document.createElement("rechnungskonditionNr");
-                rechnungskonditionNr.appendChild(document.createTextNode("1012"));
+                rechnungskonditionNr.appendChild(document.createTextNode("1000"));
                 personenkonto.appendChild(rechnungskonditionNr);
 
                 // zahlartNr element

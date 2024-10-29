@@ -143,7 +143,8 @@ public class MainZahlungenA1 {
             boolean isZahlung = !isGebuehren && !isTransit;
             boolean isZA = "za".equals(belegkopf.getBelegart());
             boolean isZE = "ze".equals(belegkopf.getBelegart());
-            boolean isCH = "173".equals(record.get("BU-Schlüssel")) && isZahlung;
+            boolean isCH = "173".equals(record.get("BU-Schlüssel"))/* && isZahlung*/;
+            boolean isAT = "AT".equals(record.get("EU-Land u. UStID (Bestimmung)"));
 
             belegkopf.setReferenznr(isGebuehren ? "Gebühr" : isTransit ? "Transit" : belegFeld1);
             fibuBeleg.setBelegkopf(belegkopf);
@@ -157,7 +158,8 @@ public class MainZahlungenA1 {
 
 
             firstPosition.setBuchungsschluessel(isZE ? "110" : isZA ? "150" : null);
-            if(isTransit || isGebuehren) firstPosition.setBuchungsschluessel(isZE ? "150" : isZA ? "110" : null);
+            if(isTransit || isGebuehren) firstPosition.setBuchungsschluessel(isZE ? "110" : isZA ? "150" : null);
+            if(isZahlung) firstPosition.setBuchungsschluessel(isZE ? "110" : isZA ? "150" : null);
 
 
             firstPosition.setKontonummer(record.get("Konto"));
@@ -170,7 +172,16 @@ public class MainZahlungenA1 {
             // wenn transit oder gebühr dann 110
             // sonst (bei Zahlungen) wenn za dann 230 oder wenn ze dann 260
             String buchungsschluessel = isTransit || isGebuehren ? "110" : isZA ? "230" : isZE ? "260" : null;
-            if(isTransit || isGebuehren) buchungsschluessel= isTransit || isGebuehren && isZE ? "110" : "150";
+            if(isZahlung && isZE) {
+                buchungsschluessel= "260";
+            }
+            else if (isZahlung && isZA) buchungsschluessel = "230";
+
+            if((isTransit || isGebuehren) && isZE) {
+                buchungsschluessel= "150";
+            }
+            else if ((isTransit || isGebuehren) && isZE)
+                buchungsschluessel = "110";
 
             secondPosition.setBuchungsschluessel(buchungsschluessel);
 
@@ -179,10 +190,10 @@ public class MainZahlungenA1 {
             String gegenkonto = record.get("Gegenkonto (ohne BU-Schlüssel)");
             if("1452".equals(gegenkonto)) return null;
 
-            if (isCH && ("20002".equals(gegenkonto) || "20001".equals(gegenkonto))) {
+            if (isCH) {
                 secondPosition.setKontonummer("50001");
             } else {
-                secondPosition.setKontonummer(gegenkonto);
+                secondPosition.setKontonummer(mapKontonummer(gegenkonto, isAT));
             }
             secondPosition.setBetrag(record.get("Basis-Umsatz").replace(',', '.'));
             secondPosition.setPosLeistungsdatum(leistungsdatum);
@@ -196,7 +207,7 @@ public class MainZahlungenA1 {
                 opAngaben.setOpNr(belegFeld1);
                 if(isCH)
                 {
-                    opAngaben.setOpNr(leistungsdatum.replaceAll("(\\d{2})\\.(\\d{2})\\.\\d{4}", "$2/$1"));
+                    opAngaben.setOpNr(leistungsdatum.replaceAll("(\\d{2})\\.(\\d{2})\\.(\\d{2})(\\d{2})", "$2/$4"));
                 }
                 opAngaben.setOpText(record.get("Buchungstext"));
                 opAngaben.setVerwendungszweck(belegFeld1);
@@ -239,12 +250,22 @@ public class MainZahlungenA1 {
             }
         }
 
-        private String mapKononummer(String kontonummer) {
+        private String mapKontonummer(String kontonummer, boolean isAT) {
+            if(!isAT)
+                return kontonummer;
+
+            // wenn Österreich dann mapping
             switch (kontonummer) {
                 case "20001":
                     return "20013";
                 case "20002":
                     return "20014";
+                case "20004":
+                    return "20015";
+                case "20005":
+                    return "20016";
+                case "20008":
+                    return "20017";
                 default:
                     return kontonummer;
             }
