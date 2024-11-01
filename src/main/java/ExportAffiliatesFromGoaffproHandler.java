@@ -265,9 +265,12 @@ public class ExportAffiliatesFromGoaffproHandler {
 
 
                 Element iban = document.createElement("iban");
+
                 String accountNumber = affiliate.get("payment_details") != null && affiliate.get("payment_details").get("account_number") != null
-                        ? affiliate.get("payment_details").get("account_number").asText().replace(" ", "")
+                        ? affiliate.get("payment_details").get("account_number").asText().replaceAll("[ \u00A0]", "")
                         : null;
+
+
                 iban.appendChild(document.createTextNode(accountNumber != null ? accountNumber : ""));
                 bankverbindung.appendChild(iban);
 
