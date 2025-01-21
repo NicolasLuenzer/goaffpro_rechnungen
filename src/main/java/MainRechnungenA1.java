@@ -61,7 +61,7 @@ public class MainRechnungenA1 {
 
         private void removeFirstLine(Path csvFilePath) throws IOException {
             List<String> lines = Files.readAllLines(csvFilePath, Charset.forName("windows-1252"));
-            if (!lines.isEmpty() && lines.get(0).startsWith("\"EXTF")) {
+            if (!lines.isEmpty() && lines.get(0).contains("EXTF")) {
                 lines.remove(0); // Entferne die erste Zeile, wenn sie mit "EXTF" anfängt
                 Files.write(csvFilePath, lines, Charset.forName("windows-1252"), StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING); // Entferne die erste Zeile, wenn sie mit "EXTF" anfängt
                 Files.write(csvFilePath, lines, Charset.forName("windows-1252"), StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -216,6 +216,11 @@ public class MainRechnungenA1 {
             //aggregatedAmount = Double.parseDouble(String.format("%.2f", aggregatedAmount).replace(',', '.')); hier kam es aber vor, dass -0.0 raus kam
             firstPosition.setBetrag(String.valueOf(aggregatedAmount));
             opAngaben.setOpBetrag(String.valueOf(aggregatedAmount));
+            if(aggregatedAmount < 0){
+                belegkopf.setBelegart("ra");
+                firstPosition.setBuchungsschluessel("250");
+            }
+
             opinfos.setOpAngaben(opAngaben);
             firstPosition.setOpinfos(opinfos);
             positionList.add(0, firstPosition);
@@ -237,6 +242,10 @@ public class MainRechnungenA1 {
                     return "22";
                 case "173":
                     return "mnull";
+                case "20":
+                    return "meg20";
+                case "10":
+                    return "meg10";
                 default:
                     return steuersatz;
             }
@@ -263,6 +272,10 @@ public class MainRechnungenA1 {
             if (leistungsdatum.length() == 8) {
                 return leistungsdatum.substring(0, 2) + "." + leistungsdatum.substring(2,4) + "." + leistungsdatum.substring(4);
             }
+            if (leistungsdatum.length() == 7) {
+                leistungsdatum = "0" + leistungsdatum;
+                return leistungsdatum.substring(0, 2) + "." + leistungsdatum.substring(2,4) + "." + leistungsdatum.substring(4);
+            }
             return leistungsdatum;
         }
 
@@ -279,6 +292,7 @@ public class MainRechnungenA1 {
                 marshaller.setProperty("com.sun.xml.bind.xmlHeaders", "<!-- Erstellt am: " + timestamp + " -->\n");
                 marshaller.marshal(fibuBelege, fos);
             }
+            System.out.println("Datei geschrieben");
         }
     }
 }

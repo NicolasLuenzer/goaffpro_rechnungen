@@ -196,6 +196,7 @@ public class MainZahlungenBillbee {
                 marshaller.setProperty("com.sun.xml.bind.xmlHeaders", "<!-- Erstellt am: " + timestamp + " -->\n");
                 marshaller.marshal(fibuBelege, fos);
             }
+            System.out.println("Datei geschrieben");
         }
     }
 }

@@ -60,7 +60,7 @@ public class MainZahlungenA1 {
 
         private void removeFirstLine(Path csvFilePath) throws IOException {
             List<String> lines = Files.readAllLines(csvFilePath, Charset.forName("windows-1252"));
-            if (!lines.isEmpty() && lines.get(0).startsWith("\"EXTF")) {
+            if (!lines.isEmpty() && lines.get(0).contains("EXTF")) {
                 lines.remove(0); // Entferne die erste Zeile, wenn sie mit "EXTF" anfängt
                 Files.write(csvFilePath, lines, Charset.forName("windows-1252"), StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING); // Entferne die erste Zeile, wenn sie mit "EXTF" anfängt
                 Files.write(csvFilePath, lines, Charset.forName("windows-1252"), StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -182,6 +182,15 @@ public class MainZahlungenA1 {
             }
             else if ((isTransit || isGebuehren) && isZE)
                 buchungsschluessel = "110";
+
+            if("2151".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) && isZE)
+            {
+                buchungsschluessel= "150";
+            }
+            else if ("2151".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) && isZA)
+            {
+                buchungsschluessel= "110";
+            }
 
             secondPosition.setBuchungsschluessel(buchungsschluessel);
 
