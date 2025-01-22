@@ -167,11 +167,10 @@ public class MainRechnungenA1 {
             firstPosition.setBuchungsschluessel("210");
             firstPosition.setKontonummer(firstRecord.get("Konto"));
 
-            if ("AT".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))) {
-                firstPosition.setKontonummer(mapKononummer(firstRecord.get("Konto")));
-            } else if ("DE".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))) {
+            if ("DE".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))) {
                 firstPosition.setKontonummer(firstRecord.get("Konto"));
-            }
+            } else
+                firstPosition.setKontonummer(mapKononummer(firstRecord.get("Konto"), firstRecord.get("EU-Land u. UStID (Bestimmung)")));
 
             firstPosition.setBetrag(firstRecord.get("Umsatz (ohne Soll/Haben-Kz)".replace(',', '.')));
 
@@ -187,9 +186,15 @@ public class MainRechnungenA1 {
             // Summiere Werte aus den folgenden Belegpositionen und integriere in die Schleife
             for (int i = 0; i < records.size(); i++) {
                 CSVRecord record = records.get(i);
-                if("8120".equals(record.get("Gegenkonto (ohne BU-Schlüssel)"))){
+                if("8120".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) &&
+                        "CH".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))){
                     continue;
                 }
+
+
+
+
+
                 String SoderH = record.get("Soll/Haben-Kennzeichen");
                 double betrag = Double.parseDouble(record.get("Basis-Umsatz").replace(',', '.'));
                 if ("S".equals(SoderH)) {
@@ -200,26 +205,35 @@ public class MainRechnungenA1 {
                 FibuBelegposition position = new FibuBelegposition();
                 position.setBuchungsschluessel("S".equals(SoderH) ? "150" : "110");
                 position.setKontonummer(record.get("Gegenkonto (ohne BU-Schlüssel)"));
+
+
                 position.setBetrag(record.get("Basis-Umsatz").replace(',', '.'));
                 position.setPosLeistungsdatum(leistungsdatum);
 
-                if ("AT".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
-                    position.setSteuerschluessel(mapSteuersatz(record.get("EU-Steuersatz (Bestimmung)")));
+                if (!"DE".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
+                    position.setSteuerschluessel(mapSteuersatz(record.get("EU-Steuersatz (Bestimmung)"), record.get("EU-Land u. UStID (Bestimmung)")));
                 } else if ("DE".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
-                    position.setSteuerschluessel(mapSteuersatz(record.get("BU-Schlüssel")));
+                    position.setSteuerschluessel(mapSteuersatz(record.get("BU-Schlüssel"), "DE"));
                 }
 
+                if("8316".equals(record.get("Gegenkonto (ohne BU-Schlüssel)"))
+                        && "loni".contains(firstRecord.get("Buchungstext").toLowerCase())){
+                    position.setKontonummer("8215");
+                    position.setSteuerschluessel("meg");
+                }
                 positionList.add(position);
 
             }
             aggregatedAmount = Math.round(aggregatedAmount * 100.0) / 100.0;
             //aggregatedAmount = Double.parseDouble(String.format("%.2f", aggregatedAmount).replace(',', '.')); hier kam es aber vor, dass -0.0 raus kam
+
+            if(aggregatedAmount < 0){
+                belegkopf.setBelegart("ga");
+                firstPosition.setBuchungsschluessel("250");
+                aggregatedAmount = aggregatedAmount * -1;
+            }
             firstPosition.setBetrag(String.valueOf(aggregatedAmount));
             opAngaben.setOpBetrag(String.valueOf(aggregatedAmount));
-            if(aggregatedAmount < 0){
-                belegkopf.setBelegart("ra");
-                firstPosition.setBuchungsschluessel("250");
-            }
 
             opinfos.setOpAngaben(opAngaben);
             firstPosition.setOpinfos(opinfos);
@@ -230,28 +244,65 @@ public class MainRechnungenA1 {
             return fibuBeleg;
         }
 
-        private String mapSteuersatz(String steuersatz) {
+        private String mapSteuersatz(String steuersatz, String land) {
             switch (steuersatz) {
                 case "20,00":
                     return "meg20";
-                case "10,00":
-                    return "meg10";
-                case "3":
-                    return "50";
-                case "2":
-                    return "22";
-                case "173":
-                    return "mnull";
                 case "20":
                     return "meg20";
+                case "10,00":
+                    return "meg10";
                 case "10":
                     return "meg10";
+                case "3,00":
+                    return "50";
+                case "3":
+                    return "50";
+                case "2,00":
+                    return "22";
+                case "2":
+                    return "22";
+                case "6":
+                    return "meg6BE";
+                case "6,00":
+                    return "meg6BE";
+                case "21":
+                    return "meg21BE";
+                case "21,00":
+                    return "meg21BE";
+                case "173":
+                    return "mnull";
+                case "173,00":
+                    return "mnull";
+                case "0":
+                    if("DE".equals(land))
+                        return "mnst";
+                    else if ("AT".equals(land))
+                        return "meg0";
+                    else if ("BE".equals(land))
+                        return "meg0BE";
+                    else if ("ES".equals(land))
+                        return "meg0ES";
+                    else
+                        return "0";
+                case "0,00":
+                    if("DE".equals(land))
+                        return "mnst";
+                    else if ("AT".equals(land))
+                        return "meg0";
+                    else if ("BE".equals(land))
+                        return "meg0BE";
+                    else if ("ES".equals(land))
+                        return "meg0ES";
+                    else
+                        return steuersatz;
                 default:
                     return steuersatz;
             }
         }
 
-        private String mapKononummer(String kontonummer) {
+        private String mapKononummer(String kontonummer, String land) {
+            if ("AT".equals(land))
             switch (kontonummer) {
                 case "20001":
                     return "20013";
@@ -266,7 +317,40 @@ public class MainRechnungenA1 {
                 default:
                     return kontonummer;
             }
+            else if ("BE".equals(land))
+                switch (kontonummer) {
+                case "20001":
+                    return "20018";
+                case "20002":
+                    return "20019";
+                case "20004":
+                    return "20020";
+                case "20005":
+                    return "20022";
+                case "20008":
+                    return "20024";
+                default:
+                    return kontonummer;
+            }
+            else if  ("ES".equals(land))
+                switch (kontonummer) {
+                    case "20001":
+                        return "20023";
+                    case "20002":
+                        return "20024";
+                    case "20004":
+                        return "20025";
+                    case "20005":
+                        return "20027";
+                    case "20008":
+                        return "20026";
+                    default:
+                        return kontonummer;
+                }
+            else
+                return kontonummer;
         }
+
 
         private String formatLeistungsdatum(String leistungsdatum) {
             if (leistungsdatum.length() == 8) {
