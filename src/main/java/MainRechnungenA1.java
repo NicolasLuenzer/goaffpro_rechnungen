@@ -178,6 +178,7 @@ public class MainRechnungenA1 {
             FibuBelegposition.Opinfos opinfos = new FibuBelegposition.Opinfos();
             FibuBelegposition.Opinfos.OpAngaben opAngaben = new FibuBelegposition.Opinfos.OpAngaben();
             opAngaben.setOpNr(belegFeld1);
+
             opAngaben.setOpText(firstRecord.get("Buchungstext"));
             opAngaben.setVerwendungszweck(belegFeld1);
 
@@ -205,8 +206,6 @@ public class MainRechnungenA1 {
                 FibuBelegposition position = new FibuBelegposition();
                 position.setBuchungsschluessel("S".equals(SoderH) ? "150" : "110");
                 position.setKontonummer(record.get("Gegenkonto (ohne BU-Schlüssel)"));
-
-
                 position.setBetrag(record.get("Basis-Umsatz").replace(',', '.'));
                 position.setPosLeistungsdatum(leistungsdatum);
 
@@ -216,8 +215,8 @@ public class MainRechnungenA1 {
                     position.setSteuerschluessel(mapSteuersatz(record.get("BU-Schlüssel"), "DE"));
                 }
 
-                if("8316".equals(record.get("Gegenkonto (ohne BU-Schlüssel)"))
-                        && "loni".contains(firstRecord.get("Buchungstext").toLowerCase())){
+                if("8316".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")))
+                    if(firstRecord.get("Buchungstext").toLowerCase().contains("loni")){
                     position.setKontonummer("8215");
                     position.setSteuerschluessel("meg");
                 }
