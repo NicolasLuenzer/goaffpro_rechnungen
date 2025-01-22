@@ -2,7 +2,7 @@
 // Diese Datei wurde mit der JavaTM Architecture for XML Binding(JAXB) Reference Implementation, v2.3.2 generiert 
 // Siehe <a href="https://javaee.github.io/jaxb-v2/">https://javaee.github.io/jaxb-v2/</a> 
 // Änderungen an dieser Datei gehen bei einer Neukompilierung des Quellschemas verloren. 
-// Generiert: 2024.10.28 um 09:01:03 AM CET 
+// Generiert: 2025.01.22 um 11:04:06 AM CET 
 //
 
 
@@ -113,6 +113,7 @@ import javax.xml.bind.annotation.XmlType;
  *                                                       &lt;restriction base="{http://www.w3.org/2001/XMLSchema}anyType"&gt;
  *                                                         &lt;sequence&gt;
  *                                                           &lt;element name="opNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+ *                                                           &lt;element name="ustIdentNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
  *                                                           &lt;element name="opText" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
  *                                                           &lt;element name="verwendungszweck" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
  *                                                           &lt;element name="opBetrag" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
@@ -301,6 +302,7 @@ public class FibuBelege {
      *                                             &lt;restriction base="{http://www.w3.org/2001/XMLSchema}anyType"&gt;
      *                                               &lt;sequence&gt;
      *                                                 &lt;element name="opNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+     *                                                 &lt;element name="ustIdentNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
      *                                                 &lt;element name="opText" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
      *                                                 &lt;element name="verwendungszweck" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
      *                                                 &lt;element name="opBetrag" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
@@ -733,6 +735,7 @@ public class FibuBelege {
          *                                   &lt;restriction base="{http://www.w3.org/2001/XMLSchema}anyType"&gt;
          *                                     &lt;sequence&gt;
          *                                       &lt;element name="opNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+         *                                       &lt;element name="ustIdentNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
          *                                       &lt;element name="opText" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
          *                                       &lt;element name="verwendungszweck" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
          *                                       &lt;element name="opBetrag" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
@@ -824,6 +827,7 @@ public class FibuBelege {
              *                         &lt;restriction base="{http://www.w3.org/2001/XMLSchema}anyType"&gt;
              *                           &lt;sequence&gt;
              *                             &lt;element name="opNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+             *                             &lt;element name="ustIdentNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
              *                             &lt;element name="opText" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
              *                             &lt;element name="verwendungszweck" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
              *                             &lt;element name="opBetrag" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
@@ -1029,6 +1033,7 @@ public class FibuBelege {
                  *               &lt;restriction base="{http://www.w3.org/2001/XMLSchema}anyType"&gt;
                  *                 &lt;sequence&gt;
                  *                   &lt;element name="opNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+                 *                   &lt;element name="ustIdentNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
                  *                   &lt;element name="opText" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
                  *                   &lt;element name="verwendungszweck" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
                  *                   &lt;element name="opBetrag" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
@@ -1090,6 +1095,7 @@ public class FibuBelege {
                      *     &lt;restriction base="{http://www.w3.org/2001/XMLSchema}anyType"&gt;
                      *       &lt;sequence&gt;
                      *         &lt;element name="opNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
+                     *         &lt;element name="ustIdentNr" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
                      *         &lt;element name="opText" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
                      *         &lt;element name="verwendungszweck" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
                      *         &lt;element name="opBetrag" type="{http://www.w3.org/2001/XMLSchema}string"/&gt;
@@ -1104,6 +1110,7 @@ public class FibuBelege {
                     @XmlAccessorType(XmlAccessType.FIELD)
                     @XmlType(name = "", propOrder = {
                         "opNr",
+                        "ustIdentNr",
                         "opText",
                         "verwendungszweck",
                         "opBetrag"
@@ -1112,6 +1119,8 @@ public class FibuBelege {
 
                         @XmlElement(required = true)
                         protected String opNr;
+                        @XmlElement(required = true)
+                        protected String ustIdentNr;
                         @XmlElement(required = true)
                         protected String opText;
                         @XmlElement(required = true)
@@ -1141,6 +1150,30 @@ public class FibuBelege {
                          */
                         public void setOpNr(String value) {
                             this.opNr = value;
+                        }
+
+                        /**
+                         * Ruft den Wert der ustIdentNr-Eigenschaft ab.
+                         * 
+                         * @return
+                         *     possible object is
+                         *     {@link String }
+                         *     
+                         */
+                        public String getUstIdentNr() {
+                            return ustIdentNr;
+                        }
+
+                        /**
+                         * Legt den Wert der ustIdentNr-Eigenschaft fest.
+                         * 
+                         * @param value
+                         *     allowed object is
+                         *     {@link String }
+                         *     
+                         */
+                        public void setUstIdentNr(String value) {
+                            this.ustIdentNr = value;
                         }
 
                         /**
