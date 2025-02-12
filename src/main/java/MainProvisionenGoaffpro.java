@@ -177,10 +177,10 @@ public class MainProvisionenGoaffpro {
                     case "DE":
                         if (affiliateSteuernummer != null && !"Kein Wert gefunden für tax_identification_number".equals(affiliateSteuernummer)) {
                             positionSecond.setKontonummer("4767");
-                            positionSecond.setSteuerschluessel("70-4747");
+                            positionSecond.setSteuerschluessel("70-4767");
                         } else {
                             positionSecond.setKontonummer("4766");
-                            positionSecond.setSteuerschluessel("vnull-4746");
+                            positionSecond.setSteuerschluessel("vnull-4766");
                         }
                         break;
                     case "AT":
