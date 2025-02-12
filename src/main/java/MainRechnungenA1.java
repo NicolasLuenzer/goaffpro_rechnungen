@@ -193,9 +193,6 @@ public class MainRechnungenA1 {
                 }
 
 
-
-
-
                 String SoderH = record.get("Soll/Haben-Kennzeichen");
                 double betrag = Double.parseDouble(record.get("Basis-Umsatz").replace(',', '.'));
                 if ("S".equals(SoderH)) {
@@ -215,10 +212,11 @@ public class MainRechnungenA1 {
                     position.setSteuerschluessel(mapSteuersatz(record.get("BU-Schlüssel"), "DE"));
                 }
 
-                if("8316".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")))
-                    if(firstRecord.get("Buchungstext").toLowerCase().contains("loni")){
+                if("8316".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) &&
+                    firstRecord.get("Buchungstext").toLowerCase().contains("loni")){
                     position.setKontonummer("8215");
                     position.setSteuerschluessel("meg");
+                    opAngaben.setUstIdentNr("ATU80064617");
                 }
                 positionList.add(position);
 

@@ -177,15 +177,27 @@ public class MainProvisionenGoaffpro {
                     case "DE":
                         if (affiliateSteuernummer != null && !"Kein Wert gefunden für tax_identification_number".equals(affiliateSteuernummer)) {
                             positionSecond.setKontonummer("4767");
+                            positionSecond.setSteuerschluessel("70-4747");
                         } else {
                             positionSecond.setKontonummer("4766");
+                            positionSecond.setSteuerschluessel("vnull-4746");
                         }
                         break;
                     case "AT":
                         positionSecond.setKontonummer("4768");
+                        positionSecond.setSteuerschluessel("vnull-4768");
+                        break;
+                    case "BE":
+                        positionSecond.setKontonummer("4774");
+                        positionSecond.setSteuerschluessel("vnull-4774");
                         break;
                     case "CH":
                         positionSecond.setKontonummer("4769");
+                        positionSecond.setSteuerschluessel("vnull-4769");
+                        break;
+                    case "ES":
+                        positionSecond.setKontonummer("4773");
+                        positionSecond.setSteuerschluessel("vnull-4773");
                         break;
                     default:
                         positionSecond.setKontonummer(getValueAsString(payment, "affiliate_id"));
@@ -198,6 +210,7 @@ public class MainProvisionenGoaffpro {
                 List<FibuBelegposition> positionList = fibuBelegpositionen.getFibuBelegposition();
                 positionList.add(positionFirst);
                 positionList.add(positionSecond);
+
 
                 fibuBeleg.setFibuBelegpositionen(fibuBelegpositionen);
                 fibuBelege.getFibuBeleg().add(fibuBeleg);
