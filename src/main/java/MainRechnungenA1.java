@@ -212,7 +212,9 @@ public class MainRechnungenA1 {
                     position.setSteuerschluessel(mapSteuersatz(record.get("BU-Schlüssel"), "DE"));
                 }
 
-                if("8316".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) &&
+                if(("8215".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) ||
+                        "8316".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) ||
+                        "8311".equals(record.get("Gegenkonto (ohne BU-Schlüssel)"))) &&
                     firstRecord.get("Buchungstext").toLowerCase().contains("loni")){
                     position.setKontonummer("8215");
                     position.setSteuerschluessel("meg");
@@ -243,56 +245,36 @@ public class MainRechnungenA1 {
 
         private String mapSteuersatz(String steuersatz, String land) {
             switch (steuersatz) {
-                case "20,00":
+                case "20,00", "20":
                     return "meg20";
-                case "20":
-                    return "meg20";
-                case "10,00":
+                case "10,00", "10":
                     return "meg10";
-                case "10":
-                    return "meg10";
-                case "3,00":
-                    return "50";
-                case "3":
-                    return "50";
-                case "2,00":
+                case "2,00", "2":
                     return "22";
-                case "2":
-                    return "22";
-                case "6":
+                case "6", "6,00":
                     return "meg6BE";
-                case "6,00":
-                    return "meg6BE";
-                case "21":
-                    return "meg21BE";
-                case "21,00":
-                    return "meg21BE";
-                case "173":
-                    return "mnull";
-                case "173,00":
-                    return "mnull";
-                case "0":
-                    if("DE".equals(land))
-                        return "mnst";
-                    else if ("AT".equals(land))
-                        return "meg0";
-                    else if ("BE".equals(land))
-                        return "meg0BE";
-                    else if ("ES".equals(land))
-                        return "meg0ES";
-                    else
-                        return "0";
-                case "0,00":
-                    if("DE".equals(land))
-                        return "mnst";
-                    else if ("AT".equals(land))
-                        return "meg0";
-                    else if ("BE".equals(land))
-                        return "meg0BE";
-                    else if ("ES".equals(land))
-                        return "meg0ES";
+                case "17,00", "17":
+                    return "meg17LU";
+                case "3,00", "3":
+                    if("LU".equals(land))
+                        return "meg3LU";
+                    else if("DE".equals(land))
+                        return "50";
                     else
                         return steuersatz;
+                case "21", "21,00":
+                    return "meg21BE";
+                case "173", "173,00":
+                    return "mnull";
+                case "0", "0,00":
+                    return switch (land) {
+                        case "DE" -> "mnst";
+                        case "AT" -> "meg0";
+                        case "BE" -> "meg0BE";
+                        case "ES" -> "meg0ES";
+                        case "LU" -> "meg0LU";
+                        case null, default -> "0";
+                    };
                 default:
                     return steuersatz;
             }
@@ -341,6 +323,21 @@ public class MainRechnungenA1 {
                         return "20027";
                     case "20008":
                         return "20026";
+                    default:
+                        return kontonummer;
+                }
+            else if  ("LU".equals(land))
+                switch (kontonummer) {
+                    case "20001":
+                        return "20028";
+                    case "20002":
+                        return "20029";
+                    case "20004":
+                        return "20030";
+                    case "20005":
+                        return "20031";
+                    case "20008":
+                        return "20032";
                     default:
                         return kontonummer;
                 }
