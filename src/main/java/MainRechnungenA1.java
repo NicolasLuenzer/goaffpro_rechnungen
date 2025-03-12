@@ -146,7 +146,7 @@ public class MainRechnungenA1 {
             belegkopf.setBelegnummer("AUTO");
 
             // Set Leistungsdatum using a separate method to format it
-            String leistungsdatum = formatLeistungsdatum(firstRecord.get("Leistungsdatum"));
+            String leistungsdatum = formatLeistungsdatum(firstRecord.get("Datum Zuord. Steuerperiode"));
             belegkopf.setBelegdatum(leistungsdatum);
 
             belegkopf.setBruttoErfassung("j");
@@ -215,7 +215,8 @@ public class MainRechnungenA1 {
                 if(("8215".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) ||
                         "8316".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) ||
                         "8311".equals(record.get("Gegenkonto (ohne BU-Schlüssel)"))) &&
-                    firstRecord.get("Buchungstext").toLowerCase().contains("loni")){
+                    firstRecord.get("Buchungstext").toLowerCase().contains("loni") ||
+                        "ATU80064617".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))){
                     position.setKontonummer("8215");
                     position.setSteuerschluessel("meg");
                     opAngaben.setUstIdentNr("ATU80064617");
