@@ -145,6 +145,7 @@ public class MainZahlungenA1 {
             boolean isZE = "ze".equals(belegkopf.getBelegart());
             boolean isCH = "173".equals(record.get("BU-Schlüssel"))/* && isZahlung*/;
             boolean isAT = "AT".equals(record.get("EU-Land u. UStID (Bestimmung)"));
+            String land = record.get("EU-Land u. UStID (Bestimmung)");
 
             belegkopf.setReferenznr(isGebuehren ? "Gebühr" : isTransit ? "Transit" : belegFeld1);
             fibuBeleg.setBelegkopf(belegkopf);
@@ -202,7 +203,7 @@ public class MainZahlungenA1 {
             if (isCH) {
                 secondPosition.setKontonummer("50001");
             } else {
-                secondPosition.setKontonummer(mapKontonummer(gegenkonto, isAT));
+                secondPosition.setKontonummer(mapKontonummer(gegenkonto, land));
             }
             secondPosition.setBetrag(record.get("Basis-Umsatz").replace(',', '.'));
             secondPosition.setPosLeistungsdatum(leistungsdatum);
@@ -259,25 +260,40 @@ public class MainZahlungenA1 {
             }
         }
 
-        private String mapKontonummer(String kontonummer, boolean isAT) {
-            if(!isAT)
-                return kontonummer;
-
+        private String mapKontonummer(String kontonummer, String land) {
             // wenn Österreich dann mapping
-            switch (kontonummer) {
-                case "20001":
-                    return "20013";
-                case "20002":
-                    return "20014";
-                case "20004":
-                    return "20015";
-                case "20005":
-                    return "20016";
-                case "20008":
-                    return "20017";
-                default:
-                    return kontonummer;
+            if ("AT".equals(land)) {
+                switch (kontonummer) {
+                    case "20001":
+                        return "20013";
+                    case "20002":
+                        return "20014";
+                    case "20004":
+                        return "20015";
+                    case "20005":
+                        return "20016";
+                    case "20008":
+                        return "20017";
+                    default:
+                        return kontonummer;
+                }
             }
+            if ("ES".equals(land)) {
+                switch (kontonummer) {
+                    case "20001":
+                        return "20023";
+                    case "20002":
+                        return "20024";
+                    case "20004":
+                        return "20025";
+                    case "20005":
+                        return "20027";
+                    case "20008":
+                        return "20026";
+                    default:
+                        return kontonummer;
+                }
+            } else return kontonummer;
         }
 
         private String formatLeistungsdatum(String leistungsdatum) {
