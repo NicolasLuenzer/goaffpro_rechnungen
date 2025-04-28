@@ -264,7 +264,11 @@ public class MainRechnungenA1 {
                     else
                         return steuersatz;
                 case "21", "21,00":
-                    return "meg21BE";
+                    return switch (land) {
+                        case "BE" -> "meg21BE";
+                        case "ES" -> "meg21ES";
+                        case null, default -> "kein_meg21_fuer_land";
+                    };
                 case "173", "173,00":
                     return "mnull";
                 case "0", "0,00":
