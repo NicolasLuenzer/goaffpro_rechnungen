@@ -207,7 +207,7 @@ public class MainZahlungenA1 {
             }
             secondPosition.setBetrag(record.get("Basis-Umsatz").replace(',', '.'));
             secondPosition.setPosLeistungsdatum(leistungsdatum);
-            if(isGebuehren) secondPosition.setSteuerschluessel("v13b_Inl");
+            if(isGebuehren) secondPosition.setSteuerschluessel("vnull");
             positionList.add(secondPosition);
 
             if(isZahlung) {
