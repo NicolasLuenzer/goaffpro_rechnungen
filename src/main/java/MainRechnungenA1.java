@@ -286,7 +286,7 @@ public class MainRechnungenA1 {
         }
 
         private String mapKononummer(String kontonummer, String land) {
-            if ("AT".equals(land))
+            if ("AT".equals(land) || "ATU80064617".equals(land) )
             switch (kontonummer) {
                 case "20001":
                     return "20013";
