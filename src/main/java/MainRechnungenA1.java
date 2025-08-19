@@ -105,7 +105,9 @@ public class MainRechnungenA1 {
 
                 // Group records by "Belegfeld 1" and filter out records with "CH" in "EU-Land u. UStID (Bestimmung)"
                 for (CSVRecord record : records) {
-                    if (!"CH".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
+                    if (!"CH".equals(record.get("EU-Land u. UStID (Bestimmung)"))
+                            && !"LI".equals(record.get("EU-Land u. UStID (Bestimmung)"))
+                    ) {
                         String belegfeld1 = record.get("Belegfeld 1");
                         groupedRecords.computeIfAbsent(belegfeld1, k -> new ArrayList<>()).add(record);
                     }
@@ -188,7 +190,10 @@ public class MainRechnungenA1 {
             for (int i = 0; i < records.size(); i++) {
                 CSVRecord record = records.get(i);
                 if("8120".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) &&
-                        "CH".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))){
+                        ("CH".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)")) ||
+                                "LI".equals(firstRecord.get("EU-Land u. UStID (Bestimmung)"))
+                        )
+                                 ){
                     continue;
                 }
 
