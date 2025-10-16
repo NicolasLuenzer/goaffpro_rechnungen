@@ -212,9 +212,9 @@ public class MainRechnungenA1 {
                 position.setPosLeistungsdatum(leistungsdatum);
 
                 if (!"DE".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
-                    position.setSteuerschluessel(mapSteuersatz(record.get("EU-Steuersatz (Bestimmung)"), record.get("EU-Land u. UStID (Bestimmung)")));
+                    position.setSteuerschluessel(mapSteuersatz(record.get("EU-Steuersatz (Bestimmung)"), record.get("EU-Land u. UStID (Bestimmung)"), record.get("Gegenkonto (ohne BU-Schlüssel)")));
                 } else if ("DE".equals(record.get("EU-Land u. UStID (Bestimmung)"))) {
-                    position.setSteuerschluessel(mapSteuersatz(record.get("BU-Schlüssel"), "DE"));
+                    position.setSteuerschluessel(mapSteuersatz(record.get("BU-Schlüssel"), "DE", record.get("Gegenkonto (ohne BU-Schlüssel)")));
                 }
 
                 if(("8215".equals(record.get("Gegenkonto (ohne BU-Schlüssel)")) ||
@@ -249,7 +249,13 @@ public class MainRechnungenA1 {
             return fibuBeleg;
         }
 
-        private String mapSteuersatz(String steuersatz, String land) {
+        private String mapSteuersatz(String steuersatz, String land, String gegenkonto) {
+
+            // Extralocke für Gutschein
+            if ("1796".equals(gegenkonto) && "DE".equals(land))
+                return "mnst";
+            else
+            // normal
             switch (steuersatz) {
                 case "20,00", "20":
                     return "meg20";
