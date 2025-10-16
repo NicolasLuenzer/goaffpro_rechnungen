@@ -274,6 +274,8 @@ public class MainZahlungenA1 {
                         return "20016";
                     case "20008":
                         return "20017";
+                    case "20009":
+                        return "20011";
                     default:
                         return kontonummer;
                 }
@@ -290,10 +292,50 @@ public class MainZahlungenA1 {
                         return "20027";
                     case "20008":
                         return "20026";
+                    case "20009":
+                        return "20033";
                     default:
                         return kontonummer;
                 }
-            } else return kontonummer;
+            }
+            if ("BE".equals(land)) {
+                switch (kontonummer) {
+                    case "20001":
+                        return "20018";
+                    case "20002":
+                        return "20019";
+                    case "20004":
+                        return "20020";
+                    case "20005":
+                        return "20022";
+                    case "20008":
+                        return "20021";
+                    case "20009":
+                        return "20010";
+                    default:
+                        return kontonummer;
+                }
+            }
+            if ("LU".equals(land)) {
+                switch (kontonummer) {
+                    case "20001":
+                        return "20028";
+                    case "20002":
+                        return "20029";
+                    case "20004":
+                        return "20030";
+                    case "20005":
+                        return "20031";
+                    case "20008":
+                        return "20032";
+                    case "20009":
+                        return "20034";
+                    default:
+                        return kontonummer;
+                }
+            }
+            else return kontonummer;
+
         }
 
         private String formatLeistungsdatum(String leistungsdatum) {

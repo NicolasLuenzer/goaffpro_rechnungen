@@ -303,6 +303,8 @@ public class MainRechnungenA1 {
                     return "20016";
                 case "20008":
                     return "20017";
+                case "20009":
+                    return "20011";
                 default:
                     return kontonummer;
             }
@@ -318,6 +320,8 @@ public class MainRechnungenA1 {
                     return "20022";
                 case "20008":
                     return "20024";
+                case "20009":
+                        return "20010";
                 default:
                     return kontonummer;
             }
@@ -333,6 +337,8 @@ public class MainRechnungenA1 {
                         return "20027";
                     case "20008":
                         return "20026";
+                    case "20009":
+                        return "20033";
                     default:
                         return kontonummer;
                 }
@@ -348,6 +354,8 @@ public class MainRechnungenA1 {
                         return "20031";
                     case "20008":
                         return "20032";
+                    case "20009":
+                        return "20034";
                     default:
                         return kontonummer;
                 }
