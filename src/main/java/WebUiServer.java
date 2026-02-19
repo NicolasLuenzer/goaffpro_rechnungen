@@ -21,6 +21,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -47,7 +48,7 @@ public class WebUiServer {
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
-    private static final String APP_VERSION = resolveVersion();
+    private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
 
     public static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
@@ -421,7 +422,7 @@ public class WebUiServer {
                 mergeUiSettingsIntoConfig(config, uiSettings);
 
                 String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
-                String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?id=" + paymentId
+                String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + paymentId
                         + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
                 JsonNode response = requestJson(detailsUrl, apiKey);
                 JsonNode payments = response.get("payments");
@@ -429,7 +430,16 @@ public class WebUiServer {
                     sendResponse(exchange, 404, "application/json", "{\"error\":\"Keine Payment-Details gefunden\"}");
                     return;
                 }
-                JsonNode payment = payments.get(0);
+                JsonNode payment = null;
+                for (JsonNode pNode : payments) {
+                    if (paymentId.equals(asText(pNode, "id"))) {
+                        payment = pNode;
+                        break;
+                    }
+                }
+                if (payment == null) {
+                    payment = payments.get(0);
+                }
 
                 String exportDirValue = requestedDir.isEmpty()
                         ? Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH)
@@ -475,35 +485,34 @@ public class WebUiServer {
                 document.addPage(page);
 
                 try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
+                    float startX = 50f;
+                    float tableTopY = 710f;
+                    float rowHeight = 22f;
+                    float keyColWidth = 190f;
+                    float valueColWidth = 330f;
+
                     cs.beginText();
                     cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
                     cs.newLineAtOffset(50, 750);
                     cs.showText("GoAffPro Rechnungsdetails");
                     cs.endText();
 
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA, 10);
-                    cs.newLineAtOffset(50, 720);
-
-                    List<String> lines = List.of(
-                            "Payment-ID: " + asText(payment, "id"),
-                            "Affiliate-ID: " + asText(payment, "affiliate_id"),
-                            "Betrag: " + asText(payment, "amount") + " " + asText(payment, "currency"),
-                            "Payment Method: " + asText(payment, "payment_method"),
-                            "Payment Details: " + asText(payment, "payment_details"),
-                            "Affiliate Message: " + asText(payment, "affiliate_message"),
-                            "Admin Note: " + asText(payment, "admin_note"),
-                            "Transactions: " + asText(payment, "transactions"),
-                            "Created At: " + asText(payment, "created_at")
+                    List<String[]> rows = List.of(
+                            new String[]{"Payment-ID", asText(payment, "id")},
+                            new String[]{"Affiliate-ID", asText(payment, "affiliate_id")},
+                            new String[]{"Betrag", asText(payment, "amount") + " " + asText(payment, "currency")},
+                            new String[]{"Payment Method", asText(payment, "payment_method")},
+                            new String[]{"Payment Details", asText(payment, "payment_details")},
+                            new String[]{"Affiliate Message", asText(payment, "affiliate_message")},
+                            new String[]{"Admin Note", asText(payment, "admin_note")},
+                            new String[]{"Transactions", asText(payment, "transactions")},
+                            new String[]{"Created At", asText(payment, "created_at")}
                     );
 
-                    boolean first = true;
-                    for (String line : lines) {
-                        if (!first) cs.newLineAtOffset(0, -16);
-                        cs.showText(line.length() > 140 ? line.substring(0, 140) : line);
-                        first = false;
+                    for (int i = 0; i < rows.size(); i++) {
+                        float y = tableTopY - (i * rowHeight);
+                        drawTableRow(cs, startX, y, rowHeight, keyColWidth, valueColWidth, rows.get(i)[0], rows.get(i)[1]);
                     }
-                    cs.endText();
                 }
 
                 document.save(pdfPath.toFile());
@@ -512,6 +521,30 @@ public class WebUiServer {
     }
 
 
+
+    private static void drawTableRow(PDPageContentStream cs, float x, float y, float rowHeight, float keyWidth, float valueWidth, String key, String value) throws IOException {
+            cs.setLineWidth(0.5f);
+            cs.addRect(x, y - rowHeight, keyWidth, rowHeight);
+            cs.addRect(x + keyWidth, y - rowHeight, valueWidth, rowHeight);
+            cs.stroke();
+
+            cs.beginText();
+            cs.setFont(PDType1Font.HELVETICA_BOLD, 9);
+            cs.newLineAtOffset(x + 4, y - 14);
+            cs.showText(shortenForPdf(key, 34));
+            cs.endText();
+
+            cs.beginText();
+            cs.setFont(PDType1Font.HELVETICA, 9);
+            cs.newLineAtOffset(x + keyWidth + 4, y - 14);
+            cs.showText(shortenForPdf(value, 74));
+            cs.endText();
+        }
+
+    private static String shortenForPdf(String text, int maxLen) {
+            String safe = text == null ? "" : text.replaceAll("[\r\n]+", " ");
+            return safe.length() > maxLen ? safe.substring(0, maxLen - 1) + "…" : safe;
+        }
     private static class VersionHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -724,20 +757,34 @@ public class WebUiServer {
         return value == null || value.isBlank() ? fallback : value;
     }
 
-    private static String resolveVersion() {
+    private static String resolveVersionWithTimestampAndSequence() {
         try {
-            Process process = new ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+            Process tsProcess = new ProcessBuilder("git", "show", "-s", "--format=%ct", "HEAD")
                     .directory(Paths.get(".").toFile())
                     .redirectErrorStream(true)
                     .start();
-            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-            int code = process.waitFor();
-            if (code == 0 && !output.isBlank()) {
-                return output;
+            String tsOutput = new String(tsProcess.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            int tsCode = tsProcess.waitFor();
+
+            Process countProcess = new ProcessBuilder("git", "rev-list", "--count", "HEAD")
+                    .directory(Paths.get(".").toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            String countOutput = new String(countProcess.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            int countCode = countProcess.waitFor();
+
+            if (tsCode == 0 && countCode == 0 && !tsOutput.isBlank() && !countOutput.isBlank()) {
+                long epoch = Long.parseLong(tsOutput);
+                String timestamp = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
+                        .withZone(ZoneId.systemDefault())
+                        .format(Instant.ofEpochSecond(epoch));
+                String seq = String.format("%06d", Integer.parseInt(countOutput));
+                return timestamp + "-" + seq;
             }
         } catch (Exception ignored) {
         }
-        return "dev";
+        String fallbackTs = DateTimeFormatter.ofPattern("yyyyMMddHHmmss").format(LocalDateTime.now());
+        return fallbackTs + "-000000";
     }
 
     private static String escapeJson(String value) {
