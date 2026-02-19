@@ -82,6 +82,7 @@ public class WebUiServer {
         server.createContext("/api/commissions/add-latest", new AddLatestCommissionHandler());
         server.createContext("/api/commissions/remove", new RemoveCommissionHandler());
         server.createContext("/api/help", new HelpHandler());
+        server.createContext("/api/validation/advisors", new ValidationAdvisorsHandler());
         server.setExecutor(null);
         server.start();
 
@@ -234,7 +235,12 @@ public class WebUiServer {
                     item.put("affiliateAddress", formatAffiliateAddress(affiliate));
                     item.put("affiliateCountry", affiliate != null ? asText(affiliate, "country") : "");
                     item.put("affiliateSteuernummer", affiliate != null ? asText(affiliate, "tax_identification_number") : "");
+                    item.put("affiliatePhone", affiliate != null ? asText(affiliate, "phone") : "");
+                    item.put("affiliateCompany", affiliate != null ? asText(affiliate, "company_name") : "");
                     String iban = asText(payment.path("payment_details"), "account_number").trim();
+                    item.put("iban", iban);
+                    item.put("ibanBic", asText(payment.path("payment_details"), "branch_code"));
+                    item.put("ibanOwner", asText(payment.path("payment_details"), "account_name"));
                     item.put("hasIban", iban.isBlank() ? "Nein" : "Ja");
                     item.put("hasValidIban", isValidIban(iban) ? "Ja" : "Nein");
                     item.put("amount", asText(payment, "amount"));
@@ -495,6 +501,34 @@ public class WebUiServer {
         }
     }
 
+
+    private static class ValidationAdvisorsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
+
+                List<Map<String, String>> rows = fetchAdvisorValidationRows(apiKey);
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", rows.size() + " Beraterinnen geladen.");
+                payload.put("rows", rows);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
 
     private static class HelpHandler implements HttpHandler {
         @Override
@@ -1723,6 +1757,42 @@ public class WebUiServer {
         return map;
     }
 
+
+    private static List<Map<String, String>> fetchAdvisorValidationRows(String apiKey) throws Exception {
+        String url = "https://api.goaffpro.com/v1/admin/affiliates?fields=id,avatar,honorific,date_of_birth,gender,name,first_name,last_name,email,ref_code,company_name,ref_codes,coupon,coupons,phone,website,facebook,twitter,instagram,address_1,address_2,city,state,zip,country,phone,admin_note,extra_1,extra_2,extra_3,group_id,registration_ip,personal_message,payment_method,payment_details,commission,status,last_login,total_referral_earnings,total_network_earnings,total_amount_paid,total_amount_pending,total_other_earnings,number_of_orders,tax_identification_number,login_token,signup_page,comments,tags,approved_at,blocked_at,created_at,updated_at";
+        JsonNode root = requestJson(url, apiKey);
+        JsonNode affiliates = root.get("affiliates");
+        if (affiliates == null || !affiliates.isArray()) return List.of();
+
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (JsonNode a : affiliates) {
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("id", asText(a, "id"));
+            row.put("name", asText(a, "name"));
+            row.put("email", asText(a, "email"));
+            row.put("phone", asText(a, "phone"));
+            row.put("company", asText(a, "company_name"));
+            row.put("address", formatAffiliateAddress(a));
+            row.put("country", asText(a, "country"));
+            row.put("taxNumber", asText(a, "tax_identification_number"));
+            row.put("status", asText(a, "status"));
+            row.put("paymentMethod", asText(a, "payment_method"));
+            String iban = asText(a.path("payment_details"), "account_number").trim();
+            row.put("iban", iban);
+            row.put("ibanValid", isValidIban(iban) ? "Ja" : "Nein");
+            if (isValidationRowRelevant(row)) rows.add(row);
+        }
+        rows.sort((a, b) -> Objects.toString(a.get("name"), "").compareToIgnoreCase(Objects.toString(b.get("name"), "")));
+        return rows;
+    }
+
+    private static boolean isValidationRowRelevant(Map<String, String> row) {
+        String[] keys = new String[]{"name", "email", "phone", "address", "country", "taxNumber", "iban", "paymentMethod"};
+        for (String key : keys) {
+            if (!Objects.toString(row.get(key), "").isBlank()) return true;
+        }
+        return false;
+    }
 
     private static String formatAffiliateAddress(JsonNode affiliate) {
         if (affiliate == null || affiliate.isMissingNode() || affiliate.isNull()) return "";

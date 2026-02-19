@@ -51,6 +51,9 @@
     .section-panel { display: none; }
     .section-panel.active { display: block; }
     .help-doc { white-space: pre-wrap; background:#f8fafc; border:1px solid #dbe3ef; border-radius:8px; padding:12px; font-size:13px; line-height:1.5; }
+    .advisor-name-link { color:#1d4ed8; cursor:pointer; text-decoration:underline dotted; }
+    .advisor-hover-card { position:fixed; z-index:2000; max-width:360px; background:#ffffff; border:1px solid #cbd5e1; border-radius:16px; box-shadow:0 12px 26px rgba(15,23,42,.2); padding:12px; font-size:12px; line-height:1.45; }
+    .advisor-hover-card::after { content:""; position:absolute; left:20px; bottom:-8px; width:14px; height:14px; background:#fff; border-right:1px solid #cbd5e1; border-bottom:1px solid #cbd5e1; transform:rotate(45deg); }
   </style>
 </head>
 <body>
@@ -75,6 +78,7 @@
     const tableState = { rows: [], selected: new Set(), sortBy: 'paymentId', sortDirection: 'desc', filter: '' };
     let pollIntervalId = null;
     let settingsSnapshot = null;
+    let advisorHoverCardEl = null;
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -341,6 +345,51 @@
     }
 
 
+    function createValidationTabAndPanel() {
+      const tabs = document.getElementById('tabs');
+      const panels = document.getElementById('panels');
+
+      const tab = document.createElement('button');
+      tab.className = 'tab';
+      tab.textContent = 'Validierung';
+      tab.dataset.target = 'validation-panel';
+      tabs.appendChild(tab);
+
+      const panel = document.createElement('section');
+      panel.className = 'panel';
+      panel.id = 'validation-panel';
+      panel.innerHTML = `
+        <h2>Validierung der Stammdaten</h2>
+        <div class="toolbar">
+          <button id="loadValidationBtn" class="secondary" type="button">Stammdaten laden / neu laden</button>
+        </div>
+        <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
+        <table>
+          <thead>
+            <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>IBAN korrekt</th><th>Status</th></tr>
+          </thead>
+          <tbody id="validationBody"></tbody>
+        </table>
+      `;
+      panels.appendChild(panel);
+    }
+
+    async function loadValidationData() {
+      const status = document.getElementById('validationStatus');
+      const body = document.getElementById('validationBody');
+      if (!status || !body) return;
+      status.textContent = 'Lade Stammdaten...';
+      body.innerHTML = '';
+      try {
+        const data = await apiGet('/api/validation/advisors');
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        body.innerHTML = rows.map(r => `<tr><td>${r.id || ''}</td><td>${r.name || ''}</td><td>${r.email || ''}</td><td>${r.phone || ''}</td><td>${r.address || ''}</td><td>${r.country || ''}</td><td>${r.taxNumber || ''}</td><td>${r.paymentMethod || ''}</td><td>${r.iban || ''}</td><td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td><td>${r.status || ''}</td></tr>`).join('');
+        status.textContent = data.message || `${rows.length} Datensätze geladen.`;
+      } catch (error) {
+        status.textContent = `Fehler beim Laden der Stammdaten: ${error.message}`;
+      }
+    }
+
     function createHelpTabAndPanel() {
       const tabs = document.getElementById('tabs');
       const panels = document.getElementById('panels');
@@ -400,6 +449,45 @@
       return `${value.toFixed(2).replace('.', ',')} €`;
     }
 
+    function escapeHtml(text) {
+      return String(text || '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+    }
+
+    function hideAdvisorHoverCard() {
+      if (advisorHoverCardEl) {
+        advisorHoverCardEl.remove();
+        advisorHoverCardEl = null;
+      }
+    }
+
+    function showAdvisorHoverCard(evt, advisorDataEncoded) {
+      try {
+        const advisor = JSON.parse(decodeURIComponent(advisorDataEncoded || ''));
+        hideAdvisorHoverCard();
+        advisorHoverCardEl = document.createElement('div');
+        advisorHoverCardEl.className = 'advisor-hover-card';
+        advisorHoverCardEl.innerHTML = `
+          <strong>${escapeHtml(advisor.affiliateName)}</strong><br>
+          <b>E-Mail:</b> ${escapeHtml(advisor.affiliateEmail)}<br>
+          <b>Telefon:</b> ${escapeHtml(advisor.affiliatePhone)}<br>
+          <b>Firma:</b> ${escapeHtml(advisor.affiliateCompany)}<br>
+          <b>Anschrift:</b> ${escapeHtml(advisor.affiliateAddress)}<br>
+          <b>Land:</b> ${escapeHtml(advisor.affiliateCountry)}<br>
+          <b>Steuernummer:</b> ${escapeHtml(advisor.affiliateSteuernummer)}<br>
+          <b>IBAN:</b> ${escapeHtml(advisor.iban)}<br>
+          <b>BIC:</b> ${escapeHtml(advisor.ibanBic)}<br>
+          <b>Kontoinhaber:</b> ${escapeHtml(advisor.ibanOwner)}
+        `;
+        document.body.appendChild(advisorHoverCardEl);
+        const x = Math.min(window.innerWidth - 380, evt.clientX + 14);
+        const y = Math.min(window.innerHeight - 260, evt.clientY + 14);
+        advisorHoverCardEl.style.left = `${Math.max(12, x)}px`;
+        advisorHoverCardEl.style.top = `${Math.max(12, y)}px`;
+      } catch (_) {
+        hideAdvisorHoverCard();
+      }
+    }
+
     function filteredRows() {
       const needle = tableState.filter.trim().toLowerCase();
       let rows = [...tableState.rows];
@@ -433,7 +521,8 @@
         const missingIban = (row.hasIban || '').toLowerCase() !== 'ja';
         const invalidIban = (row.hasValidIban || '').toLowerCase() !== 'ja';
         if (missingName || missingIban || invalidIban) tr.classList.add('row-warning');
-        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateEmail || ''}</td><td>${row.affiliateAddress || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td title="${row.hasIban || ''}">${ibanState}</td><td title="${row.hasValidIban || ''}">${ibanValidState}</td><td>${formatEuroAmount(row.amount)}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
+        const advisorDataEncoded = encodeURIComponent(JSON.stringify(row));
+        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td><span class="advisor-name-link" data-advisor="${advisorDataEncoded}">${row.affiliateName || ''}</span></td><td>${row.affiliateEmail || ''}</td><td>${row.affiliateAddress || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td title="${row.hasIban || ''}">${ibanState}</td><td title="${row.hasValidIban || ''}">${ibanValidState}</td><td>${formatEuroAmount(row.amount)}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
         body.appendChild(tr);
       });
 
@@ -446,6 +535,12 @@
         const key = e.target.dataset.key;
         if (e.target.checked) tableState.selected.add(key); else tableState.selected.delete(key);
       }));
+
+      document.querySelectorAll('.advisor-name-link').forEach(el => {
+        el.addEventListener('mouseenter', (e) => showAdvisorHoverCard(e, el.getAttribute('data-advisor')));
+        el.addEventListener('mousemove', (e) => showAdvisorHoverCard(e, el.getAttribute('data-advisor')));
+        el.addEventListener('mouseleave', hideAdvisorHoverCard);
+      });
 
       applyAdvisorRecipientUiState();
 
@@ -1014,6 +1109,7 @@
         }
         createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
         createAnalyticsTabAndPanel();
+        createValidationTabAndPanel();
         createHelpTabAndPanel();
         wireTabSwitching();
         await loadVersion();
@@ -1026,12 +1122,14 @@
         const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
         const addLatestCommissionBtn = document.getElementById('addLatestCommissionBtn');
         const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
+        const loadValidationBtn = document.getElementById('loadValidationBtn');
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
         if (pickBtn) pickBtn.addEventListener('click', pickFolder);
         if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
         if (addLatestCommissionBtn) addLatestCommissionBtn.addEventListener('click', addLatestCommission);
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
+        if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
 
         const emailRecipientContactInput = document.getElementById('emailRecipientContact');
         const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');

@@ -119,3 +119,34 @@ Diese Dokumentation beschreibt die wichtigsten Funktionen der Anwendung **VEMMiN
 ---
 
 Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
+
+
+## 9) Beraterinnen-Detailansicht in der Tabelle
+
+- In der Spalte **Affiliate-Name** kann auf den Namen gefahren werden (Mouseover).
+- Es erscheint eine visuelle Infokarte (Sprechblasen-Stil) mit persönlichen Stammdaten:
+  - Name
+  - Anschrift
+  - E-Mail
+  - Telefon
+  - Firma
+  - Steuernummer
+  - IBAN/BIC/Kontoinhaber
+
+## 10) Reiter „Validierung"
+
+- Enthält einen Button **„Stammdaten laden / neu laden“**.
+- Jeder Klick leert die Tabelle und lädt die Daten neu vom Backend.
+- Die Daten basieren auf GoAffPro-Endpoint `affiliates` mit erweitertem Feldsatz.
+- Angezeigt werden nur praxisrelevante Felder, u. a.:
+  - ID
+  - Name
+  - E-Mail
+  - Telefon
+  - Adresse
+  - Land
+  - Steuernummer
+  - Zahlmethode
+  - IBAN
+  - IBAN korrekt
+  - Status
