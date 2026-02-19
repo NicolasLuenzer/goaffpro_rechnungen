@@ -200,6 +200,7 @@ public class WebUiServer {
                     item.put("paymentId", paymentId);
                     item.put("belegdatum", toGermanDate(asText(payment, "created_at")));
                     item.put("affiliateName", affiliate != null ? asText(affiliate, "name") : "");
+                    item.put("affiliateAddress", formatAffiliateAddress(affiliate));
                     item.put("affiliateCountry", affiliate != null ? asText(affiliate, "country") : "");
                     item.put("affiliateSteuernummer", affiliate != null ? asText(affiliate, "tax_identification_number") : "");
                     item.put("amount", asText(payment, "amount"));
@@ -1056,7 +1057,7 @@ public class WebUiServer {
         }
 
         String ids = String.join(",", affiliateIds);
-        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,country,tax_identification_number";
+        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,address_1,address_2,city,state,zip,country,tax_identification_number";
         JsonNode root = requestJson(url, apiKey);
         JsonNode affiliates = root.get("affiliates");
         if (affiliates == null || !affiliates.isArray()) {
@@ -1068,6 +1069,37 @@ public class WebUiServer {
             map.put(asText(affiliate, "id"), affiliate);
         }
         return map;
+    }
+
+
+    private static String formatAffiliateAddress(JsonNode affiliate) {
+        if (affiliate == null || affiliate.isMissingNode() || affiliate.isNull()) return "";
+
+        String address1 = asText(affiliate, "address_1");
+        String address2 = asText(affiliate, "address_2");
+        String zip = asText(affiliate, "zip");
+        String city = asText(affiliate, "city");
+        String state = asText(affiliate, "state");
+        String country = asText(affiliate, "country");
+
+        List<String> parts = new ArrayList<>();
+        if (!address1.isBlank()) parts.add(address1);
+        if (!address2.isBlank()) parts.add(address2);
+
+        StringBuilder cityLine = new StringBuilder();
+        if (!zip.isBlank()) cityLine.append(zip.trim());
+        if (!city.isBlank()) {
+            if (cityLine.length() > 0) cityLine.append(" ");
+            cityLine.append(city.trim());
+        }
+        if (!state.isBlank()) {
+            if (cityLine.length() > 0) cityLine.append(", ");
+            cityLine.append(state.trim());
+        }
+        if (cityLine.length() > 0) parts.add(cityLine.toString());
+
+        if (!country.isBlank()) parts.add(country);
+        return String.join(", ", parts);
     }
 
     private static JsonNode requestJson(String apiUrl, String apiKey) throws Exception {

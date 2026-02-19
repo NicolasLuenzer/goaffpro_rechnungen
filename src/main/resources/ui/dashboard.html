@@ -168,6 +168,7 @@
                 <th data-col="paymentId">Payment-ID</th>
                 <th data-col="belegdatum">Belegdatum</th>
                 <th data-col="affiliateName">Affiliate-Name</th>
+                <th data-col="affiliateAddress">Adresse</th>
                 <th data-col="affiliateCountry">Affiliate-Land</th>
                 <th data-col="affiliateSteuernummer">Affiliate-Steuernummer</th>
                 <th data-col="amount">Betrag</th>
@@ -220,7 +221,7 @@
         const tr = document.createElement('tr');
         const key = rowKey(row);
         const checked = tableState.selected.has(key) ? 'checked' : '';
-        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td>${row.amount || ''}</td><td>${row.currency || ''}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
+        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateAddress || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td>${row.amount || ''}</td><td>${row.currency || ''}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
         body.appendChild(tr);
       });
 
