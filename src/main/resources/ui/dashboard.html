@@ -158,14 +158,12 @@
           <div id="main-workspace" class="section-panel active">
             <div class="toolbar">
               <button id="togglePollingBtn">Polling starten</button>
-              <label for="lastImportedSelect">since_id:</label>
+              <label for="lastImportedSelect">Zahllauf:</label>
               <select id="lastImportedSelect"></select>
               <button id="addLatestCommissionBtn" class="secondary" type="button">Neusten Zahllauf hinzufügen</button>
               <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
               <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
             </div>
-            <div id="commissionHistoryEditor" class="pill-list"></div>
-
             <p id="pollStatus" class="status">Noch nicht gestartet.</p>
             <div id="exportedFiles" class="files"></div>
 
@@ -222,6 +220,8 @@
                 <label><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
                 <button id="saveSettingsBtn" class="secondary">Speichern</button>
               </div>
+              <div class="toolbar"><label>Editierbare Zahlläufe:</label></div>
+              <div id="commissionHistoryEditor" class="pill-list"></div>
               <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
             </div>
           </div>
@@ -250,7 +250,7 @@
       panel.innerHTML = `
         <h2>Auswertungen</h2>
         <div class="toolbar">
-          <label for="analyticsSinceSelect">since_id:</label>
+          <label for="analyticsSinceSelect">Zahllauf:</label>
           <select id="analyticsSinceSelect"></select>
           <label for="analyticsFromDate">von:</label>
           <input id="analyticsFromDate" type="date" style="min-width:170px" />
@@ -714,7 +714,7 @@
 
       const summary = data.summary || {};
       const summaryRows = [
-        ['since_id', summary.sinceId || ''],
+        ['Zahllauf', summary.sinceId || ''],
         ['Anzahl Zahlläufe', summary.paymentsCount || 0],
         ['Gesamtbetrag', formatEuroAmount(summary.totalAmount || 0)],
         ['Anzahl Transaktionen', summary.totalTransactions || 0],

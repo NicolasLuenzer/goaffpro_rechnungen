@@ -49,6 +49,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
+import java.security.MessageDigest;
 import java.util.stream.Collectors;
 
 public class WebUiServer {
@@ -215,15 +216,17 @@ public class WebUiServer {
                 Map<String, JsonNode> affiliatesById = fetchAffiliatesById(apiKey, affiliateIds);
 
                 String highestId = activeLastImportedComission;
+                String highestDate = "";
                 List<Map<String, String>> responsePayments = new ArrayList<>();
                 for (JsonNode payment : payments) {
                     String paymentId = asText(payment, "id");
+                    String createdAt = asText(payment, "created_at");
                     String affiliateId = asText(payment, "affiliate_id");
                     JsonNode affiliate = affiliatesById.get(affiliateId);
 
                     Map<String, String> item = new LinkedHashMap<>();
                     item.put("paymentId", paymentId);
-                    item.put("belegdatum", toGermanDate(asText(payment, "created_at")));
+                    item.put("belegdatum", toGermanDate(createdAt));
                     item.put("affiliateName", affiliate != null ? asText(affiliate, "name") : "");
                     item.put("affiliateEmail", affiliate != null ? asText(affiliate, "email") : "");
                     item.put("affiliateAddress", formatAffiliateAddress(affiliate));
@@ -235,12 +238,16 @@ public class WebUiServer {
 
                     if (isGreaterNumeric(paymentId, highestId)) {
                         highestId = paymentId;
+                        highestDate = toGermanDate(createdAt);
                     }
                 }
 
                 config.setProperty("lastImportedComission", activeLastImportedComission);
                 ensureCommissionInHistory(config, activeLastImportedComission);
                 ensureCommissionInHistory(config, highestId);
+                if (!highestDate.isBlank()) {
+                    setCommissionDate(config, highestId, highestDate);
+                }
                 persistSettings(config);
 
                 Map<String, Object> result = new HashMap<>();
@@ -862,6 +869,17 @@ public class WebUiServer {
                 PDPage page = new PDPage();
                 document.addPage(page);
 
+                List<String> lines = List.of(
+                        "Payment-ID: " + safe(row.get("paymentId"), ""),
+                        "Belegdatum: " + safe(row.get("belegdatum"), ""),
+                        "Affiliate-Name: " + safe(row.get("affiliateName"), ""),
+                        "Affiliate-Land: " + safe(row.get("affiliateCountry"), ""),
+                        "Affiliate-Steuernummer: " + safe(row.get("affiliateSteuernummer"), ""),
+                        "Provision: " + safe(row.get("amount"), ""),
+                        "Waehrung: " + safe(row.get("currency"), "")
+                );
+                String contentHash = sha256Hex(String.join("\n", lines));
+
                 try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
                     cs.beginText();
                     cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
@@ -873,16 +891,6 @@ public class WebUiServer {
                     cs.setFont(PDType1Font.HELVETICA, 11);
                     cs.newLineAtOffset(50, 720);
 
-                    List<String> lines = List.of(
-                            "Payment-ID: " + safe(row.get("paymentId"), ""),
-                            "Belegdatum: " + safe(row.get("belegdatum"), ""),
-                            "Affiliate-Name: " + safe(row.get("affiliateName"), ""),
-                            "Affiliate-Land: " + safe(row.get("affiliateCountry"), ""),
-                            "Affiliate-Steuernummer: " + safe(row.get("affiliateSteuernummer"), ""),
-                            "Provision: " + safe(row.get("amount"), ""),
-                            "Waehrung: " + safe(row.get("currency"), "")
-                    );
-
                     boolean first = true;
                     for (String line : lines) {
                         if (!first) {
@@ -891,6 +899,9 @@ public class WebUiServer {
                         cs.showText(line);
                         first = false;
                     }
+                    cs.newLineAtOffset(0, -22);
+                    cs.setFont(PDType1Font.HELVETICA_OBLIQUE, 9);
+                    cs.showText("Inhalts-Hash (SHA-256): " + contentHash);
                     cs.endText();
                 }
 
@@ -1006,6 +1017,7 @@ public class WebUiServer {
             try (PDDocument document = new PDDocument()) {
                 JsonNode payments = apiResponse.get("payments");
                 JsonNode payment = (payments != null && payments.isArray() && payments.size() > 0) ? payments.get(0) : null;
+                String documentHash = sha256Hex(toCanonicalJson(apiResponse) + "|affiliate=" + toCanonicalJson(affiliate));
                 if (payment == null) {
                     PDPage page = new PDPage();
                     document.addPage(page);
@@ -1226,6 +1238,17 @@ public class WebUiServer {
                         cs.endText();
                         y -= 12;
                     }
+
+                    y -= 8;
+                    for (String line : wrapForPdf("Inhalts-Hash (SHA-256): " + documentHash, 100)) {
+                        cs.beginText();
+                        cs.setFont(PDType1Font.HELVETICA_OBLIQUE, 9);
+                        cs.setNonStrokingColor(new Color(72, 78, 85));
+                        cs.newLineAtOffset(x, y);
+                        cs.showText(line);
+                        cs.endText();
+                        y -= 12;
+                    }
                 }
 
                 PDPage advisorPage = new PDPage();
@@ -1330,6 +1353,13 @@ public class WebUiServer {
                         cs.setNonStrokingColor(new Color(72, 78, 85));
                         cs.newLineAtOffset(x, y);
                         cs.showText("* Bestellwert exkl. abgezogener Rabatte (so wie im System/Export übergeben).");
+                        cs.endText();
+
+                        y -= 12;
+                        cs.beginText();
+                        cs.setFont(PDType1Font.HELVETICA_OBLIQUE, 8);
+                        cs.newLineAtOffset(x, y);
+                        cs.showText(shortenForPdf("Inhalts-Hash (SHA-256): " + documentHash, 120));
                         cs.endText();
                     }
                     pageNo++;
@@ -2204,6 +2234,27 @@ private static String toGermanDate(String input) {
 
     private static String sanitizeFilename(String value) {
         return value.replaceAll("[^a-zA-Z0-9._-]", "_");
+    }
+
+    private static String toCanonicalJson(Object value) {
+        try {
+            if (value == null) return "null";
+            return OBJECT_MAPPER.writeValueAsString(value);
+        } catch (Exception e) {
+            return String.valueOf(value);
+        }
+    }
+
+    private static String sha256Hex(String input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(Objects.toString(input, "").getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder(hash.length * 2);
+            for (byte b : hash) sb.append(String.format("%02x", b));
+            return sb.toString();
+        } catch (Exception e) {
+            return "hash-unavailable";
+        }
     }
 
     private static String safe(String value, String fallback) {
