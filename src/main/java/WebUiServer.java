@@ -423,7 +423,8 @@ public class WebUiServer {
                 mergeUiSettingsIntoConfig(config, uiSettings);
 
                 String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
-                String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?id=" + paymentId;
+                String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?id=" + paymentId
+                        + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
                 JsonNode response = requestJson(detailsUrl, apiKey);
                 JsonNode payments = response.get("payments");
                 if (payments == null || !payments.isArray() || payments.size() == 0) {
@@ -473,37 +474,107 @@ public class WebUiServer {
 
         private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse) throws IOException {
             try (PDDocument document = new PDDocument()) {
-                List<String[]> rows = new ArrayList<>();
-                flattenJsonForPdf("response", apiResponse, rows);
+                JsonNode payments = apiResponse.get("payments");
+                JsonNode payment = (payments != null && payments.isArray() && payments.size() > 0) ? payments.get(0) : null;
 
-                if (rows.isEmpty()) {
-                    rows.add(new String[]{"response", "(leer)"});
+                PDPage page = new PDPage();
+                document.addPage(page);
+                try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
+                    float x = 40f;
+                    float y = 770f;
+
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
+                    cs.newLineAtOffset(x, y);
+                    cs.showText("GoAffPro Rechnungsdetails");
+                    cs.endText();
+                    y -= 24;
+
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA, 9);
+                    cs.newLineAtOffset(x, y);
+                    cs.showText(shortenForPdf("Request: " + asText(apiResponse, "request_url"), 130));
+                    cs.endText();
+                    y -= 20;
+
+                    if (payment != null) {
+                        List<String[]> headerRows = new ArrayList<>();
+                        headerRows.add(new String[]{"Payment-ID", asText(payment, "id")});
+                        headerRows.add(new String[]{"Affiliate-ID", asText(payment, "affiliate_id")});
+                        headerRows.add(new String[]{"Betrag", asText(payment, "amount") + " " + asText(payment, "currency")});
+                        headerRows.add(new String[]{"Payment Method", asText(payment, "payment_method")});
+                        headerRows.add(new String[]{"Affiliate Message", asText(payment, "affiliate_message")});
+                        headerRows.add(new String[]{"Admin Note", asText(payment, "admin_note")});
+                        headerRows.add(new String[]{"Created At", asText(payment, "created_at")});
+
+                        for (String[] row : headerRows) {
+                            drawTableRow(cs, x, y, 18f, 180f, 350f, row[0], row[1]);
+                            y -= 18f;
+                        }
+
+                        y -= 10;
+                        cs.beginText();
+                        cs.setFont(PDType1Font.HELVETICA_BOLD, 11);
+                        cs.newLineAtOffset(x, y);
+                        cs.showText("Payment Details");
+                        cs.endText();
+                        y -= 16;
+
+                        JsonNode paymentDetails = payment.get("payment_details");
+                        if (paymentDetails != null && paymentDetails.isObject()) {
+                            var it = paymentDetails.fieldNames();
+                            while (it.hasNext()) {
+                                String key = it.next();
+                                String value = asText(paymentDetails, key);
+                                drawTableRow(cs, x, y, 18f, 180f, 350f, key, value);
+                                y -= 18f;
+                                if (y < 90f) break;
+                            }
+                        }
+                    }
                 }
 
-                final float startX = 40f;
-                final float topY = 740f;
-                final float bottomY = 60f;
-                final float rowHeight = 20f;
-                final float keyColWidth = 210f;
-                final float valueColWidth = 330f;
+                JsonNode transactions = payment != null ? payment.get("transactions") : null;
+                if (transactions != null && transactions.isArray() && transactions.size() > 0) {
+                    int idx = 0;
+                    while (idx < transactions.size()) {
+                        PDPage txPage = new PDPage();
+                        document.addPage(txPage);
+                        try (PDPageContentStream cs = new PDPageContentStream(document, txPage)) {
+                            float x = 30f;
+                            float y = 770f;
 
-                int index = 0;
-                while (index < rows.size()) {
-                    PDPage page = new PDPage();
-                    document.addPage(page);
-                    try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
-                        cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
-                        cs.newLineAtOffset(startX, 770);
-                        cs.showText("GoAffPro Rechnungsdetails (admin/payments?since_id)");
-                        cs.endText();
+                            cs.beginText();
+                            cs.setFont(PDType1Font.HELVETICA_BOLD, 13);
+                            cs.newLineAtOffset(x, y);
+                            cs.showText("Transactions");
+                            cs.endText();
+                            y -= 20;
 
-                        float y = topY;
-                        while (index < rows.size() && (y - rowHeight) > bottomY) {
-                            String[] row = rows.get(index);
-                            drawTableRow(cs, startX, y, rowHeight, keyColWidth, valueColWidth, row[0], row[1]);
-                            y -= rowHeight;
-                            index++;
+                            drawTableRow(cs, x, y, 18f, 90f, 470f, "Spalte", "Wert");
+                            y -= 18f;
+
+                            while (idx < transactions.size() && y > 80f) {
+                                JsonNode tx = transactions.get(idx);
+                                drawTableRow(cs, x, y, 18f, 90f, 470f, "tx_id", asText(tx, "tx_id")); y -= 18f;
+                                drawTableRow(cs, x, y, 18f, 90f, 470f, "amount", asText(tx, "amount")); y -= 18f;
+                                drawTableRow(cs, x, y, 18f, 90f, 470f, "entity_type", asText(tx, "entity_type")); y -= 18f;
+                                drawTableRow(cs, x, y, 18f, 90f, 470f, "created_at", asText(tx, "created_at")); y -= 18f;
+
+                                JsonNode metadata = tx.get("metadata");
+                                if (metadata != null && metadata.isObject()) {
+                                    var it = metadata.fieldNames();
+                                    while (it.hasNext() && y > 80f) {
+                                        String key = it.next();
+                                        drawTableRow(cs, x, y, 18f, 90f, 470f, "metadata." + key, asText(metadata, key));
+                                        y -= 18f;
+                                    }
+                                }
+
+                                drawTableRow(cs, x, y, 12f, 560f, 0f, "", "");
+                                y -= 12f;
+                                idx++;
+                            }
                         }
                     }
                 }
