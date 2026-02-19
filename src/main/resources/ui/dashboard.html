@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GoAffPro Rechnungen Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; background: #f6f8fb; color: #1f2937; }
+    h1 { margin-bottom: 8px; }
+    .hint { margin-bottom: 16px; color: #4b5563; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .tab { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 12px; background: white; cursor: pointer; }
+    .tab.active { background: #2563eb; color: white; border-color: #2563eb; }
+    .panel { display: none; border: 1px solid #d1d5db; border-radius: 10px; background: white; padding: 16px; }
+    .panel.active { display: block; }
+    .status { margin: 12px 0; color: #374151; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+    .settings { margin: 12px 0; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; }
+    input[type="text"], select { min-width: 420px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
+    button { background: #10b981; color: white; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
+    button.secondary { background: #3b82f6; }
+    button.danger { background: #ef4444; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 14px; }
+    th { background: #f3f4f6; cursor: pointer; user-select: none; }
+    th.sort-active { background: #dbeafe; }
+    .files { margin-top: 8px; font-size: 13px; color: #1f2937; }
+  </style>
+</head>
+<body>
+  <h1>Weboberfläche: App-Visualisierung</h1>
+  <p class="hint">Die Reiter werden aus allen ausführbaren Java-Dateien (mit <code>main</code>-Methode) aufgebaut.</p>
+
+  <div id="tabs" class="tabs"></div>
+  <div id="panels"></div>
+
+  <script>
+    const API_BASE = "http://localhost:8080";
+    const tableState = { rows: [], selected: new Set(), sortBy: 'paymentId', sortDirection: 'desc', filter: '' };
+    let pollIntervalId = null;
+
+    async function apiGet(path) {
+      const response = await fetch(`${API_BASE}${path}`);
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'API-Fehler');
+      return json;
+    }
+
+    async function apiPost(path, payload) {
+      const response = await fetch(`${API_BASE}${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'API-Fehler');
+      return json;
+    }
+
+    async function fetchExecutables() { return apiGet('/api/executables'); }
+
+    function createTabAndPanel(executable, isActive = false) {
+      const tabs = document.getElementById('tabs');
+      const panels = document.getElementById('panels');
+
+      const tab = document.createElement('button');
+      tab.className = `tab ${isActive ? 'active' : ''}`;
+      tab.textContent = executable.name;
+      tab.dataset.target = executable.id;
+      tabs.appendChild(tab);
+
+      const panel = document.createElement('section');
+      panel.className = `panel ${isActive ? 'active' : ''}`;
+      panel.id = executable.id;
+
+      if (executable.name === 'MainProvisionenGoaffpro') {
+        panel.innerHTML = `
+          <h2>${executable.name}</h2>
+          <p>Pfad: <code>${executable.path}</code></p>
+
+          <div class="settings">
+            <strong>Einstellungen</strong>
+            <div class="toolbar">
+              <label for="pdfExportPath">PDF Zielverzeichnis:</label>
+              <input id="pdfExportPath" type="text" placeholder="C:\\Users\\nluenzer\\Downloads\\goaffpro" />
+              <button id="pickFolderBtn" type="button" class="secondary">Ordner auswählen…</button>
+              <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
+            </div>
+            <div class="toolbar">
+              <label for="lastImportedSelect">Aktive LastImportedComission (since_id):</label>
+              <select id="lastImportedSelect"></select>
+              <button id="saveSettingsBtn" class="secondary">Speichern</button>
+            </div>
+            <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
+          </div>
+
+          <div class="toolbar">
+            <button id="togglePollingBtn">Polling starten</button>
+            <button id="exportPdfBtn" class="secondary">Selektierte Zeilen als PDF exportieren</button>
+            <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
+          </div>
+
+          <p id="pollStatus" class="status">Noch nicht gestartet.</p>
+          <div id="exportedFiles" class="files"></div>
+
+          <table>
+            <thead>
+              <tr>
+                <th data-col="select"><input id="selectAllRows" type="checkbox" title="Alle sichtbaren Zeilen auswählen" /></th>
+                <th data-col="paymentId">Payment-ID</th>
+                <th data-col="belegdatum">Belegdatum</th>
+                <th data-col="affiliateName">Affiliate-Name</th>
+                <th data-col="affiliateCountry">Affiliate-Land</th>
+                <th data-col="affiliateSteuernummer">Affiliate-Steuernummer</th>
+                <th data-col="amount">Betrag</th>
+                <th data-col="currency">Währung</th>
+                <th data-col="actions">Aktion</th>
+              </tr>
+            </thead>
+            <tbody id="paymentsTableBody"></tbody>
+          </table>
+        `;
+      } else {
+        panel.innerHTML = `<h2>${executable.name}</h2><p>Pfad: <code>${executable.path}</code></p><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
+      }
+
+      panels.appendChild(panel);
+    }
+
+    function activateTab(targetId) {
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab.dataset.target === targetId));
+      document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('active', panel.id === targetId));
+    }
+
+    function wireTabSwitching() { document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => activateTab(tab.dataset.target))); }
+    function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}|${row.currency}`; }
+
+    function filteredRows() {
+      const needle = tableState.filter.trim().toLowerCase();
+      let rows = [...tableState.rows];
+      if (needle) rows = rows.filter(row => Object.values(row).join(' ').toLowerCase().includes(needle));
+      const col = tableState.sortBy;
+      const direction = tableState.sortDirection === 'asc' ? 1 : -1;
+      rows.sort((a, b) => {
+        const left = (a[col] || '').toString();
+        const right = (b[col] || '').toString();
+        const maybeNum = Number(left) - Number(right);
+        if (!Number.isNaN(maybeNum) && left !== '' && right !== '') return maybeNum * direction;
+        return left.localeCompare(right, 'de', { sensitivity: 'base' }) * direction;
+      });
+      return rows;
+    }
+
+    function renderTable() {
+      const body = document.getElementById('paymentsTableBody');
+      const selectAll = document.getElementById('selectAllRows');
+      if (!body) return;
+
+      body.innerHTML = '';
+      const rows = filteredRows();
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        const key = rowKey(row);
+        const checked = tableState.selected.has(key) ? 'checked' : '';
+        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td>${row.amount || ''}</td><td>${row.currency || ''}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
+        body.appendChild(tr);
+      });
+
+      if (selectAll) {
+        const visibleKeys = rows.map(rowKey);
+        selectAll.checked = visibleKeys.length > 0 && visibleKeys.every(k => tableState.selected.has(k));
+      }
+
+      document.querySelectorAll('.row-select').forEach(cb => cb.addEventListener('change', e => {
+        const key = e.target.dataset.key;
+        if (e.target.checked) tableState.selected.add(key); else tableState.selected.delete(key);
+      }));
+
+      document.querySelectorAll('.details-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+        const paymentId = e.target.dataset.paymentId;
+        await loadInvoiceDetailsPdf(paymentId);
+      }));
+
+      document.querySelectorAll('th[data-col]').forEach(th => {
+        th.classList.remove('sort-active');
+        if (th.dataset.col === tableState.sortBy) th.classList.add('sort-active');
+      });
+    }
+
+    function wireSortingAndFiltering() {
+      document.querySelectorAll('th[data-col]').forEach(th => {
+        if (th.dataset.col === 'select' || th.dataset.col === 'actions') return;
+        th.addEventListener('click', () => {
+          if (tableState.sortBy === th.dataset.col) tableState.sortDirection = tableState.sortDirection === 'asc' ? 'desc' : 'asc';
+          else { tableState.sortBy = th.dataset.col; tableState.sortDirection = 'asc'; }
+          renderTable();
+        });
+      });
+
+      const filterInput = document.getElementById('filterInput');
+      if (filterInput) filterInput.addEventListener('input', e => { tableState.filter = e.target.value; renderTable(); });
+
+      const selectAll = document.getElementById('selectAllRows');
+      if (selectAll) selectAll.addEventListener('change', e => {
+        const visible = filteredRows().map(rowKey);
+        if (e.target.checked) visible.forEach(key => tableState.selected.add(key));
+        else visible.forEach(key => tableState.selected.delete(key));
+        renderTable();
+      });
+    }
+
+    function updateCommissionSelect(history, activeValue) {
+      const select = document.getElementById('lastImportedSelect');
+      if (!select) return;
+      const list = Array.isArray(history) ? history : [];
+      const current = activeValue || '';
+      const unique = [...new Set([...list, current].filter(Boolean))];
+      select.innerHTML = unique.map(value => `<option value="${value}">${value}</option>`).join('');
+      if (current) select.value = current;
+    }
+
+    function setPollingButtonState(isRunning) {
+      const btn = document.getElementById('togglePollingBtn');
+      if (!btn) return;
+      btn.textContent = isRunning ? 'Polling stoppen' : 'Polling starten';
+      btn.classList.toggle('danger', isRunning);
+    }
+
+    async function loadSettings() {
+      const input = document.getElementById('pdfExportPath');
+      if (!input) return;
+      try {
+        const data = await apiGet('/api/settings');
+        input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
+      } catch (error) {
+        document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
+      }
+    }
+
+    async function saveSettings() {
+      const input = document.getElementById('pdfExportPath');
+      const select = document.getElementById('lastImportedSelect');
+      const status = document.getElementById('pollStatus');
+      if (!input || !status || !select) return;
+      try {
+        const data = await apiPost('/api/settings', {
+          pdfExportPath: input.value,
+          lastImportedComission: select.value
+        });
+        input.value = data.pdfExportPath || input.value;
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
+        status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
+      } catch (error) {
+        status.textContent = `Fehler beim Speichern der Einstellungen: ${error.message}`;
+      }
+    }
+
+    async function exportSelectedRowsAsPdf() {
+      const status = document.getElementById('pollStatus');
+      const filesBox = document.getElementById('exportedFiles');
+      const input = document.getElementById('pdfExportPath');
+      const rows = tableState.rows.filter(row => tableState.selected.has(rowKey(row)));
+      if (rows.length === 0) { status.textContent = 'Bitte selektiere mindestens eine Tabellenzeile für den PDF-Export.'; return; }
+
+      try {
+        const data = await apiPost('/api/provisionen-goaffpro/export-pdf', { rows, pdfExportPath: input ? input.value : '' });
+        status.textContent = data.message;
+        if (filesBox && Array.isArray(data.files)) filesBox.innerHTML = `<strong>Exportierte Dateien:</strong><br>${data.files.map(f => `<code>${f}</code>`).join('<br>')}`;
+        if (input && data.pdfExportPath) input.value = data.pdfExportPath;
+      } catch (error) {
+        status.textContent = `Fehler beim PDF-Export: ${error.message}`;
+      }
+    }
+
+
+    async function loadInvoiceDetailsPdf(paymentId) {
+      const status = document.getElementById('pollStatus');
+      const input = document.getElementById('pdfExportPath');
+      try {
+        const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
+          paymentId,
+          pdfExportPath: input ? input.value : ''
+        });
+        if (input && data.pdfExportPath) input.value = data.pdfExportPath;
+        status.textContent = data.opened
+          ? `Rechnungsdetails-PDF erstellt und geöffnet: ${data.file}`
+          : `Rechnungsdetails-PDF erstellt: ${data.file}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
+      } catch (error) {
+        status.textContent = `Fehler bei Rechnungsdetails: ${error.message}`;
+      }
+    }
+
+    async function pollOnce() {
+      const status = document.getElementById('pollStatus');
+      try {
+        const data = await apiPost('/api/provisionen-goaffpro/poll', {});
+        if (Array.isArray(data.payments) && data.payments.length > 0) {
+          data.payments.forEach(payment => {
+            const key = rowKey(payment);
+            if (!tableState.rows.find(x => rowKey(x) === key)) tableState.rows.push(payment);
+          });
+          renderTable();
+        }
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
+        status.textContent = data.message || 'Polling erfolgreich.';
+      } catch (error) {
+        status.textContent = `Fehler beim Polling: ${error.message}`;
+      }
+    }
+
+    async function togglePolling() {
+      const status = document.getElementById('pollStatus');
+      if (pollIntervalId) {
+        window.clearInterval(pollIntervalId);
+        pollIntervalId = null;
+        setPollingButtonState(false);
+        status.textContent = 'Polling gestoppt.';
+        return;
+      }
+
+      tableState.rows = [];
+      tableState.selected = new Set();
+      renderTable();
+      setPollingButtonState(true);
+      status.textContent = 'Polling läuft...';
+      await pollOnce();
+      pollIntervalId = window.setInterval(pollOnce, 60000);
+    }
+
+    async function pickFolder() {
+      const input = document.getElementById('pdfExportPath');
+      const hiddenPicker = document.getElementById('folderPickerInput');
+      if (!input) return;
+
+      if (window.showDirectoryPicker) {
+        try {
+          const handle = await window.showDirectoryPicker();
+          if (handle && handle.name) {
+            const guess = input.value || '';
+            const base = guess.includes('\\') ? guess.substring(0, Math.max(0, guess.lastIndexOf('\\'))) : '';
+            input.value = base ? `${base}\\${handle.name}` : handle.name;
+          }
+          return;
+        } catch (_) {}
+      }
+
+      if (hiddenPicker) {
+        hiddenPicker.click();
+      }
+    }
+
+    function wireFolderPickerFallback() {
+      const hiddenPicker = document.getElementById('folderPickerInput');
+      const input = document.getElementById('pdfExportPath');
+      if (!hiddenPicker || !input) return;
+
+      hiddenPicker.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file || !file.webkitRelativePath) return;
+        const topFolder = file.webkitRelativePath.split('/')[0];
+        const current = input.value || '';
+        const base = current.includes('\\') ? current.substring(0, Math.max(0, current.lastIndexOf('\\'))) : '';
+        input.value = base ? `${base}\\${topFolder}` : topFolder;
+      });
+    }
+
+    async function init() {
+      try {
+        const executables = await fetchExecutables();
+        if (!Array.isArray(executables) || executables.length === 0) {
+          document.getElementById('panels').innerHTML = '<p>Keine ausführbaren Java-Dateien gefunden.</p>';
+          return;
+        }
+
+        executables.forEach((exe, index) => createTabAndPanel(exe, index === 0));
+        wireTabSwitching();
+
+        const pollingBtn = document.getElementById('togglePollingBtn');
+        const saveBtn = document.getElementById('saveSettingsBtn');
+        const exportBtn = document.getElementById('exportPdfBtn');
+        const pickBtn = document.getElementById('pickFolderBtn');
+        if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
+        if (saveBtn) saveBtn.addEventListener('click', saveSettings);
+        if (exportBtn) exportBtn.addEventListener('click', exportSelectedRowsAsPdf);
+        if (pickBtn) pickBtn.addEventListener('click', pickFolder);
+
+        wireFolderPickerFallback();
+        wireSortingAndFiltering();
+        renderTable();
+        setPollingButtonState(false);
+        await loadSettings();
+      } catch (error) {
+        document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
