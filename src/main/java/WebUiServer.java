@@ -28,10 +28,12 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class WebUiServer {
@@ -41,6 +43,7 @@ public class WebUiServer {
     private static final DateTimeFormatter FILE_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
     private static final Path CONFIG_PATH = Paths.get("src/main/java/config.properties");
     private static final Path UI_PATH = Paths.get("src/main/resources/ui/dashboard.html");
+    private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
 
     public static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
@@ -143,19 +146,23 @@ public class WebUiServer {
             try {
                 Properties config = loadConfig();
                 String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
-                String lastImportedComission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
+                String activeLastImportedComission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
 
-                String paymentsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + lastImportedComission
+                String paymentsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + activeLastImportedComission
                         + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,created_at";
 
                 JsonNode paymentRoot = requestJson(paymentsUrl, apiKey);
                 JsonNode payments = paymentRoot.get("payments");
 
                 if (payments == null || !payments.isArray() || payments.size() == 0) {
+                    ensureCommissionInHistory(config, activeLastImportedComission);
+                    storeConfig(config);
+
                     Map<String, Object> emptyResult = new HashMap<>();
                     emptyResult.put("payments", Collections.emptyList());
                     emptyResult.put("message", "Keine neuen Zahlungen gefunden.");
-                    emptyResult.put("lastImportedComission", lastImportedComission);
+                    emptyResult.put("lastImportedComission", activeLastImportedComission);
+                    emptyResult.put("lastImportedComissionHistory", getCommissionHistory(config));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(emptyResult));
                     return;
                 }
@@ -170,7 +177,7 @@ public class WebUiServer {
 
                 Map<String, JsonNode> affiliatesById = fetchAffiliatesById(apiKey, affiliateIds);
 
-                String highestId = lastImportedComission;
+                String highestId = activeLastImportedComission;
                 List<Map<String, String>> responsePayments = new ArrayList<>();
                 for (JsonNode payment : payments) {
                     String paymentId = asText(payment, "id");
@@ -192,15 +199,18 @@ public class WebUiServer {
                     }
                 }
 
-                if (!highestId.equals(lastImportedComission)) {
+                if (!highestId.equals(activeLastImportedComission)) {
                     config.setProperty("lastImportedComission", highestId);
-                    storeConfig(config);
                 }
+                ensureCommissionInHistory(config, activeLastImportedComission);
+                ensureCommissionInHistory(config, highestId);
+                storeConfig(config);
 
                 Map<String, Object> result = new HashMap<>();
                 result.put("payments", responsePayments);
                 result.put("message", responsePayments.size() + " neue Zahlung(en) gefunden.");
-                result.put("lastImportedComission", highestId);
+                result.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), highestId));
+                result.put("lastImportedComissionHistory", getCommissionHistory(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(result));
             } catch (Exception e) {
                 Map<String, String> err = new HashMap<>();
@@ -221,8 +231,14 @@ public class WebUiServer {
             if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 Properties config = loadConfig();
                 String exportDir = Objects.toString(config.getProperty("pdfExportPath"), config.getProperty("exportPath", ""));
-                Map<String, String> payload = new HashMap<>();
+                String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
+                ensureCommissionInHistory(config, activeCommission);
+                storeConfig(config);
+
+                Map<String, Object> payload = new HashMap<>();
                 payload.put("pdfExportPath", exportDir);
+                payload.put("lastImportedComission", activeCommission);
+                payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 return;
             }
@@ -231,21 +247,27 @@ public class WebUiServer {
                 try {
                     JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                     String newPath = asText(body, "pdfExportPath").trim();
-                    if (newPath.isEmpty()) {
-                        sendResponse(exchange, 400, "application/json", "{\"error\":\"pdfExportPath darf nicht leer sein\"}");
-                        return;
-                    }
-
-                    Path exportPath = Paths.get(newPath);
-                    Files.createDirectories(exportPath);
+                    String selectedCommission = asText(body, "lastImportedComission").trim();
 
                     Properties config = loadConfig();
-                    config.setProperty("pdfExportPath", exportPath.toAbsolutePath().toString());
+                    if (!newPath.isEmpty()) {
+                        Path exportPath = Paths.get(newPath);
+                        Files.createDirectories(exportPath);
+                        config.setProperty("pdfExportPath", exportPath.toAbsolutePath().toString());
+                    }
+
+                    if (!selectedCommission.isEmpty()) {
+                        config.setProperty("lastImportedComission", selectedCommission);
+                        ensureCommissionInHistory(config, selectedCommission);
+                    }
+
                     storeConfig(config);
 
-                    Map<String, String> payload = new HashMap<>();
+                    Map<String, Object> payload = new HashMap<>();
                     payload.put("message", "Einstellungen gespeichert.");
-                    payload.put("pdfExportPath", exportPath.toAbsolutePath().toString());
+                    payload.put("pdfExportPath", Objects.toString(config.getProperty("pdfExportPath"), config.getProperty("exportPath", "")));
+                    payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
+                    payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 } catch (Exception e) {
                     sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -407,6 +429,35 @@ public class WebUiServer {
         try (OutputStream os = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(os, "Updated by WebUiServer");
         }
+    }
+
+    private static List<String> getCommissionHistory(Properties properties) {
+        String raw = Objects.toString(properties.getProperty(COMMISSION_HISTORY_KEY), "");
+        Set<String> unique = new LinkedHashSet<>();
+        if (!raw.isBlank()) {
+            for (String part : raw.split(",")) {
+                String value = part.trim();
+                if (!value.isEmpty()) {
+                    unique.add(value);
+                }
+            }
+        }
+        String active = Objects.toString(properties.getProperty("lastImportedComission"), "").trim();
+        if (!active.isEmpty()) {
+            unique.add(active);
+        }
+        return new ArrayList<>(unique);
+    }
+
+    private static void ensureCommissionInHistory(Properties properties, String commission) {
+        if (commission == null || commission.isBlank()) {
+            return;
+        }
+        List<String> history = getCommissionHistory(properties);
+        if (!history.contains(commission)) {
+            history.add(commission);
+        }
+        properties.setProperty(COMMISSION_HISTORY_KEY, String.join(",", history));
     }
 
     private static String toGermanDate(String input) {

@@ -16,7 +16,7 @@
     .status { margin: 12px 0; color: #374151; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
     .settings { margin: 12px 0; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; }
-    input[type="text"] { min-width: 420px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
+    input[type="text"], select { min-width: 420px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
     button { background: #10b981; color: white; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
     button.secondary { background: #3b82f6; }
     button:disabled { background: #9ca3af; cursor: not-allowed; }
@@ -36,13 +36,7 @@
 
   <script>
     const API_BASE = "http://localhost:8080";
-    const tableState = {
-      rows: [],
-      selected: new Set(),
-      sortBy: 'paymentId',
-      sortDirection: 'desc',
-      filter: ''
-    };
+    const tableState = { rows: [], selected: new Set(), sortBy: 'paymentId', sortDirection: 'desc', filter: '' };
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -53,18 +47,14 @@
 
     async function apiPost(path, payload) {
       const response = await fetch(`${API_BASE}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'API-Fehler');
       return json;
     }
 
-    async function fetchExecutables() {
-      return apiGet('/api/executables');
-    }
+    async function fetchExecutables() { return apiGet('/api/executables'); }
 
     function createTabAndPanel(executable, isActive = false) {
       const tabs = document.getElementById('tabs');
@@ -90,6 +80,10 @@
             <div class="toolbar">
               <label for="pdfExportPath">PDF Zielverzeichnis:</label>
               <input id="pdfExportPath" type="text" placeholder="z.B. /tmp/goaffpro-pdf-export" />
+            </div>
+            <div class="toolbar">
+              <label for="lastImportedSelect">Aktive LastImportedComission (since_id):</label>
+              <select id="lastImportedSelect"></select>
               <button id="saveSettingsBtn" class="secondary">Speichern</button>
             </div>
           </div>
@@ -120,11 +114,7 @@
           </table>
         `;
       } else {
-        panel.innerHTML = `
-          <h2>${executable.name}</h2>
-          <p>Pfad: <code>${executable.path}</code></p>
-          <p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>
-        `;
+        panel.innerHTML = `<h2>${executable.name}</h2><p>Pfad: <code>${executable.path}</code></p><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
       }
 
       panels.appendChild(panel);
@@ -135,23 +125,14 @@
       document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('active', panel.id === targetId));
     }
 
-    function wireTabSwitching() {
-      document.querySelectorAll('.tab').forEach(tab => {
-        tab.addEventListener('click', () => activateTab(tab.dataset.target));
-      });
-    }
+    function wireTabSwitching() { document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => activateTab(tab.dataset.target))); }
 
-    function rowKey(row) {
-      return `${row.paymentId}|${row.belegdatum}|${row.amount}|${row.currency}`;
-    }
+    function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}|${row.currency}`; }
 
     function filteredRows() {
       const needle = tableState.filter.trim().toLowerCase();
       let rows = [...tableState.rows];
-      if (needle) {
-        rows = rows.filter(row => Object.values(row).join(' ').toLowerCase().includes(needle));
-      }
-
+      if (needle) rows = rows.filter(row => Object.values(row).join(' ').toLowerCase().includes(needle));
       const col = tableState.sortBy;
       const direction = tableState.sortDirection === 'asc' ? 1 : -1;
       rows.sort((a, b) => {
@@ -171,21 +152,11 @@
 
       body.innerHTML = '';
       const rows = filteredRows();
-
       rows.forEach(row => {
         const tr = document.createElement('tr');
         const key = rowKey(row);
         const checked = tableState.selected.has(key) ? 'checked' : '';
-        tr.innerHTML = `
-          <td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td>
-          <td>${row.paymentId || ''}</td>
-          <td>${row.belegdatum || ''}</td>
-          <td>${row.affiliateName || ''}</td>
-          <td>${row.affiliateCountry || ''}</td>
-          <td>${row.affiliateSteuernummer || ''}</td>
-          <td>${row.amount || ''}</td>
-          <td>${row.currency || ''}</td>
-        `;
+        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td>${row.amount || ''}</td><td>${row.currency || ''}</td>`;
         body.appendChild(tr);
       });
 
@@ -194,12 +165,10 @@
         selectAll.checked = visibleKeys.length > 0 && visibleKeys.every(k => tableState.selected.has(k));
       }
 
-      document.querySelectorAll('.row-select').forEach(cb => {
-        cb.addEventListener('change', e => {
-          const key = e.target.dataset.key;
-          if (e.target.checked) tableState.selected.add(key); else tableState.selected.delete(key);
-        });
-      });
+      document.querySelectorAll('.row-select').forEach(cb => cb.addEventListener('change', e => {
+        const key = e.target.dataset.key;
+        if (e.target.checked) tableState.selected.add(key); else tableState.selected.delete(key);
+      }));
 
       document.querySelectorAll('th[data-col]').forEach(th => {
         th.classList.remove('sort-active');
@@ -211,33 +180,32 @@
       document.querySelectorAll('th[data-col]').forEach(th => {
         if (th.dataset.col === 'select') return;
         th.addEventListener('click', () => {
-          if (tableState.sortBy === th.dataset.col) {
-            tableState.sortDirection = tableState.sortDirection === 'asc' ? 'desc' : 'asc';
-          } else {
-            tableState.sortBy = th.dataset.col;
-            tableState.sortDirection = 'asc';
-          }
+          if (tableState.sortBy === th.dataset.col) tableState.sortDirection = tableState.sortDirection === 'asc' ? 'desc' : 'asc';
+          else { tableState.sortBy = th.dataset.col; tableState.sortDirection = 'asc'; }
           renderTable();
         });
       });
 
       const filterInput = document.getElementById('filterInput');
-      if (filterInput) {
-        filterInput.addEventListener('input', e => {
-          tableState.filter = e.target.value;
-          renderTable();
-        });
-      }
+      if (filterInput) filterInput.addEventListener('input', e => { tableState.filter = e.target.value; renderTable(); });
 
       const selectAll = document.getElementById('selectAllRows');
-      if (selectAll) {
-        selectAll.addEventListener('change', e => {
-          const visible = filteredRows().map(rowKey);
-          if (e.target.checked) visible.forEach(key => tableState.selected.add(key));
-          else visible.forEach(key => tableState.selected.delete(key));
-          renderTable();
-        });
-      }
+      if (selectAll) selectAll.addEventListener('change', e => {
+        const visible = filteredRows().map(rowKey);
+        if (e.target.checked) visible.forEach(key => tableState.selected.add(key));
+        else visible.forEach(key => tableState.selected.delete(key));
+        renderTable();
+      });
+    }
+
+    function updateCommissionSelect(history, activeValue) {
+      const select = document.getElementById('lastImportedSelect');
+      if (!select) return;
+      const list = Array.isArray(history) ? history : [];
+      const current = activeValue || '';
+      const unique = [...new Set([...list, current].filter(Boolean))];
+      select.innerHTML = unique.map(value => `<option value="${value}">${value}</option>`).join('');
+      if (current) select.value = current;
     }
 
     async function loadSettings() {
@@ -246,6 +214,7 @@
       try {
         const data = await apiGet('/api/settings');
         input.value = data.pdfExportPath || '';
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
       } catch (error) {
         document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
       }
@@ -253,11 +222,16 @@
 
     async function saveSettings() {
       const input = document.getElementById('pdfExportPath');
+      const select = document.getElementById('lastImportedSelect');
       const status = document.getElementById('pollStatus');
-      if (!input || !status) return;
+      if (!input || !status || !select) return;
       try {
-        const data = await apiPost('/api/settings', { pdfExportPath: input.value });
+        const data = await apiPost('/api/settings', {
+          pdfExportPath: input.value,
+          lastImportedComission: select.value
+        });
         input.value = data.pdfExportPath || input.value;
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
         status.textContent = data.message;
       } catch (error) {
         status.textContent = `Fehler beim Speichern der Einstellungen: ${error.message}`;
@@ -269,25 +243,13 @@
       const filesBox = document.getElementById('exportedFiles');
       const input = document.getElementById('pdfExportPath');
       const rows = tableState.rows.filter(row => tableState.selected.has(rowKey(row)));
-
-      if (rows.length === 0) {
-        status.textContent = 'Bitte selektiere mindestens eine Tabellenzeile für den PDF-Export.';
-        return;
-      }
+      if (rows.length === 0) { status.textContent = 'Bitte selektiere mindestens eine Tabellenzeile für den PDF-Export.'; return; }
 
       try {
-        const data = await apiPost('/api/provisionen-goaffpro/export-pdf', {
-          rows,
-          pdfExportPath: input ? input.value : ''
-        });
-
+        const data = await apiPost('/api/provisionen-goaffpro/export-pdf', { rows, pdfExportPath: input ? input.value : '' });
         status.textContent = data.message;
-        if (filesBox && Array.isArray(data.files)) {
-          filesBox.innerHTML = `<strong>Exportierte Dateien:</strong><br>${data.files.map(f => `<code>${f}</code>`).join('<br>')}`;
-        }
-        if (input && data.pdfExportPath) {
-          input.value = data.pdfExportPath;
-        }
+        if (filesBox && Array.isArray(data.files)) filesBox.innerHTML = `<strong>Exportierte Dateien:</strong><br>${data.files.map(f => `<code>${f}</code>`).join('<br>')}`;
+        if (input && data.pdfExportPath) input.value = data.pdfExportPath;
       } catch (error) {
         status.textContent = `Fehler beim PDF-Export: ${error.message}`;
       }
@@ -304,17 +266,14 @@
       const pollOnce = async () => {
         try {
           const data = await apiPost('/api/provisionen-goaffpro/poll', {});
-
           if (Array.isArray(data.payments) && data.payments.length > 0) {
             data.payments.forEach(payment => {
               const key = rowKey(payment);
-              if (!tableState.rows.find(x => rowKey(x) === key)) {
-                tableState.rows.push(payment);
-              }
+              if (!tableState.rows.find(x => rowKey(x) === key)) tableState.rows.push(payment);
             });
             renderTable();
           }
-
+          updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
           status.textContent = data.message || 'Polling erfolgreich.';
         } catch (error) {
           status.textContent = `Fehler beim Polling: ${error.message}`;
