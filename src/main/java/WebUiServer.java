@@ -200,6 +200,7 @@ public class WebUiServer {
                     item.put("paymentId", paymentId);
                     item.put("belegdatum", toGermanDate(asText(payment, "created_at")));
                     item.put("affiliateName", affiliate != null ? asText(affiliate, "name") : "");
+                    item.put("affiliateEmail", affiliate != null ? asText(affiliate, "email") : "");
                     item.put("affiliateAddress", formatAffiliateAddress(affiliate));
                     item.put("affiliateCountry", affiliate != null ? asText(affiliate, "country") : "");
                     item.put("affiliateSteuernummer", affiliate != null ? asText(affiliate, "tax_identification_number") : "");
@@ -1057,7 +1058,7 @@ public class WebUiServer {
         }
 
         String ids = String.join(",", affiliateIds);
-        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,address_1,address_2,city,state,zip,country,tax_identification_number";
+        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,email,address_1,address_2,city,state,zip,country,tax_identification_number";
         JsonNode root = requestJson(url, apiKey);
         JsonNode affiliates = root.get("affiliates");
         if (affiliates == null || !affiliates.isArray()) {
