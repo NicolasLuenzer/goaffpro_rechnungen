@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GoAffPro Rechnungen Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; background: #f6f8fb; color: #1f2937; }
+    h1 { margin-bottom: 8px; }
+    .hint { margin-bottom: 16px; color: #4b5563; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .tab { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 12px; background: white; cursor: pointer; }
+    .tab.active { background: #2563eb; color: white; border-color: #2563eb; }
+    .panel { display: none; border: 1px solid #d1d5db; border-radius: 10px; background: white; padding: 16px; }
+    .panel.active { display: block; }
+    .status { margin: 12px 0; color: #374151; }
+    button { background: #10b981; color: white; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 14px; }
+    th { background: #f3f4f6; }
+  </style>
+</head>
+<body>
+  <h1>Weboberfläche: App-Visualisierung</h1>
+  <p class="hint">Die Reiter werden aus allen ausführbaren Java-Dateien (mit <code>main</code>-Methode) aufgebaut.</p>
+
+  <div id="tabs" class="tabs"></div>
+  <div id="panels"></div>
+
+  <script>
+    const API_BASE = "http://localhost:8080";
+
+    async function fetchExecutables() {
+      const response = await fetch(`${API_BASE}/api/executables`);
+      if (!response.ok) throw new Error("Konnte ausführbare Java-Dateien nicht laden.");
+      return response.json();
+    }
+
+    function createTabAndPanel(executable, isActive = false) {
+      const tabs = document.getElementById('tabs');
+      const panels = document.getElementById('panels');
+
+      const tab = document.createElement('button');
+      tab.className = `tab ${isActive ? 'active' : ''}`;
+      tab.textContent = executable.name;
+      tab.dataset.target = executable.id;
+      tabs.appendChild(tab);
+
+      const panel = document.createElement('section');
+      panel.className = `panel ${isActive ? 'active' : ''}`;
+      panel.id = executable.id;
+
+      if (executable.name === 'MainProvisionenGoaffpro') {
+        panel.innerHTML = `
+          <h2>${executable.name}</h2>
+          <p>Pfad: <code>${executable.path}</code></p>
+          <button id="startPollingBtn">Polling starten</button>
+          <p id="pollStatus" class="status">Noch nicht gestartet.</p>
+          <table>
+            <thead>
+              <tr>
+                <th>Payment-ID</th>
+                <th>Belegdatum</th>
+                <th>Affiliate-Name</th>
+                <th>Affiliate-Land</th>
+                <th>Affiliate-Steuernummer</th>
+                <th>Betrag</th>
+                <th>Währung</th>
+              </tr>
+            </thead>
+            <tbody id="paymentsTableBody"></tbody>
+          </table>
+        `;
+      } else {
+        panel.innerHTML = `
+          <h2>${executable.name}</h2>
+          <p>Pfad: <code>${executable.path}</code></p>
+          <p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>
+        `;
+      }
+
+      panels.appendChild(panel);
+    }
+
+    function activateTab(targetId) {
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab.dataset.target === targetId));
+      document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('active', panel.id === targetId));
+    }
+
+    function wireTabSwitching() {
+      document.querySelectorAll('.tab').forEach(tab => {
+        tab.addEventListener('click', () => activateTab(tab.dataset.target));
+      });
+    }
+
+    async function startGoaffproPolling() {
+      const btn = document.getElementById('startPollingBtn');
+      const status = document.getElementById('pollStatus');
+      const tableBody = document.getElementById('paymentsTableBody');
+      if (!btn || !status || !tableBody) return;
+
+      btn.disabled = true;
+      status.textContent = 'Polling läuft...';
+
+      const pollOnce = async () => {
+        try {
+          const response = await fetch(`${API_BASE}/api/provisionen-goaffpro/poll`, { method: 'POST' });
+          const data = await response.json();
+
+          if (!response.ok) {
+            status.textContent = `Fehler beim Polling: ${data.error || 'Unbekannt'}`;
+            return;
+          }
+
+          if (Array.isArray(data.payments) && data.payments.length > 0) {
+            data.payments.forEach(payment => {
+              const row = document.createElement('tr');
+              row.innerHTML = `
+                <td>${payment.paymentId || ''}</td>
+                <td>${payment.belegdatum || ''}</td>
+                <td>${payment.affiliateName || ''}</td>
+                <td>${payment.affiliateCountry || ''}</td>
+                <td>${payment.affiliateSteuernummer || ''}</td>
+                <td>${payment.amount || ''}</td>
+                <td>${payment.currency || ''}</td>
+              `;
+              tableBody.prepend(row);
+            });
+          }
+
+          status.textContent = data.message || 'Polling erfolgreich.';
+        } catch (error) {
+          status.textContent = `Fehler beim Polling: ${error.message}`;
+        }
+      };
+
+      await pollOnce();
+      window.setInterval(pollOnce, 60000);
+    }
+
+    async function init() {
+      try {
+        const executables = await fetchExecutables();
+        if (!Array.isArray(executables) || executables.length === 0) {
+          document.getElementById('panels').innerHTML = '<p>Keine ausführbaren Java-Dateien gefunden.</p>';
+          return;
+        }
+
+        executables.forEach((exe, index) => createTabAndPanel(exe, index === 0));
+        wireTabSwitching();
+
+        const pollingBtn = document.getElementById('startPollingBtn');
+        if (pollingBtn) {
+          pollingBtn.addEventListener('click', startGoaffproPolling);
+        }
+      } catch (error) {
+        document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
