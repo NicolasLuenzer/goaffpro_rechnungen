@@ -817,13 +817,40 @@ public class WebUiServer {
                     Map<String, String> row = new HashMap<>();
                     row.put("version", parts[0].trim());
                     row.put("timestamp", ts);
-                    row.put("summary", parts[2].trim());
+                    row.put("summary", toGermanSummary(parts[2].trim()));
                     items.add(row);
                 }
             }
         } catch (Exception ignored) {
         }
         return items;
+    }
+
+    private static String toGermanSummary(String commitSubject) {
+        if (commitSubject == null || commitSubject.isBlank()) {
+            return "Keine Beschreibung verfügbar.";
+        }
+
+        String text = commitSubject.trim();
+        String lower = text.toLowerCase();
+
+        if (lower.startsWith("fix ") || lower.startsWith("fix:")) {
+            return "Fehlerbehebung: " + text.substring(text.indexOf(' ') + 1).trim();
+        }
+        if (lower.startsWith("add ") || lower.startsWith("add:")) {
+            return "Erweiterung: " + text.substring(text.indexOf(' ') + 1).trim();
+        }
+        if (lower.startsWith("update ") || lower.startsWith("update:")) {
+            return "Aktualisierung: " + text.substring(text.indexOf(' ') + 1).trim();
+        }
+        if (lower.startsWith("refactor ") || lower.startsWith("refactor:")) {
+            return "Umstrukturierung: " + text.substring(text.indexOf(' ') + 1).trim();
+        }
+        if (lower.startsWith("remove ") || lower.startsWith("remove:")) {
+            return "Entfernung: " + text.substring(text.indexOf(' ') + 1).trim();
+        }
+
+        return "Änderung: " + text;
     }
 
     private static String resolveVersionWithTimestampAndSequence() {
