@@ -1,0 +1,933 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VEMMiNA Provisionssystem</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; background: #f6f8fb; color: #1f2937; }
+    h1 { margin: 0; font-size: 28px; }
+    .app-header { display:flex; align-items:center; gap:14px; margin-bottom: 14px; background: linear-gradient(120deg, #ffffff, #eef6ff); border: 1px solid #dbeafe; border-radius: 12px; padding: 12px 14px; }
+    .app-logo { height: 42px; width: auto; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.12)); }
+    .app-subtitle { margin: 2px 0 0; color: #4b5563; font-size: 13px; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .tab { border: 1px solid #93c5fd; border-radius: 8px; padding: 10px 14px; background: #dbeafe; color: #1e3a8a; font-weight: 600; cursor: pointer; transition: all .15s ease; }
+    .tab:hover { background: #bfdbfe; }
+    .tab.active { background: #2563eb; color: white; border-color: #2563eb; box-shadow: 0 2px 8px rgba(37,99,235,.35); }
+    .panel { display: none; border: 1px solid #d1d5db; border-radius: 10px; background: white; padding: 16px; }
+    .panel.active { display: block; }
+    .status { margin: 12px 0; color: #374151; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+    .settings { margin: 12px 0; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; }
+    input[type="text"], input[type="email"], input[type="number"], select { min-width: 420px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
+    button { background: #10b981; color: white; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
+    button.secondary { background: #3b82f6; }
+    button.danger { background: #ef4444; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 14px; }
+    th { background: #f3f4f6; cursor: pointer; user-select: none; }
+    th.sort-active { background: #dbeafe; }
+    .files { margin-top: 8px; font-size: 13px; color: #1f2937; }
+    .pill-list { display:flex; flex-wrap:wrap; gap:8px; margin: 8px 0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; background:#eef2ff; color:#1f2937; border:1px solid #c7d2fe; border-radius:999px; padding:6px 10px; font-size:12px; }
+    .pill button { padding:2px 8px; font-size:12px; background:#ef4444; }
+    .app-version { position: fixed; top: 12px; right: 16px; background: #111827; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; z-index: 1000; cursor: pointer; }
+    .version-popup { position: fixed; top: 42px; right: 16px; width: 460px; max-height: 360px; overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); z-index: 1001; padding: 8px; }
+    .version-popup-header { font-weight: bold; margin-bottom: 6px; }
+    .version-popup ul { margin: 0; padding-left: 18px; }
+    .version-popup li { margin-bottom: 8px; font-size: 13px; }
+    .request-preview { margin: 10px 0; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #0f172a; word-break: break-all; }
+    .section-tabs { display: flex; justify-content: flex-end; gap: 8px; margin: 8px 0 12px; }
+    .section-tab { border: 1px solid #93c5fd; border-radius: 8px; padding: 8px 12px; background: #dbeafe; color: #1e3a8a; font-weight: 600; cursor: pointer; }
+    .section-tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .section-panel { display: none; }
+    .section-panel.active { display: block; }
+  </style>
+</head>
+<body>
+  <div class="app-header">
+    <img class="app-logo" src="https://cdn.shopify.com/s/files/1/0791/6748/8345/files/grau2.png" alt="VEMMiNA Logo" />
+    <div>
+      <h1>VEMMiNA Provisionssystem</h1>
+      <p class="app-subtitle">Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.</p>
+    </div>
+  </div>
+  <div id="appVersion" class="app-version" title="Klicken für Versionshistorie">Version: lädt…</div>
+  <div id="versionHistoryPopup" class="version-popup" style="display:none">
+    <div class="version-popup-header">Letzte Versionen</div>
+    <ul id="versionHistoryList"></ul>
+  </div>
+
+  <div id="tabs" class="tabs"></div>
+  <div id="panels"></div>
+
+  <script>
+    const API_BASE = "http://localhost:8080";
+    const tableState = { rows: [], selected: new Set(), sortBy: 'paymentId', sortDirection: 'desc', filter: '' };
+    let pollIntervalId = null;
+
+    async function apiGet(path) {
+      const response = await fetch(`${API_BASE}${path}`);
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'API-Fehler');
+      return json;
+    }
+
+    async function apiPost(path, payload) {
+      const response = await fetch(`${API_BASE}${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'API-Fehler');
+      return json;
+    }
+
+    async function fetchExecutables() { return apiGet('/api/executables'); }
+
+    async function loadVersion() {
+      const box = document.getElementById('appVersion');
+      if (!box) return;
+      try {
+        const data = await apiGet('/api/version');
+        box.textContent = `Version: ${data.version || 'dev'}`;
+      } catch (_) {
+        box.textContent = 'Version: dev';
+      }
+    }
+
+
+    async function loadVersionHistory() {
+      const popup = document.getElementById('versionHistoryPopup');
+      const list = document.getElementById('versionHistoryList');
+      if (!popup || !list) return;
+      try {
+        const data = await apiGet('/api/version/history');
+        const versions = Array.isArray(data.versions) ? data.versions : [];
+        list.innerHTML = versions.map(v =>
+          `<li><strong>${v.version || 'n/a'}</strong> <em>(${v.timestamp || ''})</em><br>${v.summary || ''}</li>`
+        ).join('');
+      } catch (e) {
+        list.innerHTML = '<li>Versionshistorie konnte nicht geladen werden.</li>';
+      }
+    }
+
+    function wireVersionPopup() {
+      const badge = document.getElementById('appVersion');
+      const popup = document.getElementById('versionHistoryPopup');
+      if (!badge || !popup) return;
+
+      badge.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const show = popup.style.display === 'none';
+        popup.style.display = show ? 'block' : 'none';
+        if (show) {
+          await loadVersionHistory();
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!popup.contains(e.target) && e.target !== badge) {
+          popup.style.display = 'none';
+        }
+      });
+    }
+
+    function createTabAndPanel(executable, isActive = false) {
+      const tabs = document.getElementById('tabs');
+      const panels = document.getElementById('panels');
+
+      const tab = document.createElement('button');
+      tab.className = `tab ${isActive ? 'active' : ''}`;
+      tab.textContent = executable.displayName || executable.name;
+      tab.dataset.target = executable.id;
+      tabs.appendChild(tab);
+
+      const panel = document.createElement('section');
+      panel.className = `panel ${isActive ? 'active' : ''}`;
+      panel.id = executable.id;
+
+      if (executable.name === 'MainProvisionenGoaffpro') {
+        panel.innerHTML = `
+          <h2>${executable.displayName || executable.name}</h2>
+                    <div class="section-tabs">
+            <button class="section-tab active" data-section-target="main-workspace">Arbeitsbereich</button>
+            <button class="section-tab" data-section-target="main-settings">⚙ Einstellungen</button>
+          </div>
+
+          <div id="main-workspace" class="section-panel active">
+            <div class="toolbar">
+              <button id="togglePollingBtn">Polling starten</button>
+              <label for="lastImportedSelect">since_id:</label>
+              <select id="lastImportedSelect"></select>
+              <button id="addLatestCommissionBtn" class="secondary" type="button">Neusten Zahllauf hinzufügen</button>
+              <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
+              <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
+            </div>
+            <div id="commissionHistoryEditor" class="pill-list"></div>
+
+            <p id="pollStatus" class="status">Noch nicht gestartet.</p>
+            <div id="exportedFiles" class="files"></div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th data-col="select"><input id="selectAllRows" type="checkbox" title="Alle sichtbaren Zeilen auswählen" /></th>
+                  <th data-col="paymentId">Payment-ID</th>
+                  <th data-col="belegdatum">Belegdatum</th>
+                  <th data-col="affiliateName">Affiliate-Name</th>
+                  <th data-col="affiliateEmail">E-Mail</th>
+                  <th data-col="affiliateAddress">Adresse</th>
+                  <th data-col="affiliateCountry">Affiliate-Land</th>
+                  <th data-col="affiliateSteuernummer">Affiliate-Steuernummer</th>
+                  <th data-col="amount">Betrag</th>
+                  <th data-col="actions">Aktion</th>
+                </tr>
+              </thead>
+              <tbody id="paymentsTableBody"></tbody>
+            </table>
+          </div>
+
+          <div id="main-settings" class="section-panel">
+            <div class="settings">
+              <strong>Einstellungen</strong>
+              <div class="toolbar">
+                <label for="pdfExportPath">PDF Zielverzeichnis:</label>
+                <input id="pdfExportPath" type="text" placeholder="C:\\Users\\nluenzer\\Downloads\\goaffpro" />
+                <button id="pickFolderBtn" type="button" class="secondary">Ordner auswählen…</button>
+                <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
+              </div>
+              <div class="toolbar">
+                <label for="goaffproAPIKey">GoAffPro API-Key:</label>
+                <input id="goaffproAPIKey" type="text" placeholder="API-Key" />
+              </div>
+              <div class="toolbar">
+                <label for="contactEmail">Kontakt-E-Mail:</label>
+                <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
+              </div>
+              <div class="toolbar">
+                <label for="smtpHost">SMTP Host:</label>
+                <input id="smtpHost" type="text" placeholder="smtp.example.com" />
+                <label for="smtpPort">Port:</label>
+                <input id="smtpPort" type="number" placeholder="587" style="max-width:120px" />
+              </div>
+              <div class="toolbar">
+                <label for="smtpUsername">SMTP Benutzer:</label>
+                <input id="smtpUsername" type="text" placeholder="user@example.com" />
+                <label for="smtpPassword">SMTP Passwort:</label>
+                <input id="smtpPassword" type="password" placeholder="(unverändert lassen zum Beibehalten)" />
+                <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
+                <label><input id="sendEmailsEnabled" type="checkbox" checked /> E-Mails versenden</label>
+                <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> an Kontakt-E-Mail</label>
+                <label><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
+                <button id="saveSettingsBtn" class="secondary">Speichern</button>
+              </div>
+              <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
+            </div>
+          </div>
+        `;
+      } else {
+        panel.innerHTML = `<h2>${executable.displayName || executable.name}</h2><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
+      }
+
+      panels.appendChild(panel);
+    }
+
+
+    function createAnalyticsTabAndPanel() {
+      const tabs = document.getElementById('tabs');
+      const panels = document.getElementById('panels');
+
+      const tab = document.createElement('button');
+      tab.className = 'tab';
+      tab.textContent = 'Auswertungen';
+      tab.dataset.target = 'analytics-panel';
+      tabs.appendChild(tab);
+
+      const panel = document.createElement('section');
+      panel.className = 'panel';
+      panel.id = 'analytics-panel';
+      panel.innerHTML = `
+        <h2>Auswertungen</h2>
+        <div class="toolbar">
+          <label for="analyticsSinceSelect">since_id:</label>
+          <select id="analyticsSinceSelect"></select>
+          <label for="analyticsFromDate">von:</label>
+          <input id="analyticsFromDate" type="date" style="min-width:170px" />
+          <label for="analyticsToDate">bis:</label>
+          <input id="analyticsToDate" type="date" style="min-width:170px" />
+          <button id="fetchAnalyticsBtn" class="secondary" type="button">Daten ziehen</button>
+        </div>
+        <p id="analyticsStatus" class="status">Noch keine Auswertung geladen.</p>
+
+        <div class="toolbar"><strong>Zusammenfassung</strong></div>
+        <table>
+          <thead><tr><th>Kennzahl</th><th>Wert</th></tr></thead>
+          <tbody id="analyticsSummaryBody"></tbody>
+        </table>
+
+        <div class="toolbar"><strong>Vergleich Beraterinnen</strong></div>
+        <table>
+          <thead><tr><th>Beraterin</th><th>Affiliate-ID</th><th>Land</th><th>Zahlläufe</th><th>Transaktionen</th><th>Eigenprovision</th><th>Teamprovision</th><th>Gesamtbetrag</th></tr></thead>
+          <tbody id="analyticsAdvisorBody"></tbody>
+        </table>
+
+        <div class="toolbar"><strong>Führungskräfte-Auswertung (unterstellte Beraterinnen)</strong></div>
+        <table>
+          <thead><tr><th>Führungskraft</th><th>ID</th><th>Beraterinnen im Team</th><th>Zahlläufe</th><th>Teambetrag</th><th>Eigenprovision Team</th><th>Teamprovision Team</th></tr></thead>
+          <tbody id="analyticsLeaderBody"></tbody>
+        </table>
+
+        <div class="toolbar"><strong>Zahlläufe nach Land</strong></div>
+        <table>
+          <thead><tr><th>Land</th><th>Anzahl Zahlläufe</th></tr></thead>
+          <tbody id="analyticsCountryBody"></tbody>
+        </table>
+
+        <div class="toolbar"><strong>Weitere API-Auswertungen</strong></div>
+        <table>
+          <thead><tr><th>Offene Auszahlungen (Top)</th><th>Affiliate-ID</th><th>Offen</th><th>Gesamt</th><th>Bereits ausgezahlt</th></tr></thead>
+          <tbody id="analyticsPendingBody"></tbody>
+        </table>
+
+        <table>
+          <thead><tr><th>Traffic-Quelle</th><th>Besuche</th><th>Page-Views</th></tr></thead>
+          <tbody id="analyticsTrafficBody"></tbody>
+        </table>
+
+        <table>
+          <thead><tr><th>Order-Status</th><th>Anzahl</th></tr></thead>
+          <tbody id="analyticsOrderStatusBody"></tbody>
+        </table>
+
+        <table>
+          <thead><tr><th>Reward-Status</th><th>Anzahl</th><th>Reward-Betrag</th></tr></thead>
+          <tbody id="analyticsRewardStatusBody"></tbody>
+        </table>
+
+        <div class="toolbar"><strong>Grafiken</strong></div>
+        <canvas id="analyticsAmountChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
+        <div style="height:8px"></div>
+        <canvas id="analyticsTxChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
+      `;
+      panels.appendChild(panel);
+    }
+
+    function activateTab(targetId) {
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab.dataset.target === targetId));
+      document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('active', panel.id === targetId));
+    }
+
+    function wireTabSwitching() { document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => activateTab(tab.dataset.target))); }
+
+    function wireMainSectionTabs() {
+      document.querySelectorAll('.section-tab').forEach(tab => tab.addEventListener('click', () => {
+        const target = tab.dataset.sectionTarget;
+        document.querySelectorAll('.section-tab').forEach(t => t.classList.toggle('active', t === tab));
+        document.querySelectorAll('.section-panel').forEach(panel => panel.classList.toggle('active', panel.id === target));
+      }));
+    }
+    function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}`; }
+
+
+    function formatEuroAmount(raw) {
+      if (raw === null || raw === undefined || raw === '') return '';
+      const value = Number(raw);
+      if (Number.isNaN(value)) return `${raw} €`;
+      return `${value.toFixed(2).replace('.', ',')} €`;
+    }
+
+    function filteredRows() {
+      const needle = tableState.filter.trim().toLowerCase();
+      let rows = [...tableState.rows];
+      if (needle) rows = rows.filter(row => Object.values(row).join(' ').toLowerCase().includes(needle));
+      const col = tableState.sortBy;
+      const direction = tableState.sortDirection === 'asc' ? 1 : -1;
+      rows.sort((a, b) => {
+        const left = (a[col] || '').toString();
+        const right = (b[col] || '').toString();
+        const maybeNum = Number(left) - Number(right);
+        if (!Number.isNaN(maybeNum) && left !== '' && right !== '') return maybeNum * direction;
+        return left.localeCompare(right, 'de', { sensitivity: 'base' }) * direction;
+      });
+      return rows;
+    }
+
+    function renderTable() {
+      const body = document.getElementById('paymentsTableBody');
+      const selectAll = document.getElementById('selectAllRows');
+      if (!body) return;
+
+      body.innerHTML = '';
+      const rows = filteredRows();
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        const key = rowKey(row);
+        const checked = tableState.selected.has(key) ? 'checked' : '';
+        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateEmail || ''}</td><td>${row.affiliateAddress || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td>${formatEuroAmount(row.amount)}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
+        body.appendChild(tr);
+      });
+
+      if (selectAll) {
+        const visibleKeys = rows.map(rowKey);
+        selectAll.checked = visibleKeys.length > 0 && visibleKeys.every(k => tableState.selected.has(k));
+      }
+
+      document.querySelectorAll('.row-select').forEach(cb => cb.addEventListener('change', e => {
+        const key = e.target.dataset.key;
+        if (e.target.checked) tableState.selected.add(key); else tableState.selected.delete(key);
+      }));
+
+      document.querySelectorAll('.details-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+        const paymentId = e.target.dataset.paymentId;
+        await loadInvoiceDetailsPdf(paymentId);
+      }));
+
+      document.querySelectorAll('th[data-col]').forEach(th => {
+        th.classList.remove('sort-active');
+        if (th.dataset.col === tableState.sortBy) th.classList.add('sort-active');
+      });
+    }
+
+    function wireSortingAndFiltering() {
+      document.querySelectorAll('th[data-col]').forEach(th => {
+        if (th.dataset.col === 'select' || th.dataset.col === 'actions') return;
+        th.addEventListener('click', () => {
+          if (tableState.sortBy === th.dataset.col) tableState.sortDirection = tableState.sortDirection === 'asc' ? 'desc' : 'asc';
+          else { tableState.sortBy = th.dataset.col; tableState.sortDirection = 'asc'; }
+          renderTable();
+        });
+      });
+
+      const filterInput = document.getElementById('filterInput');
+      if (filterInput) filterInput.addEventListener('input', e => { tableState.filter = e.target.value; renderTable(); });
+
+      const selectAll = document.getElementById('selectAllRows');
+      if (selectAll) selectAll.addEventListener('change', e => {
+        const visible = filteredRows().map(rowKey);
+        if (e.target.checked) visible.forEach(key => tableState.selected.add(key));
+        else visible.forEach(key => tableState.selected.delete(key));
+        renderTable();
+      });
+    }
+
+    async function removeCommissionFromHistory(commission) {
+      const status = document.getElementById('pollStatus');
+      try {
+        const data = await apiPost('/api/commissions/remove', { commission });
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        if (status) status.textContent = data.message || 'Zahllauf entfernt.';
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Entfernen: ${error.message}`;
+      }
+    }
+
+    function renderCommissionHistoryEditor(history, historyLabels) {
+      const box = document.getElementById('commissionHistoryEditor');
+      if (!box) return;
+      const list = Array.isArray(history) ? history : [];
+      box.innerHTML = list.map(value => {
+        const label = (historyLabels && historyLabels[value]) || value;
+        return `<span class="pill">${label}<button type="button" data-remove-commission="${value}">x</button></span>`;
+      }).join('');
+      box.querySelectorAll('button[data-remove-commission]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const commission = btn.getAttribute('data-remove-commission') || '';
+          if (!commission) return;
+          await removeCommissionFromHistory(commission);
+        });
+      });
+    }
+
+    function updateCommissionSelect(history, activeValue, historyLabels) {
+      const fill = (id) => {
+        const select = document.getElementById(id);
+        if (!select) return;
+        const list = Array.isArray(history) ? history : [];
+        const current = activeValue || '';
+        const unique = [...new Set([...list, current].filter(Boolean))]
+          .sort((a, b) => {
+            const an = Number(a), bn = Number(b);
+            if (!Number.isNaN(an) && !Number.isNaN(bn)) return bn - an;
+            return b.localeCompare(a, 'de', { sensitivity: 'base' });
+          });
+        select.innerHTML = unique.map(value => `<option value="${value}">${(historyLabels && historyLabels[value]) || value}</option>`).join('');
+        if (current) select.value = current;
+      };
+      fill('lastImportedSelect');
+      fill('analyticsSinceSelect');
+    }
+
+    async function addLatestCommission() {
+      const status = document.getElementById('pollStatus');
+      if (!status) return;
+      try {
+        status.textContent = 'Suche neuesten Zahllauf...';
+        const data = await apiPost('/api/commissions/add-latest', {});
+        updateCommissionSelect(data.lastImportedComissionHistory, '', data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        status.textContent = `${data.message || 'Neuster Zahllauf verarbeitet.'} ID: ${data.latestId || 'n/a'}`;
+      } catch (error) {
+        status.textContent = `Fehler beim Hinzufügen des neuesten Zahllaufs: ${error.message}`;
+      }
+    }
+
+    function setPollingButtonState(isRunning) {
+      const btn = document.getElementById('togglePollingBtn');
+      if (!btn) return;
+      btn.textContent = isRunning ? 'Polling stoppen' : 'Polling starten';
+      btn.classList.toggle('danger', isRunning);
+    }
+
+    async function loadSettings() {
+      const input = document.getElementById('pdfExportPath');
+      const goaffproAPIKeyInput = document.getElementById('goaffproAPIKey');
+      const contactEmailInput = document.getElementById('contactEmail');
+      const smtpHostInput = document.getElementById('smtpHost');
+      const smtpPortInput = document.getElementById('smtpPort');
+      const smtpUsernameInput = document.getElementById('smtpUsername');
+      const smtpPasswordInput = document.getElementById('smtpPassword');
+      const smtpTlsInput = document.getElementById('smtpTls');
+      const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
+      const emailRecipientContactInput = document.getElementById('emailRecipientContact');
+      const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
+      if (!input) return;
+      try {
+        const data = await apiGet('/api/settings');
+        input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
+        if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || '';
+        if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
+        if (smtpHostInput) smtpHostInput.value = data.smtpHost || '';
+        if (smtpPortInput) smtpPortInput.value = data.smtpPort || '587';
+        if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || '';
+        if (smtpPasswordInput) smtpPasswordInput.value = '';
+        if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
+        if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
+        const mode = data.emailRecipientMode || 'contact';
+        if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
+        if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+      } catch (error) {
+        document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
+      }
+    }
+
+    async function saveSettings() {
+      const input = document.getElementById('pdfExportPath');
+      const select = document.getElementById('lastImportedSelect');
+      const goaffproAPIKeyInput = document.getElementById('goaffproAPIKey');
+      const contactEmailInput = document.getElementById('contactEmail');
+      const smtpHostInput = document.getElementById('smtpHost');
+      const smtpPortInput = document.getElementById('smtpPort');
+      const smtpUsernameInput = document.getElementById('smtpUsername');
+      const smtpPasswordInput = document.getElementById('smtpPassword');
+      const smtpTlsInput = document.getElementById('smtpTls');
+      const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
+      const emailRecipientContactInput = document.getElementById('emailRecipientContact');
+      const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
+      const status = document.getElementById('pollStatus');
+      if (!input || !status || !select) return;
+      try {
+        const data = await apiPost('/api/settings', {
+          pdfExportPath: input.value,
+          lastImportedComission: select.value,
+          goaffproAPIKey: goaffproAPIKeyInput ? goaffproAPIKeyInput.value : '',
+          contactEmail: contactEmailInput ? contactEmailInput.value : '',
+          smtpHost: smtpHostInput ? smtpHostInput.value : '',
+          smtpPort: smtpPortInput ? smtpPortInput.value : '587',
+          smtpUsername: smtpUsernameInput ? smtpUsernameInput.value : '',
+          smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
+          smtpTls: smtpTlsInput ? smtpTlsInput.checked : false,
+          sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true,
+          emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact'
+        });
+        input.value = data.pdfExportPath || input.value;
+        if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
+        if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
+        if (smtpHostInput) smtpHostInput.value = data.smtpHost || smtpHostInput.value;
+        if (smtpPortInput) smtpPortInput.value = data.smtpPort || smtpPortInput.value || '587';
+        if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || smtpUsernameInput.value;
+        if (smtpPasswordInput) smtpPasswordInput.value = '';
+        if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
+        if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
+        const mode = data.emailRecipientMode || 'contact';
+        if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
+        if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
+      } catch (error) {
+        status.textContent = `Fehler beim Speichern der Einstellungen: ${error.message}`;
+      }
+    }
+
+    function getEmailRecipientMode() {
+      const advisor = document.getElementById('emailRecipientAdvisor');
+      return advisor && advisor.checked ? 'advisor' : 'contact';
+    }
+
+    function shouldSendEmails() {
+      const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
+      return !sendEmailsEnabledInput || sendEmailsEnabledInput.checked;
+    }
+
+    async function exportSelectedInvoiceDetailsPdfs() {
+      const status = document.getElementById('pollStatus');
+      const filesBox = document.getElementById('exportedFiles');
+      const input = document.getElementById('pdfExportPath');
+      const rows = tableState.rows.filter(row => tableState.selected.has(rowKey(row)));
+      const paymentIds = [...new Set(rows.map(row => row.paymentId).filter(Boolean))];
+
+      if (paymentIds.length === 0) {
+        status.textContent = 'Bitte selektiere mindestens eine Zeile mit gültiger Payment-ID.';
+        return;
+      }
+
+      if (shouldSendEmails() && getEmailRecipientMode() === 'advisor') {
+        const confirmed = window.confirm('Die E-Mails werden an die jeweiligen Beraterinnen gesendet. Möchtest du fortfahren?');
+        if (!confirmed) {
+          status.textContent = 'Export abgebrochen.';
+          return;
+        }
+      }
+
+      const createdFiles = [];
+      const failed = [];
+
+      for (let i = 0; i < paymentIds.length; i++) {
+        const paymentId = paymentIds[i];
+        status.textContent = `Erzeuge Rechnungsdetails-PDF ${i + 1}/${paymentIds.length} für Payment-ID ${paymentId} ...`;
+        try {
+          const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
+            paymentId,
+            pdfExportPath: input ? input.value : ''
+          });
+          if (input && data.pdfExportPath) input.value = data.pdfExportPath;
+          if (data.file) createdFiles.push(data.file);
+          if (data.jsonFile) createdFiles.push(data.jsonFile);
+        } catch (error) {
+          failed.push({ paymentId, message: error.message });
+        }
+      }
+
+      if (filesBox) {
+        const okHtml = createdFiles.length > 0
+          ? `<strong>Exportierte Rechnungsdetails-PDFs:</strong><br>${createdFiles.map(f => `<code>${f}</code>`).join('<br>')}`
+          : '<strong>Keine Rechnungsdetails-PDF erstellt.</strong>';
+        const failHtml = failed.length > 0
+          ? `<br><br><strong>Fehler:</strong><br>${failed.map(f => `<code>${f.paymentId}</code>: ${f.message}`).join('<br>')}`
+          : '';
+        filesBox.innerHTML = `${okHtml}${failHtml}`;
+      }
+
+      if (failed.length === 0) {
+        status.textContent = `${createdFiles.length} Rechnungsdetails-PDF(s) erstellt.`;
+      } else if (createdFiles.length === 0) {
+        status.textContent = `Keine Rechnungsdetails-PDF erstellt. Fehler bei ${failed.length} Payment-ID(s).`;
+      } else {
+        status.textContent = `${createdFiles.length} Rechnungsdetails-PDF(s) erstellt, ${failed.length} Fehler.`;
+      }
+    }
+
+    async function loadInvoiceDetailsPdf(paymentId) {
+      const status = document.getElementById('pollStatus');
+      const input = document.getElementById('pdfExportPath');
+      try {
+        if (shouldSendEmails() && getEmailRecipientMode() === 'advisor') {
+          const confirmed = window.confirm('Die E-Mail wird an die Beraterinnen-Adresse gesendet. Möchtest du fortfahren?');
+          if (!confirmed) {
+            status.textContent = 'Aktion abgebrochen.';
+            return;
+          }
+        }
+        const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
+          paymentId,
+          pdfExportPath: input ? input.value : ''
+        });
+        if (input && data.pdfExportPath) input.value = data.pdfExportPath;
+        status.textContent = data.opened
+          ? `Rechnungsdetails & JSON erstellt und geöffnet: ${data.file}`
+          : `Rechnungsdetails & JSON erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
+      } catch (error) {
+        status.textContent = `Fehler bei Rechnungsdetails: ${error.message}`;
+      }
+    }
+
+    function drawBarChart(canvasId, labels, values, barColor) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const width = canvas.width;
+      const height = canvas.height;
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+
+      if (!labels || labels.length === 0) {
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '14px Arial';
+        ctx.fillText('Keine Daten', 20, 30);
+        return;
+      }
+
+      const maxValue = Math.max(...values, 1);
+      const left = 40, top = 20, chartW = width - 60, chartH = height - 60;
+      const barW = Math.max(16, Math.floor(chartW / labels.length) - 10);
+
+      ctx.strokeStyle = '#d1d5db';
+      ctx.beginPath();
+      ctx.moveTo(left, top + chartH);
+      ctx.lineTo(left + chartW, top + chartH);
+      ctx.stroke();
+
+      labels.forEach((label, i) => {
+        const val = values[i] || 0;
+        const h = Math.round((val / maxValue) * (chartH - 10));
+        const x = left + i * (barW + 10) + 4;
+        const y = top + chartH - h;
+
+        ctx.fillStyle = barColor;
+        ctx.fillRect(x, y, barW, h);
+
+        ctx.fillStyle = '#111827';
+        ctx.font = '11px Arial';
+        const shortLabel = label.length > 16 ? label.slice(0, 16) + '…' : label;
+        ctx.fillText(shortLabel, x, top + chartH + 14);
+        ctx.fillText(String(Math.round(val * 100) / 100), x, y - 4);
+      });
+    }
+
+    function renderAnalytics(data) {
+      const summaryBody = document.getElementById('analyticsSummaryBody');
+      const advisorBody = document.getElementById('analyticsAdvisorBody');
+      const leaderBody = document.getElementById('analyticsLeaderBody');
+      const countryBody = document.getElementById('analyticsCountryBody');
+      const pendingBody = document.getElementById('analyticsPendingBody');
+      const trafficBody = document.getElementById('analyticsTrafficBody');
+      const orderStatusBody = document.getElementById('analyticsOrderStatusBody');
+      const rewardStatusBody = document.getElementById('analyticsRewardStatusBody');
+      if (!summaryBody || !advisorBody || !leaderBody || !countryBody || !pendingBody || !trafficBody || !orderStatusBody || !rewardStatusBody) return;
+
+      const summary = data.summary || {};
+      const summaryRows = [
+        ['since_id', summary.sinceId || ''],
+        ['Anzahl Zahlläufe', summary.paymentsCount || 0],
+        ['Gesamtbetrag', formatEuroAmount(summary.totalAmount || 0)],
+        ['Anzahl Transaktionen', summary.totalTransactions || 0],
+        ['Beraterinnen gesamt', summary.advisorCount || 0],
+        ['Eigenprovision gesamt', formatEuroAmount(summary.selfCommission || 0)],
+        ['Teamprovision gesamt', formatEuroAmount(summary.teamCommission || 0)],
+        ['Offene Auszahlungen gesamt', formatEuroAmount(summary.pendingDueTotal || 0)],
+        ['Reward-Betrag gesamt', formatEuroAmount(summary.rewardAmountTotal || 0)],
+        ['Traffic-Quellen (Top)', summary.trafficSources || 0]
+      ];
+      summaryBody.innerHTML = summaryRows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+
+      const advisors = Array.isArray(data.advisorRows) ? data.advisorRows : [];
+      advisorBody.innerHTML = advisors.map(r =>
+        `<tr><td>${r.advisorName || ''}</td><td>${r.affiliateId || ''}</td><td>${r.country || ''}</td><td>${r.paymentCount || 0}</td><td>${r.totalTransactions || 0}</td><td>${formatEuroAmount(r.selfCommission || 0)}</td><td>${formatEuroAmount(r.teamCommission || 0)}</td><td>${formatEuroAmount(r.totalAmount || 0)}</td></tr>`
+      ).join('');
+
+      const leaders = Array.isArray(data.leaderRows) ? data.leaderRows : [];
+      leaderBody.innerHTML = leaders.map(r =>
+        `<tr><td>${r.leaderName || ''}</td><td>${r.leaderId || ''}</td><td>${r.advisorCount || 0}</td><td>${r.paymentCount || 0}</td><td>${formatEuroAmount(r.teamTotalAmount || 0)}</td><td>${formatEuroAmount(r.teamSelfCommission || 0)}</td><td>${formatEuroAmount(r.teamTeamCommission || 0)}</td></tr>`
+      ).join('');
+
+      const countries = Array.isArray(data.countryRows) ? data.countryRows : [];
+      countryBody.innerHTML = countries.map(r => `<tr><td>${r.country || ''}</td><td>${r.payments || 0}</td></tr>`).join('');
+
+      const pending = Array.isArray(data.pendingRows) ? data.pendingRows : [];
+      pendingBody.innerHTML = pending.map(r => `<tr><td>${r.name || ''}</td><td>${r.affiliateId || ''}</td><td>${formatEuroAmount(r.due || 0)}</td><td>${formatEuroAmount(r.total || 0)}</td><td>${formatEuroAmount(r.paidOut || 0)}</td></tr>`).join('');
+
+      const traffic = Array.isArray(data.trafficSourceRows) ? data.trafficSourceRows : [];
+      trafficBody.innerHTML = traffic.map(r => `<tr><td>${r.source || ''}</td><td>${r.visits || 0}</td><td>${r.pageViews || 0}</td></tr>`).join('');
+
+      const orderStatuses = Array.isArray(data.orderStatusRows) ? data.orderStatusRows : [];
+      orderStatusBody.innerHTML = orderStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${r.count || 0}</td></tr>`).join('');
+
+      const rewardStatuses = Array.isArray(data.rewardStatusRows) ? data.rewardStatusRows : [];
+      rewardStatusBody.innerHTML = rewardStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${r.count || 0}</td><td>${formatEuroAmount(r.amount || 0)}</td></tr>`).join('');
+
+      const chart = data.chartData || {};
+      drawBarChart('analyticsAmountChart', chart.labels || [], chart.amountSeries || [], '#2563eb');
+      drawBarChart('analyticsTxChart', chart.labels || [], chart.txSeries || [], '#10b981');
+    }
+
+    function wireAnalyticsDateRange() {
+      const fromDateInput = document.getElementById('analyticsFromDate');
+      const toDateInput = document.getElementById('analyticsToDate');
+      if (!fromDateInput || !toDateInput) return;
+
+      const normalize = () => {
+        if (fromDateInput.value && !toDateInput.value) toDateInput.value = fromDateInput.value;
+        if (toDateInput.value && !fromDateInput.value) fromDateInput.value = toDateInput.value;
+        if (fromDateInput.value && toDateInput.value && fromDateInput.value > toDateInput.value) {
+          toDateInput.value = fromDateInput.value;
+        }
+      };
+
+      const trigger = () => {
+        normalize();
+        fetchAnalyticsData();
+      };
+
+      fromDateInput.addEventListener('focus', () => {
+        if (!fromDateInput.value && toDateInput.value) fromDateInput.value = toDateInput.value;
+      });
+      toDateInput.addEventListener('focus', () => {
+        if (!toDateInput.value && fromDateInput.value) toDateInput.value = fromDateInput.value;
+      });
+
+      fromDateInput.addEventListener('change', trigger);
+      toDateInput.addEventListener('change', trigger);
+    }
+
+    async function fetchAnalyticsData() {
+      const status = document.getElementById('analyticsStatus');
+      const select = document.getElementById('analyticsSinceSelect');
+      const fromDateInput = document.getElementById('analyticsFromDate');
+      const toDateInput = document.getElementById('analyticsToDate');
+      if (!status || !select) return;
+      try {
+        status.textContent = 'Lade Auswertungsdaten...';
+        const data = await apiPost('/api/analytics/fetch', {
+          sinceId: select.value || '0',
+          fromDate: fromDateInput ? fromDateInput.value : '',
+          toDate: toDateInput ? toDateInput.value : ''
+        });
+        renderAnalytics(data);
+        const count = (data.summary && data.summary.paymentsCount) || 0;
+        status.textContent = `Auswertung geladen (${count} Zahlläufe).`;
+      } catch (error) {
+        status.textContent = `Fehler beim Laden der Auswertung: ${error.message}`;
+      }
+    }
+
+    async function pollOnce() {
+      const status = document.getElementById('pollStatus');
+      try {
+        const sinceSelect = document.getElementById('lastImportedSelect');
+        const data = await apiPost('/api/provisionen-goaffpro/poll', { sinceId: sinceSelect ? (sinceSelect.value || '0') : '0' });
+        if (Array.isArray(data.payments) && data.payments.length > 0) {
+          data.payments.forEach(payment => {
+            const key = rowKey(payment);
+            if (!tableState.rows.find(x => rowKey(x) === key)) tableState.rows.push(payment);
+          });
+          renderTable();
+        }
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        status.textContent = data.message || 'Polling erfolgreich.';
+      } catch (error) {
+        status.textContent = `Fehler beim Polling: ${error.message}`;
+      }
+    }
+
+    async function togglePolling() {
+      const status = document.getElementById('pollStatus');
+      if (pollIntervalId) {
+        window.clearInterval(pollIntervalId);
+        pollIntervalId = null;
+        setPollingButtonState(false);
+        status.textContent = 'Polling gestoppt.';
+        return;
+      }
+
+      tableState.rows = [];
+      tableState.selected = new Set();
+      renderTable();
+      setPollingButtonState(true);
+      status.textContent = 'Polling läuft...';
+      await pollOnce();
+      pollIntervalId = window.setInterval(pollOnce, 60000);
+    }
+
+    async function pickFolder() {
+      const input = document.getElementById('pdfExportPath');
+      const hiddenPicker = document.getElementById('folderPickerInput');
+      if (!input) return;
+
+      if (window.showDirectoryPicker) {
+        try {
+          const handle = await window.showDirectoryPicker();
+          if (handle && handle.name) {
+            const guess = input.value || '';
+            const base = guess.includes('\\') ? guess.substring(0, Math.max(0, guess.lastIndexOf('\\'))) : '';
+            input.value = base ? `${base}\\${handle.name}` : handle.name;
+          }
+          return;
+        } catch (_) {}
+      }
+
+      if (hiddenPicker) {
+        hiddenPicker.click();
+      }
+    }
+
+    function wireFolderPickerFallback() {
+      const hiddenPicker = document.getElementById('folderPickerInput');
+      const input = document.getElementById('pdfExportPath');
+      if (!hiddenPicker || !input) return;
+
+      hiddenPicker.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file || !file.webkitRelativePath) return;
+        const topFolder = file.webkitRelativePath.split('/')[0];
+        const current = input.value || '';
+        const base = current.includes('\\') ? current.substring(0, Math.max(0, current.lastIndexOf('\\'))) : '';
+        input.value = base ? `${base}\\${topFolder}` : topFolder;
+      });
+    }
+
+    async function init() {
+      try {
+        const executables = await fetchExecutables();
+        if (!Array.isArray(executables) || executables.length === 0) {
+          document.getElementById('panels').innerHTML = '<p>Keine ausführbaren Java-Dateien gefunden.</p>';
+          return;
+        }
+
+        const mainExecutable = executables.find(exe => exe.name === 'MainProvisionenGoaffpro');
+        if (!mainExecutable) {
+          document.getElementById('panels').innerHTML = '<p>MainProvisionenGoaffpro konnte nicht gefunden werden.</p>';
+          return;
+        }
+        createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
+        createAnalyticsTabAndPanel();
+        wireTabSwitching();
+        await loadVersion();
+        wireVersionPopup();
+
+        const pollingBtn = document.getElementById('togglePollingBtn');
+        const saveBtn = document.getElementById('saveSettingsBtn');
+        const pickBtn = document.getElementById('pickFolderBtn');
+        const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
+        const addLatestCommissionBtn = document.getElementById('addLatestCommissionBtn');
+        const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
+        if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
+        if (saveBtn) saveBtn.addEventListener('click', saveSettings);
+        if (pickBtn) pickBtn.addEventListener('click', pickFolder);
+        if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
+        if (addLatestCommissionBtn) addLatestCommissionBtn.addEventListener('click', addLatestCommission);
+        if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
+
+        wireFolderPickerFallback();
+        wireMainSectionTabs();
+        wireSortingAndFiltering();
+        wireAnalyticsDateRange();
+        renderTable();
+        setPollingButtonState(false);
+        await loadSettings();
+      } catch (error) {
+        document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
