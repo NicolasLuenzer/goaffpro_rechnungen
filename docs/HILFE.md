@@ -150,3 +150,28 @@ Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
   - IBAN
   - IBAN korrekt
   - Status
+
+
+## 11) Dynamischer Hilfe-Bereich
+
+- Der Hilfe-Reiter zeigt die Dokumentation als aufklappbare Bereiche (Accordion).
+- Die ersten Abschnitte sind initial geöffnet, weitere können bei Bedarf aufgeklappt werden.
+- Grundlage bleibt die Datei `docs/HILFE.md`, die über `GET /api/help` geladen wird.
+
+## 12) Validierungsfilter
+
+Im Reiter **Validierung** stehen schnelle Filter zur Verfügung:
+
+- nur ohne IBAN
+- nur mit ungültiger IBAN
+- nur ohne Adresse
+- nur ohne Name
+- Status-Filter (Dropdown)
+
+Die Filter sind kombinierbar und wirken direkt auf die geladene Tabelle.
+
+## 13) Speichern-Button (Änderungsstatus)
+
+- Wenn keine Änderungen an den Einstellungen erkannt wurden, ist der Speichern-Button heller dargestellt.
+- Sobald eine Änderung erkannt wird, wird der Button kräftiger hervorgehoben.
+- Die Erkennung basiert auf einem Snapshot-Vergleich der relevanten Einstellungsfelder.
