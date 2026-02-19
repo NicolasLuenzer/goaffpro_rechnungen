@@ -439,7 +439,12 @@ public class WebUiServer {
                     sendResponse(exchange, 404, "application/json", "{\"error\":\"Keine Payment-Details gefunden\"}");
                     return;
                 }
-                // Verwende die gesamte API-Antwort für die PDF, wie vom Request zurückgegeben.
+                JsonNode payment = payments.get(0);
+                String affiliateId = asText(payment, "affiliate_id");
+                JsonNode affiliate = null;
+                if (!affiliateId.isBlank()) {
+                    affiliate = fetchAffiliatesById(apiKey, List.of(affiliateId)).get(affiliateId);
+                }
 
                 String exportDirValue = requestedDir.isEmpty()
                         ? Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH)
@@ -449,7 +454,7 @@ public class WebUiServer {
 
                 String filename = "rechnungsdetails_" + sanitizeFilename(paymentId) + "_" + FILE_TIMESTAMP.format(LocalDateTime.now()) + ".pdf";
                 Path pdfPath = exportDir.resolve(filename);
-                createInvoiceDetailsPdf(pdfPath, response);
+                createInvoiceDetailsPdf(pdfPath, response, affiliate);
 
                 boolean opened = false;
                 String openMessage = "";
@@ -480,7 +485,7 @@ public class WebUiServer {
             }
         }
 
-        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse) throws IOException {
+        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate) throws IOException {
             try (PDDocument document = new PDDocument()) {
                 JsonNode payments = apiResponse.get("payments");
                 JsonNode payment = (payments != null && payments.isArray() && payments.size() > 0) ? payments.get(0) : null;
@@ -613,6 +618,31 @@ public class WebUiServer {
 
                     cs.setNonStrokingColor(new Color(44, 52, 64));
                     for (String[] row : summaryRows) {
+                        float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, row[0], row[1]);
+                        y -= used;
+                    }
+
+                    y -= 14;
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
+                    cs.setNonStrokingColor(new Color(38, 93, 171));
+                    cs.newLineAtOffset(x, y);
+                    cs.showText("Beraterin / Affiliate (Stammdaten)");
+                    cs.endText();
+                    y -= 18;
+
+                    List<String[]> advisorRows = List.of(
+                            new String[]{"Name", affiliate != null ? asText(affiliate, "name") : ""},
+                            new String[]{"E-Mail", affiliate != null ? asText(affiliate, "email") : ""},
+                            new String[]{"Telefon", affiliate != null ? asText(affiliate, "phone") : ""},
+                            new String[]{"Unternehmen", affiliate != null ? asText(affiliate, "company_name") : ""},
+                            new String[]{"Adresse", formatAffiliateAddress(affiliate)},
+                            new String[]{"Steuernummer", affiliate != null ? asText(affiliate, "tax_identification_number") : ""},
+                            new String[]{"Referenzcode", affiliate != null ? asText(affiliate, "ref_code") : ""},
+                            new String[]{"Status", affiliate != null ? asText(affiliate, "status") : ""}
+                    );
+                    for (String[] row : advisorRows) {
+                        if (row[1] == null || row[1].isBlank()) continue;
                         float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, row[0], row[1]);
                         y -= used;
                     }
@@ -1063,7 +1093,7 @@ public class WebUiServer {
         }
 
         String ids = String.join(",", affiliateIds);
-        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,email,address_1,address_2,city,state,zip,country,tax_identification_number";
+        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,email,phone,company_name,ref_code,status,address_1,address_2,city,state,zip,country,tax_identification_number";
         JsonNode root = requestJson(url, apiKey);
         JsonNode affiliates = root.get("affiliates");
         if (affiliates == null || !affiliates.isArray()) {
