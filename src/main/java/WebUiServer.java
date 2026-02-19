@@ -71,6 +71,7 @@ public class WebUiServer {
         server.createContext("/api/provisionen-goaffpro/invoice-details-pdf", new InvoiceDetailsPdfHandler());
         server.createContext("/api/version", new VersionHandler());
         server.createContext("/api/version/history", new VersionHistoryHandler());
+        server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
         server.setExecutor(null);
         server.start();
 
@@ -339,6 +340,137 @@ public class WebUiServer {
             }
 
             sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+        }
+    }
+
+    private static class AnalyticsFetchHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String sinceId = asText(body, "sinceId").trim();
+                if (sinceId.isBlank()) sinceId = "0";
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
+
+                String paymentsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + sinceId
+                        + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
+                JsonNode paymentRoot = requestJson(paymentsUrl, apiKey);
+                JsonNode payments = paymentRoot.get("payments");
+                if (payments == null || !payments.isArray()) {
+                    payments = OBJECT_MAPPER.createArrayNode();
+                }
+
+                List<String> affiliateIds = new ArrayList<>();
+                for (JsonNode payment : payments) {
+                    String affiliateId = asText(payment, "affiliate_id");
+                    if (!affiliateId.isBlank() && !affiliateIds.contains(affiliateId)) affiliateIds.add(affiliateId);
+                }
+                Map<String, JsonNode> affiliatesById = fetchAffiliatesById(apiKey, affiliateIds);
+
+                double totalAmount = 0.0;
+                int totalTransactions = 0;
+                Map<String, Map<String, Object>> advisorAgg = new LinkedHashMap<>();
+                Map<String, Integer> countryAgg = new LinkedHashMap<>();
+                List<Map<String, Object>> paymentRows = new ArrayList<>();
+
+                for (JsonNode payment : payments) {
+                    String paymentId = asText(payment, "id");
+                    String affiliateId = asText(payment, "affiliate_id");
+                    JsonNode affiliate = affiliatesById.get(affiliateId);
+                    String advisorName = affiliate != null ? asText(affiliate, "name") : "Unbekannt";
+                    String country = affiliate != null ? asText(affiliate, "country") : "";
+                    double amount = parseDoubleSafeStatic(asText(payment, "amount"));
+                    int txCount = payment.has("transactions") && payment.get("transactions").isArray() ? payment.get("transactions").size() : 0;
+
+                    totalAmount += amount;
+                    totalTransactions += txCount;
+
+                    String advisorKey = affiliateId.isBlank() ? advisorName : affiliateId;
+                    Map<String, Object> agg = advisorAgg.computeIfAbsent(advisorKey, k -> {
+                        Map<String, Object> m = new LinkedHashMap<>();
+                        m.put("affiliateId", affiliateId);
+                        m.put("advisorName", advisorName);
+                        m.put("country", country);
+                        m.put("paymentCount", 0);
+                        m.put("totalAmount", 0.0);
+                        m.put("totalTransactions", 0);
+                        return m;
+                    });
+                    agg.put("paymentCount", ((Integer) agg.get("paymentCount")) + 1);
+                    agg.put("totalAmount", ((Double) agg.get("totalAmount")) + amount);
+                    agg.put("totalTransactions", ((Integer) agg.get("totalTransactions")) + txCount);
+
+                    if (!country.isBlank()) {
+                        countryAgg.put(country, countryAgg.getOrDefault(country, 0) + 1);
+                    }
+
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("paymentId", paymentId);
+                    row.put("advisorName", advisorName);
+                    row.put("country", country);
+                    row.put("amount", amount);
+                    row.put("transactionCount", txCount);
+                    row.put("createdAt", toGermanDate(asText(payment, "created_at")));
+                    paymentRows.add(row);
+                }
+
+                List<Map<String, Object>> advisorRows = new ArrayList<>(advisorAgg.values());
+                advisorRows.sort((a, b) -> Double.compare((Double) b.get("totalAmount"), (Double) a.get("totalAmount")));
+
+                List<String> labels = new ArrayList<>();
+                List<Double> amountSeries = new ArrayList<>();
+                List<Integer> txSeries = new ArrayList<>();
+                for (int i = 0; i < Math.min(10, advisorRows.size()); i++) {
+                    Map<String, Object> row = advisorRows.get(i);
+                    labels.add(Objects.toString(row.get("advisorName"), "n/a"));
+                    amountSeries.add((Double) row.get("totalAmount"));
+                    txSeries.add((Integer) row.get("totalTransactions"));
+                }
+
+                Map<String, Object> summary = new LinkedHashMap<>();
+                summary.put("sinceId", sinceId);
+                summary.put("paymentsCount", payments.size());
+                summary.put("totalAmount", totalAmount);
+                summary.put("totalTransactions", totalTransactions);
+                summary.put("advisorCount", advisorRows.size());
+
+                List<Map<String, Object>> countryRows = new ArrayList<>();
+                for (Map.Entry<String, Integer> entry : countryAgg.entrySet()) {
+                    Map<String, Object> c = new LinkedHashMap<>();
+                    c.put("country", entry.getKey());
+                    c.put("payments", entry.getValue());
+                    countryRows.add(c);
+                }
+                countryRows.sort((a,b)->Integer.compare((Integer)b.get("payments"),(Integer)a.get("payments")));
+
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("summary", summary);
+                payload.put("advisorRows", advisorRows);
+                payload.put("countryRows", countryRows);
+                payload.put("paymentRows", paymentRows);
+                Map<String, Object> chartData = new LinkedHashMap<>();
+                chartData.put("labels", labels);
+                chartData.put("amountSeries", amountSeries);
+                chartData.put("txSeries", txSeries);
+                payload.put("chartData", chartData);
+
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
         }
     }
 

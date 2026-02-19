@@ -181,7 +181,7 @@
               <strong>Einstellungen</strong>
               <div class="toolbar">
                 <label for="pdfExportPath">PDF Zielverzeichnis:</label>
-                <input id="pdfExportPath" type="text" placeholder="C:\Users\nluenzer\Downloads\goaffpro" />
+                <input id="pdfExportPath" type="text" placeholder="C:\\Users\\nluenzer\\Downloads\\goaffpro" />
                 <button id="pickFolderBtn" type="button" class="secondary">Ordner auswählen…</button>
                 <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
               </div>
@@ -235,8 +235,35 @@
       panel.id = 'analytics-panel';
       panel.innerHTML = `
         <h2>Auswertungen</h2>
-        <p>Hier können zukünftig KPI-Analysen, Summen je Zeitraum und Trend-Auswertungen ergänzt werden.</p>
-        <p>Aktuell ist dieser Bereich als Platzhalter vorbereitet.</p>
+        <div class="toolbar">
+          <label for="analyticsSinceSelect">since_id:</label>
+          <select id="analyticsSinceSelect"></select>
+          <button id="fetchAnalyticsBtn" class="secondary" type="button">Daten ziehen</button>
+        </div>
+        <p id="analyticsStatus" class="status">Noch keine Auswertung geladen.</p>
+
+        <div class="toolbar"><strong>Zusammenfassung</strong></div>
+        <table>
+          <thead><tr><th>Kennzahl</th><th>Wert</th></tr></thead>
+          <tbody id="analyticsSummaryBody"></tbody>
+        </table>
+
+        <div class="toolbar"><strong>Vergleich Beraterinnen</strong></div>
+        <table>
+          <thead><tr><th>Beraterin</th><th>Affiliate-ID</th><th>Land</th><th>Zahlläufe</th><th>Transaktionen</th><th>Gesamtbetrag</th></tr></thead>
+          <tbody id="analyticsAdvisorBody"></tbody>
+        </table>
+
+        <div class="toolbar"><strong>Zahlläufe nach Land</strong></div>
+        <table>
+          <thead><tr><th>Land</th><th>Anzahl Zahlläufe</th></tr></thead>
+          <tbody id="analyticsCountryBody"></tbody>
+        </table>
+
+        <div class="toolbar"><strong>Grafiken</strong></div>
+        <canvas id="analyticsAmountChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
+        <div style="height:8px"></div>
+        <canvas id="analyticsTxChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
       `;
       panels.appendChild(panel);
     }
@@ -340,13 +367,17 @@
     }
 
     function updateCommissionSelect(history, activeValue) {
-      const select = document.getElementById('lastImportedSelect');
-      if (!select) return;
-      const list = Array.isArray(history) ? history : [];
-      const current = activeValue || '';
-      const unique = [...new Set([...list, current].filter(Boolean))];
-      select.innerHTML = unique.map(value => `<option value="${value}">${value}</option>`).join('');
-      if (current) select.value = current;
+      const fill = (id) => {
+        const select = document.getElementById(id);
+        if (!select) return;
+        const list = Array.isArray(history) ? history : [];
+        const current = activeValue || '';
+        const unique = [...new Set([...list, current].filter(Boolean))];
+        select.innerHTML = unique.map(value => `<option value="${value}">${value}</option>`).join('');
+        if (current) select.value = current;
+      };
+      fill('lastImportedSelect');
+      fill('analyticsSinceSelect');
     }
 
     function setPollingButtonState(isRunning) {
@@ -489,6 +520,96 @@
       }
     }
 
+    function drawBarChart(canvasId, labels, values, barColor) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      const width = canvas.width;
+      const height = canvas.height;
+      ctx.clearRect(0, 0, width, height);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, width, height);
+
+      if (!labels || labels.length === 0) {
+        ctx.fillStyle = '#6b7280';
+        ctx.font = '14px Arial';
+        ctx.fillText('Keine Daten', 20, 30);
+        return;
+      }
+
+      const maxValue = Math.max(...values, 1);
+      const left = 40, top = 20, chartW = width - 60, chartH = height - 60;
+      const barW = Math.max(16, Math.floor(chartW / labels.length) - 10);
+
+      ctx.strokeStyle = '#d1d5db';
+      ctx.beginPath();
+      ctx.moveTo(left, top + chartH);
+      ctx.lineTo(left + chartW, top + chartH);
+      ctx.stroke();
+
+      labels.forEach((label, i) => {
+        const val = values[i] || 0;
+        const h = Math.round((val / maxValue) * (chartH - 10));
+        const x = left + i * (barW + 10) + 4;
+        const y = top + chartH - h;
+
+        ctx.fillStyle = barColor;
+        ctx.fillRect(x, y, barW, h);
+
+        ctx.fillStyle = '#111827';
+        ctx.font = '11px Arial';
+        const shortLabel = label.length > 16 ? label.slice(0, 16) + '…' : label;
+        ctx.fillText(shortLabel, x, top + chartH + 14);
+        ctx.fillText(String(Math.round(val * 100) / 100), x, y - 4);
+      });
+    }
+
+    function renderAnalytics(data) {
+      const summaryBody = document.getElementById('analyticsSummaryBody');
+      const advisorBody = document.getElementById('analyticsAdvisorBody');
+      const countryBody = document.getElementById('analyticsCountryBody');
+      if (!summaryBody || !advisorBody || !countryBody) return;
+
+      const summary = data.summary || {};
+      const summaryRows = [
+        ['since_id', summary.sinceId || ''],
+        ['Anzahl Zahlläufe', summary.paymentsCount || 0],
+        ['Gesamtbetrag', formatEuroAmount(summary.totalAmount || 0)],
+        ['Anzahl Transaktionen', summary.totalTransactions || 0],
+        ['Beraterinnen gesamt', summary.advisorCount || 0]
+      ];
+      summaryBody.innerHTML = summaryRows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+
+      const advisors = Array.isArray(data.advisorRows) ? data.advisorRows : [];
+      advisorBody.innerHTML = advisors.map(r =>
+        `<tr><td>${r.advisorName || ''}</td><td>${r.affiliateId || ''}</td><td>${r.country || ''}</td><td>${r.paymentCount || 0}</td><td>${r.totalTransactions || 0}</td><td>${formatEuroAmount(r.totalAmount || 0)}</td></tr>`
+      ).join('');
+
+      const countries = Array.isArray(data.countryRows) ? data.countryRows : [];
+      countryBody.innerHTML = countries.map(r => `<tr><td>${r.country || ''}</td><td>${r.payments || 0}</td></tr>`).join('');
+
+      const chart = data.chartData || {};
+      drawBarChart('analyticsAmountChart', chart.labels || [], chart.amountSeries || [], '#2563eb');
+      drawBarChart('analyticsTxChart', chart.labels || [], chart.txSeries || [], '#10b981');
+    }
+
+    async function fetchAnalyticsData() {
+      const status = document.getElementById('analyticsStatus');
+      const select = document.getElementById('analyticsSinceSelect');
+      if (!status || !select) return;
+      try {
+        status.textContent = 'Lade Auswertungsdaten...';
+        const data = await apiPost('/api/analytics/fetch', { sinceId: select.value || '0' });
+        renderAnalytics(data);
+        const count = (data.summary && data.summary.paymentsCount) || 0;
+        status.textContent = `Auswertung geladen (${count} Zahlläufe).`;
+      } catch (error) {
+        status.textContent = `Fehler beim Laden der Auswertung: ${error.message}`;
+      }
+    }
+
     async function pollOnce() {
       const status = document.getElementById('pollStatus');
       try {
@@ -581,10 +702,12 @@
         const saveBtn = document.getElementById('saveSettingsBtn');
         const pickBtn = document.getElementById('pickFolderBtn');
         const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
+        const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
         if (pickBtn) pickBtn.addEventListener('click', pickFolder);
         if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
+        if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
 
         wireFolderPickerFallback();
         wireMainSectionTabs();
