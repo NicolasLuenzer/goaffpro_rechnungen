@@ -9,6 +9,16 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 
+import jakarta.activation.DataHandler;
+import jakarta.activation.FileDataSource;
+import jakarta.mail.Message;
+import jakarta.mail.Session;
+import jakarta.mail.Transport;
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeBodyPart;
+import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.MimeMultipart;
+
 import java.awt.Color;
 import java.awt.Desktop;
 import java.io.IOException;
@@ -50,6 +60,10 @@ public class WebUiServer {
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
     private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
+    private static final String SMTP_HOST = "smtp.mandrillapp.com";
+    private static final int SMTP_PORT = 587;
+    private static final String SMTP_USERNAME = "smtp@sr-gmbh.de";
+    private static final String SMTP_PASSWORD = "md-RAS4iZ8P9L_Jxc2e8UI4sQ";
 
     public static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
@@ -456,6 +470,15 @@ public class WebUiServer {
                 Path pdfPath = exportDir.resolve(filename);
                 createInvoiceDetailsPdf(pdfPath, response, affiliate);
 
+                String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
+                if (contactEmail.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"Kontakt-E-Mail ist nicht gesetzt. Bitte in den Einstellungen hinterlegen.\"}");
+                    return;
+                }
+                String periodLabel = buildPaymentPeriodLabel(payment);
+                String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
+                sendInvoiceMailWithAttachment(contactEmail, pdfPath, affiliateNameForMail, periodLabel);
+
                 boolean opened = false;
                 String openMessage = "";
                 try {
@@ -473,7 +496,7 @@ public class WebUiServer {
                 persistSettings(config);
 
                 Map<String, Object> payload = new HashMap<>();
-                payload.put("message", "Rechnungsdetails-PDF erstellt.");
+                payload.put("message", "Rechnungsdetails-PDF erstellt und per E-Mail versendet.");
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
                 payload.put("opened", opened);
@@ -1136,6 +1159,69 @@ public class WebUiServer {
 
         if (!country.isBlank()) parts.add(country);
         return String.join(", ", parts);
+    }
+
+    private static String buildPaymentPeriodLabel(JsonNode payment) {
+        JsonNode transactions = payment != null ? payment.get("transactions") : null;
+        if (transactions == null || !transactions.isArray() || transactions.size() == 0) {
+            return "ohne Zeitraum";
+        }
+
+        OffsetDateTime minDate = null;
+        OffsetDateTime maxDate = null;
+        for (JsonNode tx : transactions) {
+            try {
+                OffsetDateTime dt = OffsetDateTime.parse(asText(tx, "created_at"));
+                if (minDate == null || dt.isBefore(minDate)) minDate = dt;
+                if (maxDate == null || dt.isAfter(maxDate)) maxDate = dt;
+            } catch (Exception ignored) {
+            }
+        }
+        if (minDate == null || maxDate == null) return "ohne Zeitraum";
+        DateTimeFormatter f = DateTimeFormatter.ofPattern("dd.MM.yyyy");
+        return minDate.atZoneSameInstant(ZoneId.of("Europe/Berlin")).format(f)
+                + " bis "
+                + maxDate.atZoneSameInstant(ZoneId.of("Europe/Berlin")).format(f);
+    }
+
+    private static void sendInvoiceMailWithAttachment(String toEmail, Path pdfPath, String affiliateName, String periodLabel) throws Exception {
+        Properties props = new Properties();
+        props.put("mail.smtp.host", SMTP_HOST);
+        props.put("mail.smtp.port", String.valueOf(SMTP_PORT));
+        props.put("mail.smtp.auth", "true");
+        props.put("mail.smtp.starttls.enable", "false");
+        props.put("mail.smtp.ssl.enable", "false");
+
+        Session session = Session.getInstance(props);
+
+        MimeMessage message = new MimeMessage(session);
+        message.setFrom(new InternetAddress(SMTP_USERNAME));
+        message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail, false));
+
+        String displayName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
+        String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + displayName;
+        message.setSubject(subject, StandardCharsets.UTF_8.name());
+
+        MimeBodyPart textPart = new MimeBodyPart();
+        textPart.setText("Guten Tag,\n\nanbei erhalten Sie den Provisionsnachweis als PDF-Anhang.\n\nFreundliche Grüße\nS+R Linear Technology GmbH", StandardCharsets.UTF_8.name());
+
+        MimeBodyPart attachmentPart = new MimeBodyPart();
+        FileDataSource fds = new FileDataSource(pdfPath.toFile());
+        attachmentPart.setDataHandler(new DataHandler(fds));
+        attachmentPart.setFileName(pdfPath.getFileName().toString());
+
+        MimeMultipart multipart = new MimeMultipart();
+        multipart.addBodyPart(textPart);
+        multipart.addBodyPart(attachmentPart);
+        message.setContent(multipart);
+
+        Transport transport = session.getTransport("smtp");
+        try {
+            transport.connect(SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD);
+            transport.sendMessage(message, message.getAllRecipients());
+        } finally {
+            transport.close();
+        }
     }
 
     private static JsonNode requestJson(String apiUrl, String apiKey) throws Exception {
