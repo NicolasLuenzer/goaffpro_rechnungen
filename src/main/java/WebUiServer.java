@@ -476,126 +476,288 @@ public class WebUiServer {
             try (PDDocument document = new PDDocument()) {
                 JsonNode payments = apiResponse.get("payments");
                 JsonNode payment = (payments != null && payments.isArray() && payments.size() > 0) ? payments.get(0) : null;
+                if (payment == null) {
+                    PDPage page = new PDPage();
+                    document.addPage(page);
+                    try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
+                        cs.beginText();
+                        cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
+                        cs.newLineAtOffset(40, 770);
+                        cs.showText("Provisionsnachweis konnte nicht erstellt werden (keine Daten)");
+                        cs.endText();
+                    }
+                    document.save(pdfPath.toFile());
+                    return;
+                }
 
-                PDPage page = new PDPage();
-                document.addPage(page);
-                try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
+                List<JsonNode> txList = new ArrayList<>();
+                JsonNode transactions = payment.get("transactions");
+                if (transactions != null && transactions.isArray()) {
+                    for (JsonNode tx : transactions) txList.add(tx);
+                }
+
+                int totalCount = txList.size();
+                int directCount = 0;
+                int teamCount = 0;
+                double sumOrderDirect = 0.0, sumOrderTeam = 0.0;
+                double sumBmgDirect = 0.0, sumBmgTeam = 0.0;
+                double sumProvDirect = 0.0, sumProvTeam = 0.0;
+                OffsetDateTime minDate = null, maxDate = null;
+
+                for (JsonNode tx : txList) {
+                    String entityType = asText(tx, "entity_type");
+                    double orderValue = parseDoubleSafe(asText(tx.path("metadata"), "order_value"));
+                    double bmgValue = parseDoubleSafe(asText(tx.path("metadata"), "commission_on"));
+                    double provValue = parseDoubleSafe(asText(tx, "amount"));
+
+                    if ("orders".equalsIgnoreCase(entityType)) {
+                        directCount++;
+                        sumOrderDirect += orderValue;
+                        sumBmgDirect += bmgValue;
+                        sumProvDirect += provValue;
+                    } else {
+                        teamCount++;
+                        sumOrderTeam += orderValue;
+                        sumBmgTeam += bmgValue;
+                        sumProvTeam += provValue;
+                    }
+
+                    try {
+                        OffsetDateTime dt = OffsetDateTime.parse(asText(tx, "created_at"));
+                        if (minDate == null || dt.isBefore(minDate)) minDate = dt;
+                        if (maxDate == null || dt.isAfter(maxDate)) maxDate = dt;
+                    } catch (Exception ignored) {
+                    }
+                }
+
+                double sumOrderAll = sumOrderDirect + sumOrderTeam;
+                double sumBmgAll = sumBmgDirect + sumBmgTeam;
+                double sumProvAll = sumProvDirect + sumProvTeam;
+                double payout = parseDoubleSafe(asText(payment, "amount"));
+                double rounding = payout - sumProvAll;
+
+                PDPage summaryPage = new PDPage();
+                document.addPage(summaryPage);
+                try (PDPageContentStream cs = new PDPageContentStream(document, summaryPage)) {
                     float x = 40f;
-                    float y = 770f;
+                    float y = 780f;
+                    float totalWidth = 560f;
+                    float keyWidth = totalWidth * 0.30f;
+                    float valueWidth = totalWidth * 0.70f;
+
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA_BOLD, 20);
+                    cs.newLineAtOffset(x, y);
+                    cs.showText("Provisionsnachweis (Zahllauf) – Direkt- und Team-Provisionen");
+                    cs.endText();
+                    y -= 30;
+
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA_BOLD, 11);
+                    cs.newLineAtOffset(x, y);
+                    cs.showText("Zahllauf-ID: " + asText(payment, "id") + "   |   Affiliate-ID: " + asText(payment, "affiliate_id"));
+                    cs.endText();
+                    y -= 18;
+
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA, 11);
+                    cs.newLineAtOffset(x, y);
+                    cs.showText("Auszahlungsdatum (System): " + formatDateTimeEuropeBerlin(asText(payment, "created_at")) + " (Europe/Berlin)");
+                    cs.endText();
+                    y -= 22;
+
+                    String ibanRaw = asText(payment.path("payment_details"), "account_number");
+                    String ibanMasked = maskIban(ibanRaw);
+                    String period = (minDate == null || maxDate == null)
+                            ? "k.A."
+                            : formatDateTimeEuropeBerlin(minDate.toString()) + " bis " + formatDateTimeEuropeBerlin(maxDate.toString()) + " (Europe/Berlin)";
+
+                    List<String[]> summaryRows = List.of(
+                            new String[]{"Empfänger (Kontoinhaber)", asText(payment.path("payment_details"), "account_name")},
+                            new String[]{"Zahlmethode", "SEPA (via " + asText(payment.path("payment_details"), "paid_via") + ")"},
+                            new String[]{"IBAN (maskiert)", ibanMasked},
+                            new String[]{"BIC", asText(payment.path("payment_details"), "branch_code")},
+                            new String[]{"Zeitraum der Transaktionen", period},
+                            new String[]{"Anzahl Transaktionen im Zahllauf", String.valueOf(totalCount)},
+                            new String[]{"Davon Direkt (Order)", String.valueOf(directCount)},
+                            new String[]{"Davon Team (Reward)", String.valueOf(teamCount)},
+                            new String[]{"Summe Bestellwert* (gesamt)", euro(sumOrderAll)},
+                            new String[]{"Summe Bemessungsgrundlage (gesamt)", euro(sumBmgAll)},
+                            new String[]{"Summe Provision (gesamt)", euro(sumProvAll)},
+                            new String[]{"Auszahlungsbetrag", euro(payout)},
+                            new String[]{"Rundungsdifferenz (Auszahlung - Summe Provision)", euro(rounding)}
+                    );
+
+                    for (String[] row : summaryRows) {
+                        float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, row[0], row[1]);
+                        y -= used;
+                    }
+
+                    y -= 16;
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA, 10);
+                    cs.newLineAtOffset(x, y);
+                    cs.showText("* Bestellwert exkl. abgezogener Rabatte (so wie im System/Export übergeben).");
+                    cs.endText();
+                    y -= 28;
+
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA_BOLD, 16);
+                    cs.newLineAtOffset(x, y);
+                    cs.showText("Aufteilung der Provisionen");
+                    cs.endText();
+                    y -= 20;
+
+                    float c1 = 120f, c2 = 145f, c3 = 165f, c4 = 130f;
+                    float x2 = x;
+                    float h = 20f;
+                    drawSimpleCell(cs, x2, y, c1, h, "Typ", true);
+                    drawSimpleCell(cs, x2 + c1, y, c2, h, "Summe Bestellwert*", true);
+                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, "Summe Bemessungsgrundlage", true);
+                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, "Summe Provision", true);
+                    y -= h;
+                    drawSimpleCell(cs, x2, y, c1, h, "Direkt (Order)", false);
+                    drawSimpleCell(cs, x2 + c1, y, c2, h, euro(sumOrderDirect), false);
+                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, euro(sumBmgDirect), false);
+                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, euro(sumProvDirect), false);
+                    y -= h;
+                    drawSimpleCell(cs, x2, y, c1, h, "Team (Reward)", false);
+                    drawSimpleCell(cs, x2 + c1, y, c2, h, euro(sumOrderTeam), false);
+                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, euro(sumBmgTeam), false);
+                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, euro(sumProvTeam), false);
+                    y -= (h + 18);
 
                     cs.beginText();
                     cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
                     cs.newLineAtOffset(x, y);
-                    cs.showText("GoAffPro Rechnungsdetails");
+                    cs.showText("Hinweise für Beraterinnen (für die eigene Nachweisführung)");
                     cs.endText();
-                    y -= 24;
-
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA, 9);
-                    cs.newLineAtOffset(x, y);
-                    cs.showText(shortenForPdf("Request: " + asText(apiResponse, "request_url"), 130));
-                    cs.endText();
-                    y -= 20;
-
-                    if (payment != null) {
-                        float totalWidth = 530f;
-                        float keyWidth = totalWidth * 0.30f;
-                        float valueWidth = totalWidth * 0.70f;
-
-                        List<String[]> headerRows = new ArrayList<>();
-                        headerRows.add(new String[]{label("Zahlungs-ID", "id", 0), asText(payment, "id")});
-                        headerRows.add(new String[]{label("Affiliate-ID", "affiliate_id", 0), asText(payment, "affiliate_id")});
-                        headerRows.add(new String[]{label("Provision", "amount", 0), formatAmountEuro(asText(payment, "amount"))});
-                        headerRows.add(new String[]{label("Zahlungsart", "payment_method", 0), asText(payment, "payment_method")});
-                        headerRows.add(new String[]{label("Affiliate-Nachricht", "affiliate_message", 0), asText(payment, "affiliate_message")});
-                        headerRows.add(new String[]{label("Admin-Notiz", "admin_note", 0), asText(payment, "admin_note")});
-                        headerRows.add(new String[]{label("Bestelldatum", "created_at", 0), asText(payment, "created_at")});
-
-                        for (String[] row : headerRows) {
-                            float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, row[0], row[1]);
-                            y -= used;
-                        }
-
-                        y -= 10;
-                        cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA_BOLD, 11);
-                        cs.newLineAtOffset(x, y);
-                        cs.showText("Payment Details");
-                        cs.endText();
-                        y -= 16;
-
-                        JsonNode paymentDetails = payment.get("payment_details");
-                        if (paymentDetails != null && paymentDetails.isObject()) {
-                            var it = paymentDetails.fieldNames();
-                            while (it.hasNext()) {
-                                String key = it.next();
-                                String value = "amount".equals(key) ? formatAmountEuro(asText(paymentDetails, key)) : asText(paymentDetails, key);
-                                float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel(key), key, 1), translateFieldValue(key, value));
-                                y -= used;
-                                if (y < 90f) break;
-                            }
+                    y -= 16;
+                    String[] notes = new String[]{
+                            "• Diesen Provisionsnachweis zusammen mit dem Kontoauszug (Zahlungseingang/SEPA-Gutschrift) ablegen.",
+                            "• Falls ihr umsatzsteuerpflichtig seid: prüfen, ob die Provision netto/brutto ausgewiesen werden muss.",
+                            "• Bei Kleinunternehmerregelung (§ 19 UStG): sicherstellen, dass eure Belege/Rechnungen passen.",
+                            "• Team-/Downline-Provisionen: Referenzen im System aufbewahren und bei Bedarf nachreichen.",
+                            "• Aufbewahrung: Unterlagen nach Jahr/Monat/Zahllauf archivieren.",
+                            "• Stammdaten aktuell halten (Name/IBAN/Adresse/Steuernummer), damit Zuordnung eindeutig bleibt."
+                    };
+                    for (String n : notes) {
+                        for (String line : wrapForPdf(n, 98)) {
+                            cs.beginText();
+                            cs.setFont(PDType1Font.HELVETICA, 10);
+                            cs.newLineAtOffset(x, y);
+                            cs.showText(line);
+                            cs.endText();
+                            y -= 13;
                         }
                     }
                 }
 
-                JsonNode transactions = payment != null ? payment.get("transactions") : null;
-                if (transactions != null && transactions.isArray() && transactions.size() > 0) {
-                    for (int idx = 0; idx < transactions.size(); idx++) {
-                        JsonNode tx = transactions.get(idx);
+                int rowsPerPage = 30;
+                int totalPages = Math.max(1, (txList.size() + rowsPerPage - 1) / rowsPerPage);
+                int pageNo = 1;
+                for (int start = 0; start < txList.size(); start += rowsPerPage) {
+                    int end = Math.min(start + rowsPerPage, txList.size());
+                    PDPage detailPage = new PDPage();
+                    document.addPage(detailPage);
+                    try (PDPageContentStream cs = new PDPageContentStream(document, detailPage)) {
+                        float x = 40f;
+                        float y = 780f;
+                        cs.beginText();
+                        cs.setFont(PDType1Font.HELVETICA_BOLD, 16);
+                        cs.newLineAtOffset(x, y);
+                        cs.showText("Detailnachweis – Einzeltransaktionen (Seite " + pageNo + " von " + totalPages + ")");
+                        cs.endText();
+                        y -= 24;
 
-                        PDPage txPage = new PDPage();
-                        document.addPage(txPage);
-                        try (PDPageContentStream cs = new PDPageContentStream(document, txPage)) {
-                            float x = 30f;
-                            float y = 770f;
+                        float cZeit=110f, cTyp=110f, cOrder=95f, cOrderW=115f, cBmg=85f, cProv=85f;
+                        float h=19f;
+                        drawSimpleCell(cs, x, y, cZeit, h, "Zeitpunkt", true);
+                        drawSimpleCell(cs, x+cZeit, y, cTyp, h, "Typ", true);
+                        drawSimpleCell(cs, x+cZeit+cTyp, y, cOrder, h, "Bestellnummer", true);
+                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder, y, cOrderW, h, "Bestellwert*", true);
+                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW, y, cBmg, h, "BMG", true);
+                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW+cBmg, y, cProv, h, "Provision", true);
+                        y -= h;
 
-                            cs.beginText();
-                            cs.setFont(PDType1Font.HELVETICA_BOLD, 13);
-                            cs.newLineAtOffset(x, y);
-                            JsonNode metadataForTitle = tx.get("metadata");
-                            String orderNumberTitle = metadataForTitle != null ? asText(metadataForTitle, "order_number") : "";
-                            String title = (orderNumberTitle == null || orderNumberTitle.isBlank()) ? "Transaktion" : "Bestellung " + orderNumberTitle;
-                            cs.showText(title);
-                            cs.endText();
-                            y -= 20;
+                        for (int i=start; i<end; i++) {
+                            JsonNode tx = txList.get(i);
+                            JsonNode md = tx.get("metadata");
+                            String t = formatDateTimeEuropeBerlin(asText(tx, "created_at"));
+                            String typ = "rewards".equalsIgnoreCase(asText(tx, "entity_type")) ? "Team (Reward)" : "Direkt (Order)";
+                            String orderNo = md != null ? asText(md, "order_number") : "";
+                            String orderVal = md != null ? euro(parseDoubleSafe(asText(md, "order_value"))) : "";
+                            String bmgVal = md != null ? euro(parseDoubleSafe(asText(md, "commission_on"))) : "";
+                            String provVal = euro(parseDoubleSafe(asText(tx, "amount")));
 
-                            float totalWidth = 560f;
-                            float keyWidth = totalWidth * 0.30f;
-                            float valueWidth = totalWidth * 0.70f;
-                            float usedHeader = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, "Feld", "Wert");
-                            y -= usedHeader;
-
-                            JsonNode metadata = tx.get("metadata");
-                            String orderNumber = metadata != null ? asText(metadata, "order_number") : "";
-                            float uOrder = drawTableRowBold(cs, x, y, 18f, keyWidth, valueWidth,
-                                    label(resolveGermanLabel("order_number"), "order_number", 1),
-                                    translateFieldValue("order_number", orderNumber));
-                            y -= uOrder;
-
-                            float u1 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("tx_id"), "tx_id", 1), translateFieldValue("tx_id", asText(tx, "tx_id"))); y -= u1;
-                            float u2 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("amount"), "amount", 1), translateFieldValue("amount", asText(tx, "amount"))); y -= u2;
-                            float u3 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("entity_type"), "entity_type", 1), translateFieldValue("entity_type", asText(tx, "entity_type"))); y -= u3;
-                            float u4 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("created_at"), "created_at", 1), translateFieldValue("created_at", asText(tx, "created_at"))); y -= u4;
-
-                            if (metadata != null && metadata.isObject()) {
-                                var it = metadata.fieldNames();
-                                while (it.hasNext() && y > 80f) {
-                                    String key = it.next();
-                                    if ("amount".equals(key) || "order_number".equals(key)) {
-                                        continue;
-                                    }
-                                    String rawValue = asText(metadata, key);
-                                    float um = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth,
-                                            label(resolveGermanLabel(key), key, 2),
-                                            translateFieldValue(key, rawValue));
-                                    y -= um;
-                                }
-                            }
+                            drawSimpleCell(cs, x, y, cZeit, h, t, false);
+                            drawSimpleCell(cs, x+cZeit, y, cTyp, h, typ, false);
+                            drawSimpleCell(cs, x+cZeit+cTyp, y, cOrder, h, orderNo, false);
+                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder, y, cOrderW, h, orderVal, false);
+                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW, y, cBmg, h, bmgVal, false);
+                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW+cBmg, y, cProv, h, provVal, false);
+                            y -= h;
                         }
+
+                        y -= 14;
+                        cs.beginText();
+                        cs.setFont(PDType1Font.HELVETICA, 10);
+                        cs.newLineAtOffset(x, y);
+                        cs.showText("* Bestellwert exkl. abgezogener Rabatte (so wie im System/Export übergeben).");
+                        cs.endText();
                     }
+                    pageNo++;
                 }
 
                 document.save(pdfPath.toFile());
+            }
+        }
+
+        private String maskIban(String iban) {
+            if (iban == null || iban.length() < 8) {
+                return iban == null ? "" : iban;
+            }
+            String compact = iban.replaceAll("\\s+", "");
+            if (compact.length() <= 8) return compact;
+            return compact.substring(0, 4) + " **** **** **** " + compact.substring(compact.length() - 4);
+        }
+
+        private String euro(double value) {
+            return String.format(java.util.Locale.GERMANY, "%.2f €", value);
+        }
+
+        private double parseDoubleSafe(String raw) {
+            if (raw == null || raw.isBlank() || "null".equalsIgnoreCase(raw)) return 0.0;
+            try {
+                return Double.parseDouble(raw.replace(",", "."));
+            } catch (Exception e) {
+                return 0.0;
+            }
+        }
+
+        private String formatDateTimeEuropeBerlin(String input) {
+            if (input == null || input.isBlank()) return "";
+            try {
+                OffsetDateTime dt = OffsetDateTime.parse(input);
+                return dt.atZoneSameInstant(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+            } catch (Exception ignored) {
+                return input;
+            }
+        }
+
+        private void drawSimpleCell(PDPageContentStream cs, float x, float y, float width, float height, String text, boolean bold) throws IOException {
+            cs.setLineWidth(0.5f);
+            cs.addRect(x, y - height, width, height);
+            cs.stroke();
+
+            List<String> lines = wrapForPdf(text == null ? "" : text, Math.max(8, (int)(width / 5.2f)));
+            float ty = y - 12f;
+            for (int i = 0; i < Math.min(lines.size(), 2); i++) {
+                cs.beginText();
+                cs.setFont(bold ? PDType1Font.HELVETICA_BOLD : PDType1Font.HELVETICA, 9);
+                cs.newLineAtOffset(x + 4, ty - (i * 9f));
+                cs.showText(shortenForPdf(lines.get(i), 80));
+                cs.endText();
             }
         }
     }
