@@ -369,13 +369,28 @@
         <h2>Validierung der Stammdaten</h2>
         <div class="toolbar">
           <button id="loadValidationBtn" class="secondary" type="button">Stammdaten laden / neu laden</button>
-          <label><input id="filterMissingIban" type="checkbox" /> nur ohne IBAN</label>
-          <label><input id="filterInvalidIban" type="checkbox" /> nur mit ungültiger IBAN</label>
-          <label><input id="filterValidIban" type="checkbox" /> nur mit gültiger IBAN</label>
-          <label><input id="filterWithTaxNumber" type="checkbox" /> nur mit Steuernummer</label>
-          <label><input id="filterWithoutTaxNumber" type="checkbox" /> nur ohne Steuernummer</label>
-          <label><input id="filterMissingAddress" type="checkbox" /> nur ohne Adresse</label>
-          <label><input id="filterMissingName" type="checkbox" /> nur ohne Name</label>
+          <label><input id="filterWithoutName" type="checkbox" /> ohne Name</label>
+          <label><input id="filterWithName" type="checkbox" /> mit Name</label>
+          <label><input id="filterWithoutEmail" type="checkbox" /> ohne E-Mail</label>
+          <label><input id="filterWithEmail" type="checkbox" /> mit E-Mail</label>
+          <label><input id="filterWithoutPhone" type="checkbox" /> ohne Telefon</label>
+          <label><input id="filterWithPhone" type="checkbox" /> mit Telefon</label>
+          <label><input id="filterWithoutAddress" type="checkbox" /> ohne Adresse</label>
+          <label><input id="filterWithAddress" type="checkbox" /> mit Adresse</label>
+          <label><input id="filterWithoutCountry" type="checkbox" /> ohne Land</label>
+          <label><input id="filterWithCountry" type="checkbox" /> mit Land</label>
+          <label><input id="filterWithoutDateOfBirth" type="checkbox" /> ohne Geburtsdatum</label>
+          <label><input id="filterWithDateOfBirth" type="checkbox" /> mit Geburtsdatum</label>
+          <label><input id="filterWithoutTaxNumber" type="checkbox" /> ohne Steuernummer</label>
+          <label><input id="filterWithTaxNumber" type="checkbox" /> mit Steuernummer</label>
+          <label><input id="filterWithoutPaymentMethod" type="checkbox" /> ohne Zahlmethode</label>
+          <label><input id="filterWithPaymentMethod" type="checkbox" /> mit Zahlmethode</label>
+          <label><input id="filterMissingIban" type="checkbox" /> ohne IBAN</label>
+          <label><input id="filterWithIban" type="checkbox" /> mit IBAN</label>
+          <label><input id="filterInvalidIban" type="checkbox" /> mit ungültiger IBAN</label>
+          <label><input id="filterValidIban" type="checkbox" /> mit gültiger IBAN</label>
+          <label><input id="filterWithoutStatus" type="checkbox" /> ohne Status</label>
+          <label><input id="filterWithStatus" type="checkbox" /> mit Status</label>
           <label for="filterStatusSelect">Status:</label>
           <select id="filterStatusSelect" style="min-width:180px"><option value="">alle</option></select>
         </div>
@@ -393,31 +408,69 @@
     function renderValidationTable() {
       const status = document.getElementById('validationStatus');
       const body = document.getElementById('validationBody');
+      const filterWithoutName = !!document.getElementById('filterWithoutName')?.checked;
+      const filterWithName = !!document.getElementById('filterWithName')?.checked;
+      const filterWithoutEmail = !!document.getElementById('filterWithoutEmail')?.checked;
+      const filterWithEmail = !!document.getElementById('filterWithEmail')?.checked;
+      const filterWithoutPhone = !!document.getElementById('filterWithoutPhone')?.checked;
+      const filterWithPhone = !!document.getElementById('filterWithPhone')?.checked;
+      const filterWithoutAddress = !!document.getElementById('filterWithoutAddress')?.checked;
+      const filterWithAddress = !!document.getElementById('filterWithAddress')?.checked;
+      const filterWithoutCountry = !!document.getElementById('filterWithoutCountry')?.checked;
+      const filterWithCountry = !!document.getElementById('filterWithCountry')?.checked;
+      const filterWithoutDateOfBirth = !!document.getElementById('filterWithoutDateOfBirth')?.checked;
+      const filterWithDateOfBirth = !!document.getElementById('filterWithDateOfBirth')?.checked;
+      const filterWithoutTaxNumber = !!document.getElementById('filterWithoutTaxNumber')?.checked;
+      const filterWithTaxNumber = !!document.getElementById('filterWithTaxNumber')?.checked;
+      const filterWithoutPaymentMethod = !!document.getElementById('filterWithoutPaymentMethod')?.checked;
+      const filterWithPaymentMethod = !!document.getElementById('filterWithPaymentMethod')?.checked;
       const filterMissingIban = !!document.getElementById('filterMissingIban')?.checked;
+      const filterWithIban = !!document.getElementById('filterWithIban')?.checked;
       const filterInvalidIban = !!document.getElementById('filterInvalidIban')?.checked;
       const filterValidIban = !!document.getElementById('filterValidIban')?.checked;
-      const filterWithTaxNumber = !!document.getElementById('filterWithTaxNumber')?.checked;
-      const filterWithoutTaxNumber = !!document.getElementById('filterWithoutTaxNumber')?.checked;
-      const filterMissingAddress = !!document.getElementById('filterMissingAddress')?.checked;
-      const filterMissingName = !!document.getElementById('filterMissingName')?.checked;
+      const filterWithoutStatus = !!document.getElementById('filterWithoutStatus')?.checked;
+      const filterWithStatus = !!document.getElementById('filterWithStatus')?.checked;
       const statusFilter = (document.getElementById('filterStatusSelect')?.value || '').trim().toLowerCase();
       if (!status || !body) return;
 
       const filtered = validationRowsCache.filter(r => {
+        const hasName = !!(r.name || '').trim();
+        const hasEmail = !!(r.email || '').trim();
+        const hasPhone = !!(r.phone || '').trim();
+        const hasAddress = !!(r.address || '').trim();
+        const hasCountry = !!(r.country || '').trim();
+        const hasDateOfBirth = !!(r.dateOfBirth || '').trim();
+        const hasTaxNumber = !!(r.taxNumber || '').trim();
+        const hasPaymentMethod = !!(r.paymentMethod || '').trim();
         const missingIban = !(r.iban || '').trim();
+        const hasIban = !missingIban;
         const invalidIban = (r.ibanValid || '').toLowerCase() !== 'ja';
         const hasValidIban = (r.ibanValid || '').toLowerCase() === 'ja';
-        const missingAddress = !(r.address || '').trim();
-        const missingName = !(r.name || '').trim();
-        const hasTaxNumber = !!(r.taxNumber || '').trim();
+        const hasStatus = !!(r.status || '').trim();
         const statusMatch = !statusFilter || (r.status || '').trim().toLowerCase() === statusFilter;
+
+        if (filterWithoutName && hasName) return false;
+        if (filterWithName && !hasName) return false;
+        if (filterWithoutEmail && hasEmail) return false;
+        if (filterWithEmail && !hasEmail) return false;
+        if (filterWithoutPhone && hasPhone) return false;
+        if (filterWithPhone && !hasPhone) return false;
+        if (filterWithoutAddress && hasAddress) return false;
+        if (filterWithAddress && !hasAddress) return false;
+        if (filterWithoutCountry && hasCountry) return false;
+        if (filterWithCountry && !hasCountry) return false;
+        if (filterWithoutDateOfBirth && hasDateOfBirth) return false;
+        if (filterWithDateOfBirth && !hasDateOfBirth) return false;
+        if (filterWithoutTaxNumber && hasTaxNumber) return false;
+        if (filterWithTaxNumber && !hasTaxNumber) return false;
+        if (filterWithoutPaymentMethod && hasPaymentMethod) return false;
+        if (filterWithPaymentMethod && !hasPaymentMethod) return false;
         if (filterMissingIban && !missingIban) return false;
+        if (filterWithIban && !hasIban) return false;
         if (filterInvalidIban && !invalidIban) return false;
         if (filterValidIban && !hasValidIban) return false;
-        if (filterWithTaxNumber && !hasTaxNumber) return false;
-        if (filterWithoutTaxNumber && hasTaxNumber) return false;
-        if (filterMissingAddress && !missingAddress) return false;
-        if (filterMissingName && !missingName) return false;
+        if (filterWithoutStatus && hasStatus) return false;
+        if (filterWithStatus && !hasStatus) return false;
         if (!statusMatch) return false;
         return true;
       });
@@ -1229,7 +1282,7 @@
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
 
-        ['filterMissingIban','filterInvalidIban','filterValidIban','filterWithTaxNumber','filterWithoutTaxNumber','filterMissingAddress','filterMissingName','filterStatusSelect'].forEach(id => {
+        ['filterWithoutName','filterWithName','filterWithoutEmail','filterWithEmail','filterWithoutPhone','filterWithPhone','filterWithoutAddress','filterWithAddress','filterWithoutCountry','filterWithCountry','filterWithoutDateOfBirth','filterWithDateOfBirth','filterWithoutTaxNumber','filterWithTaxNumber','filterWithoutPaymentMethod','filterWithPaymentMethod','filterMissingIban','filterWithIban','filterInvalidIban','filterValidIban','filterWithoutStatus','filterWithStatus','filterStatusSelect'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.addEventListener('change', renderValidationTable);
         });

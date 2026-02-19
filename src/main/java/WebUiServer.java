@@ -917,7 +917,18 @@ public class WebUiServer {
                         .max(LocalDate::compareTo)
                         .map(d -> d.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")))
                         .orElse("unbekanntes-datum");
-                Path runExportDir = exportDir.resolve("export_" + sanitizeFilename(maxBelegdatum + "_" + highestPaymentId));
+                String advisorFolderToken = selectedRows.stream()
+                        .map(r -> safe(r.get("affiliateName"), ""))
+                        .map(String::trim)
+                        .filter(v -> !v.isBlank())
+                        .distinct()
+                        .sorted(String::compareToIgnoreCase)
+                        .collect(Collectors.collectingAndThen(Collectors.toList(), names -> {
+                            if (names.isEmpty()) return "ohne-beraterin";
+                            if (names.size() == 1) return names.get(0);
+                            return names.get(0) + "_und_weitere";
+                        }));
+                Path runExportDir = exportDir.resolve("export_" + sanitizeFilename(maxBelegdatum + "_" + highestPaymentId + "_" + advisorFolderToken));
                 Files.createDirectories(runExportDir);
 
                 List<String> exportedFiles = new ArrayList<>();
@@ -1040,7 +1051,8 @@ public class WebUiServer {
                 String belegdatum = toGermanDate(asText(payment, "created_at"));
                 LocalDate belegDate = parseGermanDate(belegdatum);
                 String belegFolder = belegDate != null ? belegDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : "unbekanntes-datum";
-                Path runExportDir = exportDir.resolve("export_" + sanitizeFilename(belegFolder + "_" + paymentId));
+                String advisorFolderToken = affiliate != null ? asText(affiliate, "name") : "ohne-beraterin";
+                Path runExportDir = exportDir.resolve("export_" + sanitizeFilename(belegFolder + "_" + paymentId + "_" + advisorFolderToken));
                 Files.createDirectories(runExportDir);
 
                 String timestamp = FILE_TIMESTAMP.format(LocalDateTime.now());

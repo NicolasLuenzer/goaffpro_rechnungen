@@ -49,7 +49,7 @@ Diese Dokumentation beschreibt die wichtigsten Funktionen der Anwendung **VEMMiN
 ## 4) Exportlogik
 
 - Pro Exportlauf wird automatisch ein Unterordner erzeugt:
-  - `export_<belegdatum>_<hoechste-payment-id>`
+  - `export_<belegdatum>_<hoechste-payment-id>_<beraterinnenname>`
 - Dort werden die generierten Dateien (PDF/JSON) abgelegt.
 
 ## 5) E-Mail-Text und Versandverhalten
@@ -160,16 +160,20 @@ Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
 
 ## 12) Validierungsfilter
 
-Im Reiter **Validierung** stehen schnelle Filter zur Verfügung:
+Im Reiter **Validierung** stehen schnelle Filter zur Verfügung (für alle relevanten Spalten jeweils mit/ohne):
 
-- nur ohne IBAN
-- nur mit ungültiger IBAN
-- nur mit gültiger IBAN
-- nur mit Steuernummer
-- nur ohne Steuernummer
-- nur ohne Adresse
-- nur ohne Name
-- Status-Filter (Dropdown)
+- Name (mit/ohne)
+- E-Mail (mit/ohne)
+- Telefon (mit/ohne)
+- Adresse (mit/ohne)
+- Land (mit/ohne)
+- Geburtsdatum (mit/ohne)
+- Steuernummer (mit/ohne)
+- Zahlmethode (mit/ohne)
+- IBAN (mit/ohne)
+- IBAN korrekt / ungültig
+- Status (mit/ohne)
+- zusätzlicher Status-Filter (Dropdown)
 
 Die Filter sind kombinierbar und wirken direkt auf die geladene Tabelle.
 
