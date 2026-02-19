@@ -59,6 +59,7 @@ public class WebUiServer {
         server.createContext("/api/provisionen-goaffpro/export-pdf", new ExportPdfHandler());
         server.createContext("/api/provisionen-goaffpro/invoice-details-pdf", new InvoiceDetailsPdfHandler());
         server.createContext("/api/version", new VersionHandler());
+        server.createContext("/api/version/history", new VersionHistoryHandler());
         server.setExecutor(null);
         server.start();
 
@@ -422,7 +423,7 @@ public class WebUiServer {
                 mergeUiSettingsIntoConfig(config, uiSettings);
 
                 String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
-                String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + paymentId;
+                String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?id=" + paymentId;
                 JsonNode response = requestJson(detailsUrl, apiKey);
                 JsonNode payments = response.get("payments");
                 if (payments == null || !payments.isArray() || payments.size() == 0) {
@@ -577,6 +578,25 @@ public class WebUiServer {
             }
             Map<String, String> payload = new HashMap<>();
             payload.put("version", APP_VERSION);
+            sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+        }
+    }
+
+    private static class VersionHistoryHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{"error":"Method not allowed"}");
+                return;
+            }
+
+            List<Map<String, String>> versions = readRecentVersions();
+            Map<String, Object> payload = new HashMap<>();
+            payload.put("versions", versions);
             sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
         }
     }
@@ -774,6 +794,36 @@ public class WebUiServer {
 
     private static String safe(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private static List<Map<String, String>> readRecentVersions() {
+        List<Map<String, String>> items = new ArrayList<>();
+        try {
+            Process process = new ProcessBuilder("git", "log", "-n", "12", "--pretty=format:%h|%ct|%s")
+                    .directory(Paths.get(".").toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+            int code = process.waitFor();
+            if (code == 0) {
+                for (String line : output.split("\R")) {
+                    if (line.isBlank()) continue;
+                    String[] parts = line.split("\|", 3);
+                    if (parts.length < 3) continue;
+                    long epoch = Long.parseLong(parts[1].trim());
+                    String ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                            .withZone(ZoneId.systemDefault())
+                            .format(Instant.ofEpochSecond(epoch));
+                    Map<String, String> row = new HashMap<>();
+                    row.put("version", parts[0].trim());
+                    row.put("timestamp", ts);
+                    row.put("summary", parts[2].trim());
+                    items.add(row);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return items;
     }
 
     private static String resolveVersionWithTimestampAndSequence() {

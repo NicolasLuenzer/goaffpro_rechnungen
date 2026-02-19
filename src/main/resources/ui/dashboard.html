@@ -26,13 +26,21 @@
     th { background: #f3f4f6; cursor: pointer; user-select: none; }
     th.sort-active { background: #dbeafe; }
     .files { margin-top: 8px; font-size: 13px; color: #1f2937; }
-    .app-version { position: fixed; top: 12px; right: 16px; background: #111827; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; z-index: 1000; }
+    .app-version { position: fixed; top: 12px; right: 16px; background: #111827; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; z-index: 1000; cursor: pointer; }
+    .version-popup { position: fixed; top: 42px; right: 16px; width: 460px; max-height: 360px; overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); z-index: 1001; padding: 8px; }
+    .version-popup-header { font-weight: bold; margin-bottom: 6px; }
+    .version-popup ul { margin: 0; padding-left: 18px; }
+    .version-popup li { margin-bottom: 8px; font-size: 13px; }
   </style>
 </head>
 <body>
   <h1>Weboberfläche: App-Visualisierung</h1>
   <p class="hint">Die Reiter werden aus allen ausführbaren Java-Dateien (mit <code>main</code>-Methode) aufgebaut.</p>
-  <div id="appVersion" class="app-version">Version: lädt…</div>
+  <div id="appVersion" class="app-version" title="Klicken für Versionshistorie">Version: lädt…</div>
+  <div id="versionHistoryPopup" class="version-popup" style="display:none">
+    <div class="version-popup-header">Letzte Versionen</div>
+    <ul id="versionHistoryList"></ul>
+  </div>
 
   <div id="tabs" class="tabs"></div>
   <div id="panels"></div>
@@ -69,6 +77,43 @@
       } catch (_) {
         box.textContent = 'Version: dev';
       }
+    }
+
+
+    async function loadVersionHistory() {
+      const popup = document.getElementById('versionHistoryPopup');
+      const list = document.getElementById('versionHistoryList');
+      if (!popup || !list) return;
+      try {
+        const data = await apiGet('/api/version/history');
+        const versions = Array.isArray(data.versions) ? data.versions : [];
+        list.innerHTML = versions.map(v =>
+          `<li><strong>${v.version || 'n/a'}</strong> <em>(${v.timestamp || ''})</em><br>${v.summary || ''}</li>`
+        ).join('');
+      } catch (e) {
+        list.innerHTML = '<li>Versionshistorie konnte nicht geladen werden.</li>';
+      }
+    }
+
+    function wireVersionPopup() {
+      const badge = document.getElementById('appVersion');
+      const popup = document.getElementById('versionHistoryPopup');
+      if (!badge || !popup) return;
+
+      badge.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const show = popup.style.display === 'none';
+        popup.style.display = show ? 'block' : 'none';
+        if (show) {
+          await loadVersionHistory();
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!popup.contains(e.target) && e.target !== badge) {
+          popup.style.display = 'none';
+        }
+      });
     }
 
     function createTabAndPanel(executable, isActive = false) {
@@ -388,6 +433,7 @@
         executables.forEach((exe, index) => createTabAndPanel(exe, index === 0));
         wireTabSwitching();
         await loadVersion();
+        wireVersionPopup();
 
         const pollingBtn = document.getElementById('togglePollingBtn');
         const saveBtn = document.getElementById('saveSettingsBtn');
