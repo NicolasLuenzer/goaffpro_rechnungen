@@ -549,17 +549,22 @@ public class WebUiServer {
                     float keyWidth = totalWidth * 0.30f;
                     float valueWidth = totalWidth * 0.70f;
 
-                    float heroHeight = 62f;
+                    String titleText = "Provisionsnachweis (Zahllauf) – Direkt- und Team-Provisionen";
+                    List<String> titleLines = wrapForPdf(titleText, 46);
+                    float titleLineHeight = 22f;
+                    float heroHeight = Math.max(62f, 18f + (titleLines.size() * titleLineHeight));
                     cs.setNonStrokingColor(new Color(38, 93, 171));
                     cs.addRect(x, y - heroHeight, totalWidth, heroHeight);
                     cs.fill();
 
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA_BOLD, 20);
                     cs.setNonStrokingColor(Color.WHITE);
-                    cs.newLineAtOffset(x + 14, y - 24);
-                    cs.showText("Provisionsnachweis (Zahllauf) – Direkt- und Team-Provisionen");
-                    cs.endText();
+                    for (int i = 0; i < titleLines.size(); i++) {
+                        cs.beginText();
+                        cs.setFont(PDType1Font.HELVETICA_BOLD, 19);
+                        cs.newLineAtOffset(x + 14, y - 24 - (i * titleLineHeight));
+                        cs.showText(shortenForPdf(titleLines.get(i), 120));
+                        cs.endText();
+                    }
                     y -= heroHeight + 18;
 
                     cs.beginText();
@@ -621,8 +626,11 @@ public class WebUiServer {
                     cs.endText();
                     y -= 20;
 
-                    float c1 = 120f, c2 = 145f, c3 = 165f, c4 = 130f;
                     float x2 = x;
+                    float c1 = totalWidth * 0.22f;
+                    float c2 = totalWidth * 0.26f;
+                    float c3 = totalWidth * 0.30f;
+                    float c4 = totalWidth - (c1 + c2 + c3);
                     float h = 20f;
                     drawSimpleCell(cs, x2, y, c1, h, "Typ", true, new Color(235, 242, 252));
                     drawSimpleCell(cs, x2 + c1, y, c2, h, "Summe Bestellwert*", true, new Color(235, 242, 252));
