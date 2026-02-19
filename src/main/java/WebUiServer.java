@@ -806,9 +806,9 @@ public class WebUiServer {
             String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             int code = process.waitFor();
             if (code == 0) {
-                for (String line : output.split("\R")) {
+                for (String line : output.split("\\R")) {
                     if (line.isBlank()) continue;
-                    String[] parts = line.split("\|", 3);
+                    String[] parts = line.split("\\|", 3);
                     if (parts.length < 3) continue;
                     long epoch = Long.parseLong(parts[1].trim());
                     String ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
