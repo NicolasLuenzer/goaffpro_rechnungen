@@ -232,6 +232,8 @@ public class WebUiServer {
                     item.put("affiliateAddress", formatAffiliateAddress(affiliate));
                     item.put("affiliateCountry", affiliate != null ? asText(affiliate, "country") : "");
                     item.put("affiliateSteuernummer", affiliate != null ? asText(affiliate, "tax_identification_number") : "");
+                    String iban = asText(payment.path("payment_details"), "account_number").trim();
+                    item.put("hasIban", iban.isBlank() ? "Nein" : "Ja");
                     item.put("amount", asText(payment, "amount"));
                     item.put("currency", asText(payment, "currency"));
                     responsePayments.add(item);
