@@ -9,6 +9,7 @@ import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
 
+import java.awt.Color;
 import java.awt.Desktop;
 import java.io.IOException;
 import java.io.InputStream;
@@ -539,21 +540,31 @@ public class WebUiServer {
                 PDPage summaryPage = new PDPage();
                 document.addPage(summaryPage);
                 try (PDPageContentStream cs = new PDPageContentStream(document, summaryPage)) {
-                    float x = 40f;
-                    float y = 780f;
-                    float totalWidth = 560f;
+                    float margin = 52f;
+                    float pageWidth = summaryPage.getMediaBox().getWidth();
+                    float pageHeight = summaryPage.getMediaBox().getHeight();
+                    float x = margin;
+                    float y = pageHeight - margin;
+                    float totalWidth = pageWidth - (2 * margin);
                     float keyWidth = totalWidth * 0.30f;
                     float valueWidth = totalWidth * 0.70f;
 
+                    float heroHeight = 62f;
+                    cs.setNonStrokingColor(new Color(38, 93, 171));
+                    cs.addRect(x, y - heroHeight, totalWidth, heroHeight);
+                    cs.fill();
+
                     cs.beginText();
                     cs.setFont(PDType1Font.HELVETICA_BOLD, 20);
-                    cs.newLineAtOffset(x, y);
+                    cs.setNonStrokingColor(Color.WHITE);
+                    cs.newLineAtOffset(x + 14, y - 24);
                     cs.showText("Provisionsnachweis (Zahllauf) – Direkt- und Team-Provisionen");
                     cs.endText();
-                    y -= 30;
+                    y -= heroHeight + 18;
 
                     cs.beginText();
                     cs.setFont(PDType1Font.HELVETICA_BOLD, 11);
+                    cs.setNonStrokingColor(new Color(44, 52, 64));
                     cs.newLineAtOffset(x, y);
                     cs.showText("Zahllauf-ID: " + asText(payment, "id") + "   |   Affiliate-ID: " + asText(payment, "affiliate_id"));
                     cs.endText();
@@ -588,6 +599,7 @@ public class WebUiServer {
                             new String[]{"Rundungsdifferenz (Auszahlung - Summe Provision)", euro(rounding)}
                     );
 
+                    cs.setNonStrokingColor(new Color(44, 52, 64));
                     for (String[] row : summaryRows) {
                         float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, row[0], row[1]);
                         y -= used;
@@ -603,6 +615,7 @@ public class WebUiServer {
 
                     cs.beginText();
                     cs.setFont(PDType1Font.HELVETICA_BOLD, 16);
+                    cs.setNonStrokingColor(new Color(38, 93, 171));
                     cs.newLineAtOffset(x, y);
                     cs.showText("Aufteilung der Provisionen");
                     cs.endText();
@@ -611,20 +624,20 @@ public class WebUiServer {
                     float c1 = 120f, c2 = 145f, c3 = 165f, c4 = 130f;
                     float x2 = x;
                     float h = 20f;
-                    drawSimpleCell(cs, x2, y, c1, h, "Typ", true);
-                    drawSimpleCell(cs, x2 + c1, y, c2, h, "Summe Bestellwert*", true);
-                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, "Summe Bemessungsgrundlage", true);
-                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, "Summe Provision", true);
+                    drawSimpleCell(cs, x2, y, c1, h, "Typ", true, new Color(235, 242, 252));
+                    drawSimpleCell(cs, x2 + c1, y, c2, h, "Summe Bestellwert*", true, new Color(235, 242, 252));
+                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, "Summe Bemessungsgrundlage", true, new Color(235, 242, 252));
+                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, "Summe Provision", true, new Color(235, 242, 252));
                     y -= h;
-                    drawSimpleCell(cs, x2, y, c1, h, "Direkt (Order)", false);
-                    drawSimpleCell(cs, x2 + c1, y, c2, h, euro(sumOrderDirect), false);
-                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, euro(sumBmgDirect), false);
-                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, euro(sumProvDirect), false);
+                    drawSimpleCell(cs, x2, y, c1, h, "Direkt (Order)", false, null);
+                    drawSimpleCell(cs, x2 + c1, y, c2, h, euro(sumOrderDirect), false, null);
+                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, euro(sumBmgDirect), false, null);
+                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, euro(sumProvDirect), false, null);
                     y -= h;
-                    drawSimpleCell(cs, x2, y, c1, h, "Team (Reward)", false);
-                    drawSimpleCell(cs, x2 + c1, y, c2, h, euro(sumOrderTeam), false);
-                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, euro(sumBmgTeam), false);
-                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, euro(sumProvTeam), false);
+                    drawSimpleCell(cs, x2, y, c1, h, "Team (Reward)", false, new Color(247, 249, 252));
+                    drawSimpleCell(cs, x2 + c1, y, c2, h, euro(sumOrderTeam), false, new Color(247, 249, 252));
+                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, euro(sumBmgTeam), false, new Color(247, 249, 252));
+                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, euro(sumProvTeam), false, new Color(247, 249, 252));
                     y -= (h + 18);
 
                     cs.beginText();
@@ -653,7 +666,10 @@ public class WebUiServer {
                     }
                 }
 
-                int rowsPerPage = 30;
+                float detailMargin = 52f;
+                float detailPageHeight = summaryPage.getMediaBox().getHeight();
+                float detailRowHeight = 19f;
+                int rowsPerPage = Math.max(12, (int) ((detailPageHeight - (2 * detailMargin) - 120f) / detailRowHeight));
                 int totalPages = Math.max(1, (txList.size() + rowsPerPage - 1) / rowsPerPage);
                 int pageNo = 1;
                 for (int start = 0; start < txList.size(); start += rowsPerPage) {
@@ -661,23 +677,37 @@ public class WebUiServer {
                     PDPage detailPage = new PDPage();
                     document.addPage(detailPage);
                     try (PDPageContentStream cs = new PDPageContentStream(document, detailPage)) {
-                        float x = 40f;
-                        float y = 780f;
+                        float pageWidth = detailPage.getMediaBox().getWidth();
+                        float pageHeight = detailPage.getMediaBox().getHeight();
+                        float x = detailMargin;
+                        float y = pageHeight - detailMargin;
+
+                        cs.setNonStrokingColor(new Color(38, 93, 171));
+                        cs.addRect(x, y - 28f, pageWidth - (2 * detailMargin), 28f);
+                        cs.fill();
+
                         cs.beginText();
                         cs.setFont(PDType1Font.HELVETICA_BOLD, 16);
-                        cs.newLineAtOffset(x, y);
+                        cs.setNonStrokingColor(Color.WHITE);
+                        cs.newLineAtOffset(x + 10, y - 18);
                         cs.showText("Detailnachweis – Einzeltransaktionen (Seite " + pageNo + " von " + totalPages + ")");
                         cs.endText();
-                        y -= 24;
+                        y -= 42;
 
-                        float cZeit=110f, cTyp=110f, cOrder=95f, cOrderW=115f, cBmg=85f, cProv=85f;
-                        float h=19f;
-                        drawSimpleCell(cs, x, y, cZeit, h, "Zeitpunkt", true);
-                        drawSimpleCell(cs, x+cZeit, y, cTyp, h, "Typ", true);
-                        drawSimpleCell(cs, x+cZeit+cTyp, y, cOrder, h, "Bestellnummer", true);
-                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder, y, cOrderW, h, "Bestellwert*", true);
-                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW, y, cBmg, h, "BMG", true);
-                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW+cBmg, y, cProv, h, "Provision", true);
+                        float totalTableWidth = pageWidth - (2 * detailMargin);
+                        float cZeit = totalTableWidth * 0.20f;
+                        float cTyp = totalTableWidth * 0.17f;
+                        float cOrder = totalTableWidth * 0.16f;
+                        float cOrderW = totalTableWidth * 0.20f;
+                        float cBmg = totalTableWidth * 0.14f;
+                        float cProv = totalTableWidth - (cZeit + cTyp + cOrder + cOrderW + cBmg);
+                        float h=detailRowHeight;
+                        drawSimpleCell(cs, x, y, cZeit, h, "Zeitpunkt", true, new Color(235, 242, 252));
+                        drawSimpleCell(cs, x+cZeit, y, cTyp, h, "Typ", true, new Color(235, 242, 252));
+                        drawSimpleCell(cs, x+cZeit+cTyp, y, cOrder, h, "Bestellnummer", true, new Color(235, 242, 252));
+                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder, y, cOrderW, h, "Bestellwert*", true, new Color(235, 242, 252));
+                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW, y, cBmg, h, "BMG", true, new Color(235, 242, 252));
+                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW+cBmg, y, cProv, h, "Provision", true, new Color(235, 242, 252));
                         y -= h;
 
                         for (int i=start; i<end; i++) {
@@ -690,18 +720,20 @@ public class WebUiServer {
                             String bmgVal = md != null ? euro(parseDoubleSafe(asText(md, "commission_on"))) : "";
                             String provVal = euro(parseDoubleSafe(asText(tx, "amount")));
 
-                            drawSimpleCell(cs, x, y, cZeit, h, t, false);
-                            drawSimpleCell(cs, x+cZeit, y, cTyp, h, typ, false);
-                            drawSimpleCell(cs, x+cZeit+cTyp, y, cOrder, h, orderNo, false);
-                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder, y, cOrderW, h, orderVal, false);
-                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW, y, cBmg, h, bmgVal, false);
-                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW+cBmg, y, cProv, h, provVal, false);
+                            Color rowBg = (i % 2 == 0) ? null : new Color(249, 251, 255);
+                            drawSimpleCell(cs, x, y, cZeit, h, t, false, rowBg);
+                            drawSimpleCell(cs, x+cZeit, y, cTyp, h, typ, false, rowBg);
+                            drawSimpleCell(cs, x+cZeit+cTyp, y, cOrder, h, orderNo, false, rowBg);
+                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder, y, cOrderW, h, orderVal, false, rowBg);
+                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW, y, cBmg, h, bmgVal, false, rowBg);
+                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW+cBmg, y, cProv, h, provVal, false, rowBg);
                             y -= h;
                         }
 
                         y -= 14;
                         cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA, 10);
+                        cs.setFont(PDType1Font.HELVETICA, 9);
+                        cs.setNonStrokingColor(new Color(72, 78, 85));
                         cs.newLineAtOffset(x, y);
                         cs.showText("* Bestellwert exkl. abgezogener Rabatte (so wie im System/Export übergeben).");
                         cs.endText();
@@ -746,7 +778,18 @@ public class WebUiServer {
         }
 
         private void drawSimpleCell(PDPageContentStream cs, float x, float y, float width, float height, String text, boolean bold) throws IOException {
-            cs.setLineWidth(0.5f);
+            drawSimpleCell(cs, x, y, width, height, text, bold, null);
+        }
+
+        private void drawSimpleCell(PDPageContentStream cs, float x, float y, float width, float height, String text, boolean bold, Color background) throws IOException {
+            if (background != null) {
+                cs.setNonStrokingColor(background);
+                cs.addRect(x, y - height, width, height);
+                cs.fill();
+            }
+
+            cs.setStrokingColor(new Color(196, 205, 217));
+            cs.setLineWidth(0.45f);
             cs.addRect(x, y - height, width, height);
             cs.stroke();
 
@@ -755,6 +798,7 @@ public class WebUiServer {
             for (int i = 0; i < Math.min(lines.size(), 2); i++) {
                 cs.beginText();
                 cs.setFont(bold ? PDType1Font.HELVETICA_BOLD : PDType1Font.HELVETICA, 9);
+                cs.setNonStrokingColor(new Color(44, 52, 64));
                 cs.newLineAtOffset(x + 4, ty - (i * 9f));
                 cs.showText(shortenForPdf(lines.get(i), 80));
                 cs.endText();
