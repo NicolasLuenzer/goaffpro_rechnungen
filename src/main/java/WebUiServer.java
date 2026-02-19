@@ -44,6 +44,8 @@ public class WebUiServer {
     private static final Path CONFIG_PATH = Paths.get("src/main/java/config.properties");
     private static final Path UI_PATH = Paths.get("src/main/resources/ui/dashboard.html");
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
+    private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
+    private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
 
     public static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
@@ -145,6 +147,9 @@ public class WebUiServer {
 
             try {
                 Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+
                 String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
                 String activeLastImportedComission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
 
@@ -156,7 +161,7 @@ public class WebUiServer {
 
                 if (payments == null || !payments.isArray() || payments.size() == 0) {
                     ensureCommissionInHistory(config, activeLastImportedComission);
-                    storeConfig(config);
+                    persistSettings(config);
 
                     Map<String, Object> emptyResult = new HashMap<>();
                     emptyResult.put("payments", Collections.emptyList());
@@ -204,7 +209,7 @@ public class WebUiServer {
                 }
                 ensureCommissionInHistory(config, activeLastImportedComission);
                 ensureCommissionInHistory(config, highestId);
-                storeConfig(config);
+                persistSettings(config);
 
                 Map<String, Object> result = new HashMap<>();
                 result.put("payments", responsePayments);
@@ -230,13 +235,18 @@ public class WebUiServer {
 
             if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
                 Properties config = loadConfig();
-                String exportDir = Objects.toString(config.getProperty("pdfExportPath"), config.getProperty("exportPath", ""));
+                Path settingsDir = resolveSettingsDirectory(config);
+                Properties uiSettings = loadUiSettings(settingsDir);
+                mergeUiSettingsIntoConfig(config, uiSettings);
+
+                String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH);
                 String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
                 ensureCommissionInHistory(config, activeCommission);
-                storeConfig(config);
+                persistSettings(config);
 
                 Map<String, Object> payload = new HashMap<>();
                 payload.put("pdfExportPath", exportDir);
+                payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 payload.put("lastImportedComission", activeCommission);
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
@@ -250,22 +260,21 @@ public class WebUiServer {
                     String selectedCommission = asText(body, "lastImportedComission").trim();
 
                     Properties config = loadConfig();
-                    if (!newPath.isEmpty()) {
-                        Path exportPath = Paths.get(newPath);
-                        Files.createDirectories(exportPath);
-                        config.setProperty("pdfExportPath", exportPath.toAbsolutePath().toString());
-                    }
+                    Path chosenDir = newPath.isEmpty() ? resolveSettingsDirectory(config) : Paths.get(newPath).toAbsolutePath();
+                    Files.createDirectories(chosenDir);
 
+                    config.setProperty("pdfExportPath", chosenDir.toString());
                     if (!selectedCommission.isEmpty()) {
                         config.setProperty("lastImportedComission", selectedCommission);
                         ensureCommissionInHistory(config, selectedCommission);
                     }
 
-                    storeConfig(config);
+                    persistSettings(config);
 
                     Map<String, Object> payload = new HashMap<>();
                     payload.put("message", "Einstellungen gespeichert.");
-                    payload.put("pdfExportPath", Objects.toString(config.getProperty("pdfExportPath"), config.getProperty("exportPath", "")));
+                    payload.put("pdfExportPath", Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH));
+                    payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                     payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
@@ -294,9 +303,7 @@ public class WebUiServer {
 
             try {
                 JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-                List<Map<String, String>> selectedRows = OBJECT_MAPPER.convertValue(
-                        body.get("rows"), new TypeReference<List<Map<String, String>>>() {
-                        });
+                List<Map<String, String>> selectedRows = OBJECT_MAPPER.convertValue(body.get("rows"), new TypeReference<List<Map<String, String>>>() {});
 
                 if (selectedRows == null || selectedRows.isEmpty()) {
                     sendResponse(exchange, 400, "application/json", "{\"error\":\"Keine Tabellenzeilen selektiert\"}");
@@ -305,8 +312,11 @@ public class WebUiServer {
 
                 String requestedDir = asText(body, "pdfExportPath").trim();
                 Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+
                 String exportDirValue = requestedDir.isEmpty()
-                        ? Objects.toString(config.getProperty("pdfExportPath"), config.getProperty("exportPath", ""))
+                        ? Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH)
                         : requestedDir;
 
                 if (exportDirValue.isBlank()) {
@@ -327,12 +337,13 @@ public class WebUiServer {
                 }
 
                 config.setProperty("pdfExportPath", exportDir.toString());
-                storeConfig(config);
+                persistSettings(config);
 
                 Map<String, Object> payload = new HashMap<>();
                 payload.put("message", exportedFiles.size() + " PDF-Datei(en) exportiert.");
                 payload.put("files", exportedFiles);
                 payload.put("pdfExportPath", exportDir.toString());
+                payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -387,8 +398,7 @@ public class WebUiServer {
         }
 
         String ids = String.join(",", affiliateIds);
-        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids
-                + "&fields=id,name,country,tax_identification_number";
+        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,country,tax_identification_number";
         JsonNode root = requestJson(url, apiKey);
         JsonNode affiliates = root.get("affiliates");
         if (affiliates == null || !affiliates.isArray()) {
@@ -429,6 +439,72 @@ public class WebUiServer {
         try (OutputStream os = Files.newOutputStream(CONFIG_PATH)) {
             properties.store(os, "Updated by WebUiServer");
         }
+    }
+
+    private static Path resolveSettingsDirectory(Properties config) {
+        String configured = Objects.toString(config.getProperty("pdfExportPath"), "").trim();
+        String path = configured.isEmpty() ? DEFAULT_PDF_EXPORT_PATH : configured;
+        return Paths.get(path).toAbsolutePath();
+    }
+
+    private static Path uiSettingsFile(Path directory) {
+        return directory.resolve(UI_SETTINGS_FILENAME);
+    }
+
+    private static Properties loadUiSettings(Path directory) {
+        Properties p = new Properties();
+        try {
+            Files.createDirectories(directory);
+            Path file = uiSettingsFile(directory);
+            if (Files.exists(file)) {
+                try (InputStream is = Files.newInputStream(file)) {
+                    p.load(is);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return p;
+    }
+
+    private static void saveUiSettings(Path directory, Properties source) throws IOException {
+        Files.createDirectories(directory);
+        Properties ui = new Properties();
+        ui.setProperty("pdfExportPath", Objects.toString(source.getProperty("pdfExportPath"), directory.toString()));
+        ui.setProperty("lastImportedComission", Objects.toString(source.getProperty("lastImportedComission"), "0"));
+        ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
+
+        try (OutputStream os = Files.newOutputStream(uiSettingsFile(directory))) {
+            ui.store(os, "GoAffPro UI settings");
+        }
+    }
+
+    private static void mergeUiSettingsIntoConfig(Properties config, Properties uiSettings) {
+        String uiPath = Objects.toString(uiSettings.getProperty("pdfExportPath"), "").trim();
+        if (!uiPath.isEmpty()) {
+            config.setProperty("pdfExportPath", uiPath);
+        } else if (Objects.toString(config.getProperty("pdfExportPath"), "").isBlank()) {
+            config.setProperty("pdfExportPath", DEFAULT_PDF_EXPORT_PATH);
+        }
+
+        String uiCommission = Objects.toString(uiSettings.getProperty("lastImportedComission"), "").trim();
+        if (!uiCommission.isEmpty()) {
+            config.setProperty("lastImportedComission", uiCommission);
+        }
+
+        String uiHistory = Objects.toString(uiSettings.getProperty(COMMISSION_HISTORY_KEY), "").trim();
+        if (!uiHistory.isEmpty()) {
+            config.setProperty(COMMISSION_HISTORY_KEY, uiHistory);
+        }
+
+        ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
+    }
+
+    private static void persistSettings(Properties config) throws IOException {
+        if (Objects.toString(config.getProperty("pdfExportPath"), "").isBlank()) {
+            config.setProperty("pdfExportPath", DEFAULT_PDF_EXPORT_PATH);
+        }
+        storeConfig(config);
+        saveUiSettings(resolveSettingsDirectory(config), config);
     }
 
     private static List<String> getCommissionHistory(Properties properties) {

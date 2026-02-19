@@ -19,6 +19,7 @@
     input[type="text"], select { min-width: 420px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
     button { background: #10b981; color: white; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
     button.secondary { background: #3b82f6; }
+    button.danger { background: #ef4444; }
     button:disabled { background: #9ca3af; cursor: not-allowed; }
     table { width: 100%; border-collapse: collapse; margin-top: 12px; }
     th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 14px; }
@@ -37,6 +38,7 @@
   <script>
     const API_BASE = "http://localhost:8080";
     const tableState = { rows: [], selected: new Set(), sortBy: 'paymentId', sortDirection: 'desc', filter: '' };
+    let pollIntervalId = null;
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -79,17 +81,20 @@
             <strong>Einstellungen</strong>
             <div class="toolbar">
               <label for="pdfExportPath">PDF Zielverzeichnis:</label>
-              <input id="pdfExportPath" type="text" placeholder="z.B. /tmp/goaffpro-pdf-export" />
+              <input id="pdfExportPath" type="text" placeholder="C:\\Users\\nluenzer\\Downloads\\goaffpro" />
+              <button id="pickFolderBtn" type="button" class="secondary">Ordner auswählen…</button>
+              <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
             </div>
             <div class="toolbar">
               <label for="lastImportedSelect">Aktive LastImportedComission (since_id):</label>
               <select id="lastImportedSelect"></select>
               <button id="saveSettingsBtn" class="secondary">Speichern</button>
             </div>
+            <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
           </div>
 
           <div class="toolbar">
-            <button id="startPollingBtn">Polling starten</button>
+            <button id="togglePollingBtn">Polling starten</button>
             <button id="exportPdfBtn" class="secondary">Selektierte Zeilen als PDF exportieren</button>
             <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
           </div>
@@ -126,7 +131,6 @@
     }
 
     function wireTabSwitching() { document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => activateTab(tab.dataset.target))); }
-
     function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}|${row.currency}`; }
 
     function filteredRows() {
@@ -208,12 +212,19 @@
       if (current) select.value = current;
     }
 
+    function setPollingButtonState(isRunning) {
+      const btn = document.getElementById('togglePollingBtn');
+      if (!btn) return;
+      btn.textContent = isRunning ? 'Polling stoppen' : 'Polling starten';
+      btn.classList.toggle('danger', isRunning);
+    }
+
     async function loadSettings() {
       const input = document.getElementById('pdfExportPath');
       if (!input) return;
       try {
         const data = await apiGet('/api/settings');
-        input.value = data.pdfExportPath || '';
+        input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
       } catch (error) {
         document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
@@ -232,7 +243,7 @@
         });
         input.value = data.pdfExportPath || input.value;
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
-        status.textContent = data.message;
+        status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
       } catch (error) {
         status.textContent = `Fehler beim Speichern der Einstellungen: ${error.message}`;
       }
@@ -255,33 +266,75 @@
       }
     }
 
-    async function startGoaffproPolling() {
-      const btn = document.getElementById('startPollingBtn');
+    async function pollOnce() {
       const status = document.getElementById('pollStatus');
-      if (!btn || !status) return;
-
-      btn.disabled = true;
-      status.textContent = 'Polling läuft...';
-
-      const pollOnce = async () => {
-        try {
-          const data = await apiPost('/api/provisionen-goaffpro/poll', {});
-          if (Array.isArray(data.payments) && data.payments.length > 0) {
-            data.payments.forEach(payment => {
-              const key = rowKey(payment);
-              if (!tableState.rows.find(x => rowKey(x) === key)) tableState.rows.push(payment);
-            });
-            renderTable();
-          }
-          updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
-          status.textContent = data.message || 'Polling erfolgreich.';
-        } catch (error) {
-          status.textContent = `Fehler beim Polling: ${error.message}`;
+      try {
+        const data = await apiPost('/api/provisionen-goaffpro/poll', {});
+        if (Array.isArray(data.payments) && data.payments.length > 0) {
+          data.payments.forEach(payment => {
+            const key = rowKey(payment);
+            if (!tableState.rows.find(x => rowKey(x) === key)) tableState.rows.push(payment);
+          });
+          renderTable();
         }
-      };
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
+        status.textContent = data.message || 'Polling erfolgreich.';
+      } catch (error) {
+        status.textContent = `Fehler beim Polling: ${error.message}`;
+      }
+    }
 
+    async function togglePolling() {
+      const status = document.getElementById('pollStatus');
+      if (pollIntervalId) {
+        window.clearInterval(pollIntervalId);
+        pollIntervalId = null;
+        setPollingButtonState(false);
+        status.textContent = 'Polling gestoppt.';
+        return;
+      }
+
+      setPollingButtonState(true);
+      status.textContent = 'Polling läuft...';
       await pollOnce();
-      window.setInterval(pollOnce, 60000);
+      pollIntervalId = window.setInterval(pollOnce, 60000);
+    }
+
+    async function pickFolder() {
+      const input = document.getElementById('pdfExportPath');
+      const hiddenPicker = document.getElementById('folderPickerInput');
+      if (!input) return;
+
+      if (window.showDirectoryPicker) {
+        try {
+          const handle = await window.showDirectoryPicker();
+          if (handle && handle.name) {
+            const guess = input.value || '';
+            const base = guess.includes('\\') ? guess.substring(0, Math.max(0, guess.lastIndexOf('\\'))) : '';
+            input.value = base ? `${base}\\${handle.name}` : handle.name;
+          }
+          return;
+        } catch (_) {}
+      }
+
+      if (hiddenPicker) {
+        hiddenPicker.click();
+      }
+    }
+
+    function wireFolderPickerFallback() {
+      const hiddenPicker = document.getElementById('folderPickerInput');
+      const input = document.getElementById('pdfExportPath');
+      if (!hiddenPicker || !input) return;
+
+      hiddenPicker.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file || !file.webkitRelativePath) return;
+        const topFolder = file.webkitRelativePath.split('/')[0];
+        const current = input.value || '';
+        const base = current.includes('\\') ? current.substring(0, Math.max(0, current.lastIndexOf('\\'))) : '';
+        input.value = base ? `${base}\\${topFolder}` : topFolder;
+      });
     }
 
     async function init() {
@@ -295,15 +348,19 @@
         executables.forEach((exe, index) => createTabAndPanel(exe, index === 0));
         wireTabSwitching();
 
-        const pollingBtn = document.getElementById('startPollingBtn');
+        const pollingBtn = document.getElementById('togglePollingBtn');
         const saveBtn = document.getElementById('saveSettingsBtn');
         const exportBtn = document.getElementById('exportPdfBtn');
-        if (pollingBtn) pollingBtn.addEventListener('click', startGoaffproPolling);
+        const pickBtn = document.getElementById('pickFolderBtn');
+        if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
         if (exportBtn) exportBtn.addEventListener('click', exportSelectedRowsAsPdf);
+        if (pickBtn) pickBtn.addEventListener('click', pickFolder);
 
+        wireFolderPickerFallback();
         wireSortingAndFiltering();
         renderTable();
+        setPollingButtonState(false);
         await loadSettings();
       } catch (error) {
         document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;
