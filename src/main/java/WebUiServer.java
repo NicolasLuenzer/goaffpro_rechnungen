@@ -47,6 +47,7 @@ public class WebUiServer {
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
+    private static final String APP_VERSION = resolveVersion();
 
     public static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
@@ -56,6 +57,7 @@ public class WebUiServer {
         server.createContext("/api/settings", new SettingsHandler());
         server.createContext("/api/provisionen-goaffpro/export-pdf", new ExportPdfHandler());
         server.createContext("/api/provisionen-goaffpro/invoice-details-pdf", new InvoiceDetailsPdfHandler());
+        server.createContext("/api/version", new VersionHandler());
         server.setExecutor(null);
         server.start();
 
@@ -509,6 +511,24 @@ public class WebUiServer {
         }
     }
 
+
+    private static class VersionHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            Map<String, String> payload = new HashMap<>();
+            payload.put("version", APP_VERSION);
+            sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+        }
+    }
+
     private static Map<String, JsonNode> fetchAffiliatesById(String apiKey, List<String> affiliateIds) throws Exception {
         if (affiliateIds.isEmpty()) {
             return Collections.emptyMap();
@@ -702,6 +722,22 @@ public class WebUiServer {
 
     private static String safe(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value;
+    }
+
+    private static String resolveVersion() {
+        try {
+            Process process = new ProcessBuilder("git", "rev-parse", "--short", "HEAD")
+                    .directory(Paths.get(".").toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            int code = process.waitFor();
+            if (code == 0 && !output.isBlank()) {
+                return output;
+            }
+        } catch (Exception ignored) {
+        }
+        return "dev";
     }
 
     private static String escapeJson(String value) {

@@ -26,11 +26,13 @@
     th { background: #f3f4f6; cursor: pointer; user-select: none; }
     th.sort-active { background: #dbeafe; }
     .files { margin-top: 8px; font-size: 13px; color: #1f2937; }
+    .app-version { position: fixed; top: 12px; right: 16px; background: #111827; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; z-index: 1000; }
   </style>
 </head>
 <body>
   <h1>Weboberfläche: App-Visualisierung</h1>
   <p class="hint">Die Reiter werden aus allen ausführbaren Java-Dateien (mit <code>main</code>-Methode) aufgebaut.</p>
+  <div id="appVersion" class="app-version">Version: lädt…</div>
 
   <div id="tabs" class="tabs"></div>
   <div id="panels"></div>
@@ -57,6 +59,17 @@
     }
 
     async function fetchExecutables() { return apiGet('/api/executables'); }
+
+    async function loadVersion() {
+      const box = document.getElementById('appVersion');
+      if (!box) return;
+      try {
+        const data = await apiGet('/api/version');
+        box.textContent = `Version: ${data.version || 'dev'}`;
+      } catch (_) {
+        box.textContent = 'Version: dev';
+      }
+    }
 
     function createTabAndPanel(executable, isActive = false) {
       const tabs = document.getElementById('tabs');
@@ -374,6 +387,7 @@
 
         executables.forEach((exe, index) => createTabAndPanel(exe, index === 0));
         wireTabSwitching();
+        await loadVersion();
 
         const pollingBtn = document.getElementById('togglePollingBtn');
         const saveBtn = document.getElementById('saveSettingsBtn');
