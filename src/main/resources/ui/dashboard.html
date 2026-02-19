@@ -33,6 +33,11 @@
     .version-popup ul { margin: 0; padding-left: 18px; }
     .version-popup li { margin-bottom: 8px; font-size: 13px; }
     .request-preview { margin: 10px 0; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #0f172a; word-break: break-all; }
+    .section-tabs { display: flex; justify-content: flex-end; gap: 8px; margin: 8px 0 12px; }
+    .section-tab { border: 1px solid #93c5fd; border-radius: 8px; padding: 8px 12px; background: #dbeafe; color: #1e3a8a; font-weight: 600; cursor: pointer; }
+    .section-tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
+    .section-panel { display: none; }
+    .section-panel.active { display: block; }
   </style>
 </head>
 <body>
@@ -137,66 +142,75 @@
           <h2>${executable.name}</h2>
           <p>Pfad: <code>${executable.path}</code></p>
 
-          <div class="settings">
-            <strong>Einstellungen</strong>
-            <div class="toolbar">
-              <label for="pdfExportPath">PDF Zielverzeichnis:</label>
-              <input id="pdfExportPath" type="text" placeholder="C:\\Users\\nluenzer\\Downloads\\goaffpro" />
-              <button id="pickFolderBtn" type="button" class="secondary">Ordner auswählen…</button>
-              <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
-            </div>
-            <div class="toolbar">
-              <label for="lastImportedSelect">Aktive LastImportedComission (since_id):</label>
-              <select id="lastImportedSelect"></select>
-            </div>
-            <div class="toolbar">
-              <label for="contactEmail">Kontakt-E-Mail:</label>
-              <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
-            </div>
-            <div class="toolbar">
-              <label for="smtpHost">SMTP Host:</label>
-              <input id="smtpHost" type="text" placeholder="smtp.example.com" />
-              <label for="smtpPort">Port:</label>
-              <input id="smtpPort" type="number" placeholder="587" style="max-width:120px" />
-            </div>
-            <div class="toolbar">
-              <label for="smtpUsername">SMTP Benutzer:</label>
-              <input id="smtpUsername" type="text" placeholder="user@example.com" />
-              <label for="smtpPassword">SMTP Passwort:</label>
-              <input id="smtpPassword" type="password" placeholder="(unverändert lassen zum Beibehalten)" />
-              <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
-              <label><input id="sendEmailsEnabled" type="checkbox" checked /> E-Mails versenden</label>
-              <button id="saveSettingsBtn" class="secondary">Speichern</button>
-            </div>
-            <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
+          <div class="section-tabs">
+            <button class="section-tab active" data-section-target="main-workspace">Arbeitsbereich</button>
+            <button class="section-tab" data-section-target="main-settings">⚙ Einstellungen</button>
           </div>
 
-          <div class="toolbar">
-            <button id="togglePollingBtn">Polling starten</button>
-            <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
-            <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
+          <div id="main-workspace" class="section-panel active">
+            <div class="toolbar">
+              <button id="togglePollingBtn">Polling starten</button>
+              <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
+              <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
+            </div>
+
+            <p id="pollStatus" class="status">Noch nicht gestartet.</p>
+            <div id="exportedFiles" class="files"></div>
+
+            <table>
+              <thead>
+                <tr>
+                  <th data-col="select"><input id="selectAllRows" type="checkbox" title="Alle sichtbaren Zeilen auswählen" /></th>
+                  <th data-col="paymentId">Payment-ID</th>
+                  <th data-col="belegdatum">Belegdatum</th>
+                  <th data-col="affiliateName">Affiliate-Name</th>
+                  <th data-col="affiliateEmail">E-Mail</th>
+                  <th data-col="affiliateAddress">Adresse</th>
+                  <th data-col="affiliateCountry">Affiliate-Land</th>
+                  <th data-col="affiliateSteuernummer">Affiliate-Steuernummer</th>
+                  <th data-col="amount">Betrag</th>
+                  <th data-col="actions">Aktion</th>
+                </tr>
+              </thead>
+              <tbody id="paymentsTableBody"></tbody>
+            </table>
           </div>
 
-          <p id="pollStatus" class="status">Noch nicht gestartet.</p>
-          <div id="exportedFiles" class="files"></div>
-
-          <table>
-            <thead>
-              <tr>
-                <th data-col="select"><input id="selectAllRows" type="checkbox" title="Alle sichtbaren Zeilen auswählen" /></th>
-                <th data-col="paymentId">Payment-ID</th>
-                <th data-col="belegdatum">Belegdatum</th>
-                <th data-col="affiliateName">Affiliate-Name</th>
-                <th data-col="affiliateEmail">E-Mail</th>
-                <th data-col="affiliateAddress">Adresse</th>
-                <th data-col="affiliateCountry">Affiliate-Land</th>
-                <th data-col="affiliateSteuernummer">Affiliate-Steuernummer</th>
-                <th data-col="amount">Betrag</th>
-                <th data-col="actions">Aktion</th>
-              </tr>
-            </thead>
-            <tbody id="paymentsTableBody"></tbody>
-          </table>
+          <div id="main-settings" class="section-panel">
+            <div class="settings">
+              <strong>Einstellungen</strong>
+              <div class="toolbar">
+                <label for="pdfExportPath">PDF Zielverzeichnis:</label>
+                <input id="pdfExportPath" type="text" placeholder="C:\Users\nluenzer\Downloads\goaffpro" />
+                <button id="pickFolderBtn" type="button" class="secondary">Ordner auswählen…</button>
+                <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
+              </div>
+              <div class="toolbar">
+                <label for="lastImportedSelect">Aktive LastImportedComission (since_id):</label>
+                <select id="lastImportedSelect"></select>
+              </div>
+              <div class="toolbar">
+                <label for="contactEmail">Kontakt-E-Mail:</label>
+                <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
+              </div>
+              <div class="toolbar">
+                <label for="smtpHost">SMTP Host:</label>
+                <input id="smtpHost" type="text" placeholder="smtp.example.com" />
+                <label for="smtpPort">Port:</label>
+                <input id="smtpPort" type="number" placeholder="587" style="max-width:120px" />
+              </div>
+              <div class="toolbar">
+                <label for="smtpUsername">SMTP Benutzer:</label>
+                <input id="smtpUsername" type="text" placeholder="user@example.com" />
+                <label for="smtpPassword">SMTP Passwort:</label>
+                <input id="smtpPassword" type="password" placeholder="(unverändert lassen zum Beibehalten)" />
+                <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
+                <label><input id="sendEmailsEnabled" type="checkbox" checked /> E-Mails versenden</label>
+                <button id="saveSettingsBtn" class="secondary">Speichern</button>
+              </div>
+              <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
+            </div>
+          </div>
         `;
       } else {
         panel.innerHTML = `<h2>${executable.name}</h2><p>Pfad: <code>${executable.path}</code></p><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
@@ -233,6 +247,14 @@
     }
 
     function wireTabSwitching() { document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => activateTab(tab.dataset.target))); }
+
+    function wireMainSectionTabs() {
+      document.querySelectorAll('.section-tab').forEach(tab => tab.addEventListener('click', () => {
+        const target = tab.dataset.sectionTarget;
+        document.querySelectorAll('.section-tab').forEach(t => t.classList.toggle('active', t === tab));
+        document.querySelectorAll('.section-panel').forEach(panel => panel.classList.toggle('active', panel.id === target));
+      }));
+    }
     function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}`; }
 
 
@@ -565,6 +587,7 @@
         if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
 
         wireFolderPickerFallback();
+        wireMainSectionTabs();
         wireSortingAndFiltering();
         renderTable();
         setPollingButtonState(false);
