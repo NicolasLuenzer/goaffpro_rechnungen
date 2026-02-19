@@ -572,6 +572,17 @@ public class WebUiServer {
                 double payout = parseDoubleSafe(asText(payment, "amount"));
                 double rounding = payout - sumProvAll;
 
+                List<String[]> advisorRows = List.of(
+                        new String[]{"Name", affiliate != null ? asText(affiliate, "name") : ""},
+                        new String[]{"E-Mail", affiliate != null ? asText(affiliate, "email") : ""},
+                        new String[]{"Telefon", affiliate != null ? asText(affiliate, "phone") : ""},
+                        new String[]{"Unternehmen", affiliate != null ? asText(affiliate, "company_name") : ""},
+                        new String[]{"Adresse", formatAffiliateAddress(affiliate)},
+                        new String[]{"Steuernummer", affiliate != null ? asText(affiliate, "tax_identification_number") : ""},
+                        new String[]{"Referenzcode", affiliate != null ? asText(affiliate, "ref_code") : ""},
+                        new String[]{"Status", affiliate != null ? asText(affiliate, "status") : ""}
+                );
+
                 PDPage summaryPage = new PDPage();
                 document.addPage(summaryPage);
                 try (PDPageContentStream cs = new PDPageContentStream(document, summaryPage)) {
@@ -641,31 +652,6 @@ public class WebUiServer {
 
                     cs.setNonStrokingColor(new Color(44, 52, 64));
                     for (String[] row : summaryRows) {
-                        float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, row[0], row[1]);
-                        y -= used;
-                    }
-
-                    y -= 14;
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
-                    cs.setNonStrokingColor(new Color(38, 93, 171));
-                    cs.newLineAtOffset(x, y);
-                    cs.showText("Beraterin / Affiliate (Stammdaten)");
-                    cs.endText();
-                    y -= 18;
-
-                    List<String[]> advisorRows = List.of(
-                            new String[]{"Name", affiliate != null ? asText(affiliate, "name") : ""},
-                            new String[]{"E-Mail", affiliate != null ? asText(affiliate, "email") : ""},
-                            new String[]{"Telefon", affiliate != null ? asText(affiliate, "phone") : ""},
-                            new String[]{"Unternehmen", affiliate != null ? asText(affiliate, "company_name") : ""},
-                            new String[]{"Adresse", formatAffiliateAddress(affiliate)},
-                            new String[]{"Steuernummer", affiliate != null ? asText(affiliate, "tax_identification_number") : ""},
-                            new String[]{"Referenzcode", affiliate != null ? asText(affiliate, "ref_code") : ""},
-                            new String[]{"Status", affiliate != null ? asText(affiliate, "status") : ""}
-                    );
-                    for (String[] row : advisorRows) {
-                        if (row[1] == null || row[1].isBlank()) continue;
                         float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, row[0], row[1]);
                         y -= used;
                     }
@@ -745,6 +731,38 @@ public class WebUiServer {
                         cs.showText(line);
                         cs.endText();
                         y -= 12;
+                    }
+                }
+
+                PDPage advisorPage = new PDPage();
+                document.addPage(advisorPage);
+                try (PDPageContentStream cs = new PDPageContentStream(document, advisorPage)) {
+                    float margin = 52f;
+                    float pageWidth = advisorPage.getMediaBox().getWidth();
+                    float pageHeight = advisorPage.getMediaBox().getHeight();
+                    float x = margin;
+                    float y = pageHeight - margin;
+                    float totalWidth = pageWidth - (2 * margin);
+                    float keyWidth = totalWidth * 0.30f;
+                    float valueWidth = totalWidth * 0.70f;
+
+                    cs.setNonStrokingColor(new Color(38, 93, 171));
+                    cs.addRect(x, y - 36f, totalWidth, 36f);
+                    cs.fill();
+
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA_BOLD, 16);
+                    cs.setNonStrokingColor(Color.WHITE);
+                    cs.newLineAtOffset(x + 12, y - 22);
+                    cs.showText("Beraterin / Affiliate (Stammdaten)");
+                    cs.endText();
+                    y -= 52f;
+
+                    cs.setNonStrokingColor(new Color(44, 52, 64));
+                    for (String[] row : advisorRows) {
+                        if (row[1] == null || row[1].isBlank()) continue;
+                        float used = drawTableRow(cs, x, y, 20f, keyWidth, valueWidth, row[0], row[1]);
+                        y -= used;
                     }
                 }
 
@@ -1219,6 +1237,7 @@ public class WebUiServer {
         try {
             transport.connect(SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD);
             transport.sendMessage(message, message.getAllRecipients());
+            System.out.println("E-Mail versendet an " + toEmail + " | Betreff: " + subject);
         } finally {
             transport.close();
         }
