@@ -578,10 +578,11 @@ public class WebUiServer {
                         for (JsonNode visit : traffic) {
                             String source = asText(visit, "source");
                             if (source.isBlank()) source = "(ohne Quelle)";
+                            final String sourceKey = source;
                             int pageViews = (int) parseDoubleSafeStatic(asText(visit, "page_views"));
-                            Map<String, Object> agg = sourceAgg.computeIfAbsent(source, k -> {
+                            Map<String, Object> agg = sourceAgg.computeIfAbsent(sourceKey, k -> {
                                 Map<String, Object> m = new LinkedHashMap<>();
-                                m.put("source", source);
+                                m.put("source", sourceKey);
                                 m.put("visits", 0);
                                 m.put("pageViews", 0);
                                 return m;
@@ -625,11 +626,12 @@ public class WebUiServer {
                         for (JsonNode reward : rewards) {
                             String status = asText(reward, "status");
                             if (status.isBlank()) status = "(ohne Status)";
+                            final String rewardStatus = status;
                             double amount = parseDoubleSafeStatic(asText(reward, "amount"));
                             rewardAmountTotal += amount;
-                            Map<String, Object> agg = rewardAgg.computeIfAbsent(status, k -> {
+                            Map<String, Object> agg = rewardAgg.computeIfAbsent(rewardStatus, k -> {
                                 Map<String, Object> m = new LinkedHashMap<>();
-                                m.put("status", status);
+                                m.put("status", rewardStatus);
                                 m.put("count", 0);
                                 m.put("amount", 0.0);
                                 return m;
