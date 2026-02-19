@@ -255,8 +255,14 @@
 
         <div class="toolbar"><strong>Vergleich Beraterinnen</strong></div>
         <table>
-          <thead><tr><th>Beraterin</th><th>Affiliate-ID</th><th>Land</th><th>Zahlläufe</th><th>Transaktionen</th><th>Gesamtbetrag</th></tr></thead>
+          <thead><tr><th>Beraterin</th><th>Affiliate-ID</th><th>Land</th><th>Zahlläufe</th><th>Transaktionen</th><th>Eigenprovision</th><th>Teamprovision</th><th>Gesamtbetrag</th></tr></thead>
           <tbody id="analyticsAdvisorBody"></tbody>
+        </table>
+
+        <div class="toolbar"><strong>Führungskräfte-Auswertung (unterstellte Beraterinnen)</strong></div>
+        <table>
+          <thead><tr><th>Führungskraft</th><th>ID</th><th>Beraterinnen im Team</th><th>Zahlläufe</th><th>Teambetrag</th><th>Eigenprovision Team</th><th>Teamprovision Team</th></tr></thead>
+          <tbody id="analyticsLeaderBody"></tbody>
         </table>
 
         <div class="toolbar"><strong>Zahlläufe nach Land</strong></div>
@@ -484,6 +490,7 @@
           });
           if (input && data.pdfExportPath) input.value = data.pdfExportPath;
           if (data.file) createdFiles.push(data.file);
+          if (data.jsonFile) createdFiles.push(data.jsonFile);
         } catch (error) {
           failed.push({ paymentId, message: error.message });
         }
@@ -518,8 +525,8 @@
         });
         if (input && data.pdfExportPath) input.value = data.pdfExportPath;
         status.textContent = data.opened
-          ? `Rechnungsdetails-PDF erstellt und geöffnet: ${data.file}`
-          : `Rechnungsdetails-PDF erstellt: ${data.file}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
+          ? `Rechnungsdetails & JSON erstellt und geöffnet: ${data.file}`
+          : `Rechnungsdetails & JSON erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
       } catch (error) {
         status.textContent = `Fehler bei Rechnungsdetails: ${error.message}`;
       }
@@ -574,8 +581,9 @@
     function renderAnalytics(data) {
       const summaryBody = document.getElementById('analyticsSummaryBody');
       const advisorBody = document.getElementById('analyticsAdvisorBody');
+      const leaderBody = document.getElementById('analyticsLeaderBody');
       const countryBody = document.getElementById('analyticsCountryBody');
-      if (!summaryBody || !advisorBody || !countryBody) return;
+      if (!summaryBody || !advisorBody || !leaderBody || !countryBody) return;
 
       const summary = data.summary || {};
       const summaryRows = [
@@ -583,13 +591,20 @@
         ['Anzahl Zahlläufe', summary.paymentsCount || 0],
         ['Gesamtbetrag', formatEuroAmount(summary.totalAmount || 0)],
         ['Anzahl Transaktionen', summary.totalTransactions || 0],
-        ['Beraterinnen gesamt', summary.advisorCount || 0]
+        ['Beraterinnen gesamt', summary.advisorCount || 0],
+        ['Eigenprovision gesamt', formatEuroAmount(summary.selfCommission || 0)],
+        ['Teamprovision gesamt', formatEuroAmount(summary.teamCommission || 0)]
       ];
       summaryBody.innerHTML = summaryRows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
 
       const advisors = Array.isArray(data.advisorRows) ? data.advisorRows : [];
       advisorBody.innerHTML = advisors.map(r =>
-        `<tr><td>${r.advisorName || ''}</td><td>${r.affiliateId || ''}</td><td>${r.country || ''}</td><td>${r.paymentCount || 0}</td><td>${r.totalTransactions || 0}</td><td>${formatEuroAmount(r.totalAmount || 0)}</td></tr>`
+        `<tr><td>${r.advisorName || ''}</td><td>${r.affiliateId || ''}</td><td>${r.country || ''}</td><td>${r.paymentCount || 0}</td><td>${r.totalTransactions || 0}</td><td>${formatEuroAmount(r.selfCommission || 0)}</td><td>${formatEuroAmount(r.teamCommission || 0)}</td><td>${formatEuroAmount(r.totalAmount || 0)}</td></tr>`
+      ).join('');
+
+      const leaders = Array.isArray(data.leaderRows) ? data.leaderRows : [];
+      leaderBody.innerHTML = leaders.map(r =>
+        `<tr><td>${r.leaderName || ''}</td><td>${r.leaderId || ''}</td><td>${r.advisorCount || 0}</td><td>${r.paymentCount || 0}</td><td>${formatEuroAmount(r.teamTotalAmount || 0)}</td><td>${formatEuroAmount(r.teamSelfCommission || 0)}</td><td>${formatEuroAmount(r.teamTeamCommission || 0)}</td></tr>`
       ).join('');
 
       const countries = Array.isArray(data.countryRows) ? data.countryRows : [];

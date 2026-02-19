@@ -32,6 +32,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
@@ -387,10 +388,20 @@ public class WebUiServer {
                 }
                 Map<String, JsonNode> affiliatesById = fetchAffiliatesById(apiKey, affiliateIds);
 
+                List<String> leaderIds = new ArrayList<>();
+                for (JsonNode affiliate : affiliatesById.values()) {
+                    String leaderId = resolveLeaderId(affiliate);
+                    if (!leaderId.isBlank() && !leaderIds.contains(leaderId)) leaderIds.add(leaderId);
+                }
+                Map<String, JsonNode> leadersById = fetchAffiliatesById(apiKey, leaderIds);
+
                 double totalAmount = 0.0;
                 int totalTransactions = 0;
+                double totalSelfCommission = 0.0;
+                double totalTeamCommission = 0.0;
                 Map<String, Map<String, Object>> advisorAgg = new LinkedHashMap<>();
                 Map<String, Integer> countryAgg = new LinkedHashMap<>();
+                Map<String, Map<String, Object>> leaderAgg = new LinkedHashMap<>();
                 List<Map<String, Object>> paymentRows = new ArrayList<>();
 
                 for (JsonNode payment : payments) {
@@ -401,9 +412,12 @@ public class WebUiServer {
                     String country = affiliate != null ? asText(affiliate, "country") : "";
                     double amount = parseDoubleSafeStatic(asText(payment, "amount"));
                     int txCount = payment.has("transactions") && payment.get("transactions").isArray() ? payment.get("transactions").size() : 0;
+                    TransactionSplit split = splitTransactions(payment.get("transactions"));
 
                     totalAmount += amount;
                     totalTransactions += txCount;
+                    totalSelfCommission += split.selfCommission;
+                    totalTeamCommission += split.teamCommission;
 
                     String advisorKey = affiliateId.isBlank() ? advisorName : affiliateId;
                     Map<String, Object> agg = advisorAgg.computeIfAbsent(advisorKey, k -> {
@@ -414,11 +428,40 @@ public class WebUiServer {
                         m.put("paymentCount", 0);
                         m.put("totalAmount", 0.0);
                         m.put("totalTransactions", 0);
+                        m.put("selfCommission", 0.0);
+                        m.put("teamCommission", 0.0);
                         return m;
                     });
                     agg.put("paymentCount", ((Integer) agg.get("paymentCount")) + 1);
                     agg.put("totalAmount", ((Double) agg.get("totalAmount")) + amount);
                     agg.put("totalTransactions", ((Integer) agg.get("totalTransactions")) + txCount);
+                    agg.put("selfCommission", ((Double) agg.get("selfCommission")) + split.selfCommission);
+                    agg.put("teamCommission", ((Double) agg.get("teamCommission")) + split.teamCommission);
+
+                    String leaderId = resolveLeaderId(affiliate);
+                    if (!leaderId.isBlank()) {
+                        JsonNode leader = leadersById.get(leaderId);
+                        String leaderName = leader != null ? asText(leader, "name") : ("ID " + leaderId);
+                        Map<String, Object> la = leaderAgg.computeIfAbsent(leaderId, k -> {
+                            Map<String, Object> m = new LinkedHashMap<>();
+                            m.put("leaderId", leaderId);
+                            m.put("leaderName", leaderName);
+                            m.put("advisorCount", 0);
+                            m.put("paymentCount", 0);
+                            m.put("teamTotalAmount", 0.0);
+                            m.put("teamSelfCommission", 0.0);
+                            m.put("teamTeamCommission", 0.0);
+                            m.put("advisorIds", new LinkedHashSet<String>());
+                            return m;
+                        });
+                        @SuppressWarnings("unchecked")
+                        Set<String> advisorIds = (Set<String>) la.get("advisorIds");
+                        if (!affiliateId.isBlank()) advisorIds.add(affiliateId);
+                        la.put("paymentCount", ((Integer) la.get("paymentCount")) + 1);
+                        la.put("teamTotalAmount", ((Double) la.get("teamTotalAmount")) + amount);
+                        la.put("teamSelfCommission", ((Double) la.get("teamSelfCommission")) + split.selfCommission);
+                        la.put("teamTeamCommission", ((Double) la.get("teamTeamCommission")) + split.teamCommission);
+                    }
 
                     if (!country.isBlank()) {
                         countryAgg.put(country, countryAgg.getOrDefault(country, 0) + 1);
@@ -429,6 +472,8 @@ public class WebUiServer {
                     row.put("advisorName", advisorName);
                     row.put("country", country);
                     row.put("amount", amount);
+                    row.put("selfCommission", split.selfCommission);
+                    row.put("teamCommission", split.teamCommission);
                     row.put("transactionCount", txCount);
                     row.put("createdAt", toGermanDate(asText(payment, "created_at")));
                     paymentRows.add(row);
@@ -453,6 +498,8 @@ public class WebUiServer {
                 summary.put("totalAmount", totalAmount);
                 summary.put("totalTransactions", totalTransactions);
                 summary.put("advisorCount", advisorRows.size());
+                summary.put("selfCommission", totalSelfCommission);
+                summary.put("teamCommission", totalTeamCommission);
 
                 List<Map<String, Object>> countryRows = new ArrayList<>();
                 for (Map.Entry<String, Integer> entry : countryAgg.entrySet()) {
@@ -463,9 +510,20 @@ public class WebUiServer {
                 }
                 countryRows.sort((a,b)->Integer.compare((Integer)b.get("payments"),(Integer)a.get("payments")));
 
+                List<Map<String, Object>> leaderRows = new ArrayList<>();
+                for (Map<String, Object> row : leaderAgg.values()) {
+                    @SuppressWarnings("unchecked")
+                    Set<String> advisorIds = (Set<String>) row.get("advisorIds");
+                    row.put("advisorCount", advisorIds.size());
+                    row.remove("advisorIds");
+                    leaderRows.add(row);
+                }
+                leaderRows.sort((a,b)->Double.compare((Double)b.get("teamTotalAmount"),(Double)a.get("teamTotalAmount")));
+
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("summary", summary);
                 payload.put("advisorRows", advisorRows);
+                payload.put("leaderRows", leaderRows);
                 payload.put("countryRows", countryRows);
                 payload.put("paymentRows", paymentRows);
                 Map<String, Object> chartData = new LinkedHashMap<>();
@@ -633,9 +691,12 @@ public class WebUiServer {
                 Path exportDir = Paths.get(exportDirValue).toAbsolutePath();
                 Files.createDirectories(exportDir);
 
-                String filename = "rechnungsdetails_" + sanitizeFilename(paymentId) + "_" + FILE_TIMESTAMP.format(LocalDateTime.now()) + ".pdf";
-                Path pdfPath = exportDir.resolve(filename);
+                String timestamp = FILE_TIMESTAMP.format(LocalDateTime.now());
+                String baseFilename = "rechnungsdetails_" + sanitizeFilename(paymentId) + "_" + timestamp;
+                Path pdfPath = exportDir.resolve(baseFilename + ".pdf");
+                Path jsonPath = exportDir.resolve(baseFilename + ".json");
                 createInvoiceDetailsPdf(pdfPath, response, affiliate);
+                writeOriginalJson(jsonPath, response);
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
@@ -646,7 +707,7 @@ public class WebUiServer {
                 if (sendEmailsEnabled) {
                     String periodLabel = buildPaymentPeriodLabel(payment);
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(contactEmail, pdfPath, affiliateNameForMail, periodLabel, payment, affiliate, resolveSmtpConfig(config));
+                    sendInvoiceMailWithAttachment(contactEmail, pdfPath, jsonPath, affiliateNameForMail, periodLabel, payment, affiliate, resolveSmtpConfig(config));
                 }
 
                 boolean opened = false;
@@ -669,6 +730,7 @@ public class WebUiServer {
                 payload.put("message", sendEmailsEnabled ? "Rechnungsdetails-PDF erstellt und per E-Mail versendet." : "Rechnungsdetails-PDF erstellt (E-Mail-Versand deaktiviert).");
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
+                payload.put("jsonFile", jsonPath.toString());
                 payload.put("opened", opened);
                 payload.put("openMessage", openMessage);
                 payload.put("pdfExportPath", exportDir.toString());
@@ -1304,7 +1366,7 @@ public class WebUiServer {
         }
 
         String ids = String.join(",", affiliateIds);
-        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,email,phone,company_name,ref_code,status,address_1,address_2,city,state,zip,country,tax_identification_number";
+        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,email,phone,company_name,ref_code,status,address_1,address_2,city,state,zip,country,tax_identification_number,parent_id,upline_affiliate_id,upline_id,parent_affiliate_id";
         JsonNode root = requestJson(url, apiKey);
         JsonNode affiliates = root.get("affiliates");
         if (affiliates == null || !affiliates.isArray()) {
@@ -1349,6 +1411,44 @@ public class WebUiServer {
         return String.join(", ", parts);
     }
 
+    private static class TransactionSplit {
+        final double selfCommission;
+        final double teamCommission;
+
+        private TransactionSplit(double selfCommission, double teamCommission) {
+            this.selfCommission = selfCommission;
+            this.teamCommission = teamCommission;
+        }
+    }
+
+    private static TransactionSplit splitTransactions(JsonNode transactions) {
+        if (transactions == null || !transactions.isArray()) {
+            return new TransactionSplit(0.0, 0.0);
+        }
+        double self = 0.0;
+        double team = 0.0;
+        for (JsonNode tx : transactions) {
+            String entityType = asText(tx, "entity_type");
+            double commission = parseDoubleSafeStatic(asText(tx, "amount"));
+            if ("orders".equalsIgnoreCase(entityType)) {
+                self += commission;
+            } else {
+                team += commission;
+            }
+        }
+        return new TransactionSplit(self, team);
+    }
+
+    private static String resolveLeaderId(JsonNode affiliate) {
+        if (affiliate == null || affiliate.isNull() || affiliate.isMissingNode()) return "";
+        String[] fields = new String[]{"parent_id", "upline_affiliate_id", "upline_id", "parent_affiliate_id"};
+        for (String field : fields) {
+            String value = asText(affiliate, field).trim();
+            if (!value.isBlank() && !"0".equals(value)) return value;
+        }
+        return "";
+    }
+
     private static String buildPaymentPeriodLabel(JsonNode payment) {
         JsonNode transactions = payment != null ? payment.get("transactions") : null;
         if (transactions == null || !transactions.isArray() || transactions.size() == 0) {
@@ -1372,7 +1472,12 @@ public class WebUiServer {
                 + maxDate.atZoneSameInstant(ZoneId.of("Europe/Berlin")).format(f);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, Path pdfPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, SmtpConfig smtpConfig) throws Exception {
+    private static void writeOriginalJson(Path jsonPath, JsonNode response) throws IOException {
+        String pretty = OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(response);
+        Files.writeString(jsonPath, pretty, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    private static void sendInvoiceMailWithAttachment(String toEmail, Path pdfPath, Path jsonPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, SmtpConfig smtpConfig) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -1398,9 +1503,15 @@ public class WebUiServer {
         attachmentPart.setDataHandler(new DataHandler(fds));
         attachmentPart.setFileName(pdfPath.getFileName().toString());
 
+        MimeBodyPart jsonAttachmentPart = new MimeBodyPart();
+        FileDataSource jsonDs = new FileDataSource(jsonPath.toFile());
+        jsonAttachmentPart.setDataHandler(new DataHandler(jsonDs));
+        jsonAttachmentPart.setFileName(jsonPath.getFileName().toString());
+
         MimeMultipart multipart = new MimeMultipart();
         multipart.addBodyPart(textPart);
         multipart.addBodyPart(attachmentPart);
+        multipart.addBodyPart(jsonAttachmentPart);
         message.setContent(multipart);
 
         Transport transport = session.getTransport("smtp");
