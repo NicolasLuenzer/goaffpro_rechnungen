@@ -1,0 +1,550 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GoAffPro Rechnungen Dashboard</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 24px; background: #f6f8fb; color: #1f2937; }
+    h1 { margin-bottom: 8px; }
+    .hint { margin-bottom: 16px; color: #4b5563; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
+    .tab { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 12px; background: white; cursor: pointer; }
+    .tab.active { background: #2563eb; color: white; border-color: #2563eb; }
+    .panel { display: none; border: 1px solid #d1d5db; border-radius: 10px; background: white; padding: 16px; }
+    .panel.active { display: block; }
+    .status { margin: 12px 0; color: #374151; }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
+    .settings { margin: 12px 0; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; }
+    input[type="text"], select { min-width: 420px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
+    button { background: #10b981; color: white; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
+    button.secondary { background: #3b82f6; }
+    button.danger { background: #ef4444; }
+    button:disabled { background: #9ca3af; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { border: 1px solid #e5e7eb; padding: 8px; text-align: left; font-size: 14px; }
+    th { background: #f3f4f6; cursor: pointer; user-select: none; }
+    th.sort-active { background: #dbeafe; }
+    .files { margin-top: 8px; font-size: 13px; color: #1f2937; }
+    .app-version { position: fixed; top: 12px; right: 16px; background: #111827; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; z-index: 1000; cursor: pointer; }
+    .version-popup { position: fixed; top: 42px; right: 16px; width: 460px; max-height: 360px; overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); z-index: 1001; padding: 8px; }
+    .version-popup-header { font-weight: bold; margin-bottom: 6px; }
+    .version-popup ul { margin: 0; padding-left: 18px; }
+    .version-popup li { margin-bottom: 8px; font-size: 13px; }
+    .request-preview { margin: 10px 0; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #0f172a; word-break: break-all; }
+  </style>
+</head>
+<body>
+  <h1>Weboberfläche: App-Visualisierung</h1>
+  <p class="hint">Die Reiter werden aus allen ausführbaren Java-Dateien (mit <code>main</code>-Methode) aufgebaut.</p>
+  <div id="appVersion" class="app-version" title="Klicken für Versionshistorie">Version: lädt…</div>
+  <div id="versionHistoryPopup" class="version-popup" style="display:none">
+    <div class="version-popup-header">Letzte Versionen</div>
+    <ul id="versionHistoryList"></ul>
+  </div>
+
+  <div id="tabs" class="tabs"></div>
+  <div id="panels"></div>
+
+  <script>
+    const API_BASE = "http://localhost:8080";
+    const tableState = { rows: [], selected: new Set(), sortBy: 'paymentId', sortDirection: 'desc', filter: '' };
+    let pollIntervalId = null;
+
+    async function apiGet(path) {
+      const response = await fetch(`${API_BASE}${path}`);
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'API-Fehler');
+      return json;
+    }
+
+    async function apiPost(path, payload) {
+      const response = await fetch(`${API_BASE}${path}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'API-Fehler');
+      return json;
+    }
+
+    async function fetchExecutables() { return apiGet('/api/executables'); }
+
+    async function loadVersion() {
+      const box = document.getElementById('appVersion');
+      if (!box) return;
+      try {
+        const data = await apiGet('/api/version');
+        box.textContent = `Version: ${data.version || 'dev'}`;
+      } catch (_) {
+        box.textContent = 'Version: dev';
+      }
+    }
+
+
+    async function loadVersionHistory() {
+      const popup = document.getElementById('versionHistoryPopup');
+      const list = document.getElementById('versionHistoryList');
+      if (!popup || !list) return;
+      try {
+        const data = await apiGet('/api/version/history');
+        const versions = Array.isArray(data.versions) ? data.versions : [];
+        list.innerHTML = versions.map(v =>
+          `<li><strong>${v.version || 'n/a'}</strong> <em>(${v.timestamp || ''})</em><br>${v.summary || ''}</li>`
+        ).join('');
+      } catch (e) {
+        list.innerHTML = '<li>Versionshistorie konnte nicht geladen werden.</li>';
+      }
+    }
+
+    function wireVersionPopup() {
+      const badge = document.getElementById('appVersion');
+      const popup = document.getElementById('versionHistoryPopup');
+      if (!badge || !popup) return;
+
+      badge.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const show = popup.style.display === 'none';
+        popup.style.display = show ? 'block' : 'none';
+        if (show) {
+          await loadVersionHistory();
+        }
+      });
+
+      document.addEventListener('click', (e) => {
+        if (!popup.contains(e.target) && e.target !== badge) {
+          popup.style.display = 'none';
+        }
+      });
+    }
+
+    function createTabAndPanel(executable, isActive = false) {
+      const tabs = document.getElementById('tabs');
+      const panels = document.getElementById('panels');
+
+      const tab = document.createElement('button');
+      tab.className = `tab ${isActive ? 'active' : ''}`;
+      tab.textContent = executable.name;
+      tab.dataset.target = executable.id;
+      tabs.appendChild(tab);
+
+      const panel = document.createElement('section');
+      panel.className = `panel ${isActive ? 'active' : ''}`;
+      panel.id = executable.id;
+
+      if (executable.name === 'MainProvisionenGoaffpro') {
+        panel.innerHTML = `
+          <h2>${executable.name}</h2>
+          <p>Pfad: <code>${executable.path}</code></p>
+
+          <div class="settings">
+            <strong>Einstellungen</strong>
+            <div class="toolbar">
+              <label for="pdfExportPath">PDF Zielverzeichnis:</label>
+              <input id="pdfExportPath" type="text" placeholder="C:\\Users\\nluenzer\\Downloads\\goaffpro" />
+              <button id="pickFolderBtn" type="button" class="secondary">Ordner auswählen…</button>
+              <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
+            </div>
+            <div class="toolbar">
+              <label for="lastImportedSelect">Aktive LastImportedComission (since_id):</label>
+              <select id="lastImportedSelect"></select>
+            </div>
+            <div class="toolbar">
+              <label for="contactEmail">Kontakt-E-Mail:</label>
+              <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
+            </div>
+            <div class="toolbar">
+              <label for="smtpHost">SMTP Host:</label>
+              <input id="smtpHost" type="text" placeholder="smtp.example.com" />
+              <label for="smtpPort">Port:</label>
+              <input id="smtpPort" type="number" placeholder="587" style="max-width:120px" />
+            </div>
+            <div class="toolbar">
+              <label for="smtpUsername">SMTP Benutzer:</label>
+              <input id="smtpUsername" type="text" placeholder="user@example.com" />
+              <label for="smtpPassword">SMTP Passwort:</label>
+              <input id="smtpPassword" type="password" placeholder="(unverändert lassen zum Beibehalten)" />
+              <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
+              <button id="saveSettingsBtn" class="secondary">Speichern</button>
+            </div>
+            <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
+          </div>
+
+          <div class="toolbar">
+            <button id="togglePollingBtn">Polling starten</button>
+            <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
+            <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
+          </div>
+
+          <p id="pollStatus" class="status">Noch nicht gestartet.</p>
+          <div id="exportedFiles" class="files"></div>
+
+          <table>
+            <thead>
+              <tr>
+                <th data-col="select"><input id="selectAllRows" type="checkbox" title="Alle sichtbaren Zeilen auswählen" /></th>
+                <th data-col="paymentId">Payment-ID</th>
+                <th data-col="belegdatum">Belegdatum</th>
+                <th data-col="affiliateName">Affiliate-Name</th>
+                <th data-col="affiliateEmail">E-Mail</th>
+                <th data-col="affiliateAddress">Adresse</th>
+                <th data-col="affiliateCountry">Affiliate-Land</th>
+                <th data-col="affiliateSteuernummer">Affiliate-Steuernummer</th>
+                <th data-col="amount">Betrag</th>
+                <th data-col="actions">Aktion</th>
+              </tr>
+            </thead>
+            <tbody id="paymentsTableBody"></tbody>
+          </table>
+        `;
+      } else {
+        panel.innerHTML = `<h2>${executable.name}</h2><p>Pfad: <code>${executable.path}</code></p><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
+      }
+
+      panels.appendChild(panel);
+    }
+
+    function activateTab(targetId) {
+      document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab.dataset.target === targetId));
+      document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('active', panel.id === targetId));
+    }
+
+    function wireTabSwitching() { document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => activateTab(tab.dataset.target))); }
+    function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}`; }
+
+
+    function formatEuroAmount(raw) {
+      if (raw === null || raw === undefined || raw === '') return '';
+      const value = Number(raw);
+      if (Number.isNaN(value)) return `${raw} €`;
+      return `${value.toFixed(2).replace('.', ',')} €`;
+    }
+
+    function filteredRows() {
+      const needle = tableState.filter.trim().toLowerCase();
+      let rows = [...tableState.rows];
+      if (needle) rows = rows.filter(row => Object.values(row).join(' ').toLowerCase().includes(needle));
+      const col = tableState.sortBy;
+      const direction = tableState.sortDirection === 'asc' ? 1 : -1;
+      rows.sort((a, b) => {
+        const left = (a[col] || '').toString();
+        const right = (b[col] || '').toString();
+        const maybeNum = Number(left) - Number(right);
+        if (!Number.isNaN(maybeNum) && left !== '' && right !== '') return maybeNum * direction;
+        return left.localeCompare(right, 'de', { sensitivity: 'base' }) * direction;
+      });
+      return rows;
+    }
+
+    function renderTable() {
+      const body = document.getElementById('paymentsTableBody');
+      const selectAll = document.getElementById('selectAllRows');
+      if (!body) return;
+
+      body.innerHTML = '';
+      const rows = filteredRows();
+      rows.forEach(row => {
+        const tr = document.createElement('tr');
+        const key = rowKey(row);
+        const checked = tableState.selected.has(key) ? 'checked' : '';
+        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateEmail || ''}</td><td>${row.affiliateAddress || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td>${formatEuroAmount(row.amount)}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
+        body.appendChild(tr);
+      });
+
+      if (selectAll) {
+        const visibleKeys = rows.map(rowKey);
+        selectAll.checked = visibleKeys.length > 0 && visibleKeys.every(k => tableState.selected.has(k));
+      }
+
+      document.querySelectorAll('.row-select').forEach(cb => cb.addEventListener('change', e => {
+        const key = e.target.dataset.key;
+        if (e.target.checked) tableState.selected.add(key); else tableState.selected.delete(key);
+      }));
+
+      document.querySelectorAll('.details-btn').forEach(btn => btn.addEventListener('click', async (e) => {
+        const paymentId = e.target.dataset.paymentId;
+        await loadInvoiceDetailsPdf(paymentId);
+      }));
+
+      document.querySelectorAll('th[data-col]').forEach(th => {
+        th.classList.remove('sort-active');
+        if (th.dataset.col === tableState.sortBy) th.classList.add('sort-active');
+      });
+    }
+
+    function wireSortingAndFiltering() {
+      document.querySelectorAll('th[data-col]').forEach(th => {
+        if (th.dataset.col === 'select' || th.dataset.col === 'actions') return;
+        th.addEventListener('click', () => {
+          if (tableState.sortBy === th.dataset.col) tableState.sortDirection = tableState.sortDirection === 'asc' ? 'desc' : 'asc';
+          else { tableState.sortBy = th.dataset.col; tableState.sortDirection = 'asc'; }
+          renderTable();
+        });
+      });
+
+      const filterInput = document.getElementById('filterInput');
+      if (filterInput) filterInput.addEventListener('input', e => { tableState.filter = e.target.value; renderTable(); });
+
+      const selectAll = document.getElementById('selectAllRows');
+      if (selectAll) selectAll.addEventListener('change', e => {
+        const visible = filteredRows().map(rowKey);
+        if (e.target.checked) visible.forEach(key => tableState.selected.add(key));
+        else visible.forEach(key => tableState.selected.delete(key));
+        renderTable();
+      });
+    }
+
+    function updateCommissionSelect(history, activeValue) {
+      const select = document.getElementById('lastImportedSelect');
+      if (!select) return;
+      const list = Array.isArray(history) ? history : [];
+      const current = activeValue || '';
+      const unique = [...new Set([...list, current].filter(Boolean))];
+      select.innerHTML = unique.map(value => `<option value="${value}">${value}</option>`).join('');
+      if (current) select.value = current;
+    }
+
+    function setPollingButtonState(isRunning) {
+      const btn = document.getElementById('togglePollingBtn');
+      if (!btn) return;
+      btn.textContent = isRunning ? 'Polling stoppen' : 'Polling starten';
+      btn.classList.toggle('danger', isRunning);
+    }
+
+    async function loadSettings() {
+      const input = document.getElementById('pdfExportPath');
+      const contactEmailInput = document.getElementById('contactEmail');
+      const smtpHostInput = document.getElementById('smtpHost');
+      const smtpPortInput = document.getElementById('smtpPort');
+      const smtpUsernameInput = document.getElementById('smtpUsername');
+      const smtpPasswordInput = document.getElementById('smtpPassword');
+      const smtpTlsInput = document.getElementById('smtpTls');
+      if (!input) return;
+      try {
+        const data = await apiGet('/api/settings');
+        input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
+        if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
+        if (smtpHostInput) smtpHostInput.value = data.smtpHost || '';
+        if (smtpPortInput) smtpPortInput.value = data.smtpPort || '587';
+        if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || '';
+        if (smtpPasswordInput) smtpPasswordInput.value = '';
+        if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
+      } catch (error) {
+        document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
+      }
+    }
+
+    async function saveSettings() {
+      const input = document.getElementById('pdfExportPath');
+      const select = document.getElementById('lastImportedSelect');
+      const contactEmailInput = document.getElementById('contactEmail');
+      const smtpHostInput = document.getElementById('smtpHost');
+      const smtpPortInput = document.getElementById('smtpPort');
+      const smtpUsernameInput = document.getElementById('smtpUsername');
+      const smtpPasswordInput = document.getElementById('smtpPassword');
+      const smtpTlsInput = document.getElementById('smtpTls');
+      const status = document.getElementById('pollStatus');
+      if (!input || !status || !select) return;
+      try {
+        const data = await apiPost('/api/settings', {
+          pdfExportPath: input.value,
+          lastImportedComission: select.value,
+          contactEmail: contactEmailInput ? contactEmailInput.value : '',
+          smtpHost: smtpHostInput ? smtpHostInput.value : '',
+          smtpPort: smtpPortInput ? smtpPortInput.value : '587',
+          smtpUsername: smtpUsernameInput ? smtpUsernameInput.value : '',
+          smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
+          smtpTls: smtpTlsInput ? smtpTlsInput.checked : false
+        });
+        input.value = data.pdfExportPath || input.value;
+        if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
+        if (smtpHostInput) smtpHostInput.value = data.smtpHost || smtpHostInput.value;
+        if (smtpPortInput) smtpPortInput.value = data.smtpPort || smtpPortInput.value || '587';
+        if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || smtpUsernameInput.value;
+        if (smtpPasswordInput) smtpPasswordInput.value = '';
+        if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
+        status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
+      } catch (error) {
+        status.textContent = `Fehler beim Speichern der Einstellungen: ${error.message}`;
+      }
+    }
+
+
+
+    async function exportSelectedInvoiceDetailsPdfs() {
+      const status = document.getElementById('pollStatus');
+      const filesBox = document.getElementById('exportedFiles');
+      const input = document.getElementById('pdfExportPath');
+      const rows = tableState.rows.filter(row => tableState.selected.has(rowKey(row)));
+      const paymentIds = [...new Set(rows.map(row => row.paymentId).filter(Boolean))];
+
+      if (paymentIds.length === 0) {
+        status.textContent = 'Bitte selektiere mindestens eine Zeile mit gültiger Payment-ID.';
+        return;
+      }
+
+      const createdFiles = [];
+      const failed = [];
+
+      for (let i = 0; i < paymentIds.length; i++) {
+        const paymentId = paymentIds[i];
+        status.textContent = `Erzeuge Rechnungsdetails-PDF ${i + 1}/${paymentIds.length} für Payment-ID ${paymentId} ...`;
+        try {
+          const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
+            paymentId,
+            pdfExportPath: input ? input.value : ''
+          });
+          if (input && data.pdfExportPath) input.value = data.pdfExportPath;
+          if (data.file) createdFiles.push(data.file);
+        } catch (error) {
+          failed.push({ paymentId, message: error.message });
+        }
+      }
+
+      if (filesBox) {
+        const okHtml = createdFiles.length > 0
+          ? `<strong>Exportierte Rechnungsdetails-PDFs:</strong><br>${createdFiles.map(f => `<code>${f}</code>`).join('<br>')}`
+          : '<strong>Keine Rechnungsdetails-PDF erstellt.</strong>';
+        const failHtml = failed.length > 0
+          ? `<br><br><strong>Fehler:</strong><br>${failed.map(f => `<code>${f.paymentId}</code>: ${f.message}`).join('<br>')}`
+          : '';
+        filesBox.innerHTML = `${okHtml}${failHtml}`;
+      }
+
+      if (failed.length === 0) {
+        status.textContent = `${createdFiles.length} Rechnungsdetails-PDF(s) erstellt.`;
+      } else if (createdFiles.length === 0) {
+        status.textContent = `Keine Rechnungsdetails-PDF erstellt. Fehler bei ${failed.length} Payment-ID(s).`;
+      } else {
+        status.textContent = `${createdFiles.length} Rechnungsdetails-PDF(s) erstellt, ${failed.length} Fehler.`;
+      }
+    }
+
+    async function loadInvoiceDetailsPdf(paymentId) {
+      const status = document.getElementById('pollStatus');
+      const input = document.getElementById('pdfExportPath');
+      try {
+        const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
+          paymentId,
+          pdfExportPath: input ? input.value : ''
+        });
+        if (input && data.pdfExportPath) input.value = data.pdfExportPath;
+        status.textContent = data.opened
+          ? `Rechnungsdetails-PDF erstellt und geöffnet: ${data.file}`
+          : `Rechnungsdetails-PDF erstellt: ${data.file}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
+      } catch (error) {
+        status.textContent = `Fehler bei Rechnungsdetails: ${error.message}`;
+      }
+    }
+
+    async function pollOnce() {
+      const status = document.getElementById('pollStatus');
+      try {
+        const data = await apiPost('/api/provisionen-goaffpro/poll', {});
+        if (Array.isArray(data.payments) && data.payments.length > 0) {
+          data.payments.forEach(payment => {
+            const key = rowKey(payment);
+            if (!tableState.rows.find(x => rowKey(x) === key)) tableState.rows.push(payment);
+          });
+          renderTable();
+        }
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
+        status.textContent = data.message || 'Polling erfolgreich.';
+      } catch (error) {
+        status.textContent = `Fehler beim Polling: ${error.message}`;
+      }
+    }
+
+    async function togglePolling() {
+      const status = document.getElementById('pollStatus');
+      if (pollIntervalId) {
+        window.clearInterval(pollIntervalId);
+        pollIntervalId = null;
+        setPollingButtonState(false);
+        status.textContent = 'Polling gestoppt.';
+        return;
+      }
+
+      tableState.rows = [];
+      tableState.selected = new Set();
+      renderTable();
+      setPollingButtonState(true);
+      status.textContent = 'Polling läuft...';
+      await pollOnce();
+      pollIntervalId = window.setInterval(pollOnce, 60000);
+    }
+
+    async function pickFolder() {
+      const input = document.getElementById('pdfExportPath');
+      const hiddenPicker = document.getElementById('folderPickerInput');
+      if (!input) return;
+
+      if (window.showDirectoryPicker) {
+        try {
+          const handle = await window.showDirectoryPicker();
+          if (handle && handle.name) {
+            const guess = input.value || '';
+            const base = guess.includes('\\') ? guess.substring(0, Math.max(0, guess.lastIndexOf('\\'))) : '';
+            input.value = base ? `${base}\\${handle.name}` : handle.name;
+          }
+          return;
+        } catch (_) {}
+      }
+
+      if (hiddenPicker) {
+        hiddenPicker.click();
+      }
+    }
+
+    function wireFolderPickerFallback() {
+      const hiddenPicker = document.getElementById('folderPickerInput');
+      const input = document.getElementById('pdfExportPath');
+      if (!hiddenPicker || !input) return;
+
+      hiddenPicker.addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (!file || !file.webkitRelativePath) return;
+        const topFolder = file.webkitRelativePath.split('/')[0];
+        const current = input.value || '';
+        const base = current.includes('\\') ? current.substring(0, Math.max(0, current.lastIndexOf('\\'))) : '';
+        input.value = base ? `${base}\\${topFolder}` : topFolder;
+      });
+    }
+
+    async function init() {
+      try {
+        const executables = await fetchExecutables();
+        if (!Array.isArray(executables) || executables.length === 0) {
+          document.getElementById('panels').innerHTML = '<p>Keine ausführbaren Java-Dateien gefunden.</p>';
+          return;
+        }
+
+        executables.forEach((exe, index) => createTabAndPanel(exe, index === 0));
+        wireTabSwitching();
+        await loadVersion();
+        wireVersionPopup();
+
+        const pollingBtn = document.getElementById('togglePollingBtn');
+        const saveBtn = document.getElementById('saveSettingsBtn');
+        const pickBtn = document.getElementById('pickFolderBtn');
+        const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
+        if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
+        if (saveBtn) saveBtn.addEventListener('click', saveSettings);
+        if (pickBtn) pickBtn.addEventListener('click', pickFolder);
+        if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
+
+        wireFolderPickerFallback();
+        wireSortingAndFiltering();
+        renderTable();
+        setPollingButtonState(false);
+        await loadSettings();
+      } catch (error) {
+        document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
