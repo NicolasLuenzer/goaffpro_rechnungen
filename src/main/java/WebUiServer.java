@@ -672,6 +672,20 @@ public class WebUiServer {
                             y -= 13;
                         }
                     }
+
+                    y -= 8;
+                    String providerNote = "Dieser Nachweis wurde von der S+R Linear Technology GmbH bereitgestellt. " +
+                            "Bei Rückfragen wenden Sie sich bitte an info@vemmina.com. " +
+                            "Die zugrundeliegenden Rohdaten können bei Bedarf angefragt werden.";
+                    for (String line : wrapForPdf(providerNote, 100)) {
+                        cs.beginText();
+                        cs.setFont(PDType1Font.HELVETICA_OBLIQUE, 9);
+                        cs.setNonStrokingColor(new Color(72, 78, 85));
+                        cs.newLineAtOffset(x, y);
+                        cs.showText(line);
+                        cs.endText();
+                        y -= 12;
+                    }
                 }
 
                 float detailMargin = 52f;

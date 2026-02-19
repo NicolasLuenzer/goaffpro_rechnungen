@@ -154,14 +154,12 @@
 
           <div class="toolbar">
             <button id="togglePollingBtn">Polling starten</button>
-            <button id="exportPdfBtn" class="secondary">Selektierte Zeilen als PDF exportieren</button>
             <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
             <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
           </div>
 
           <p id="pollStatus" class="status">Noch nicht gestartet.</p>
           <div id="exportedFiles" class="files"></div>
-          <div id="requestPreview" class="request-preview">Noch kein Rechnungsdetails-Request ausgeführt.</div>
 
           <table>
             <thead>
@@ -316,23 +314,6 @@
       }
     }
 
-    async function exportSelectedRowsAsPdf() {
-      const status = document.getElementById('pollStatus');
-      const filesBox = document.getElementById('exportedFiles');
-      const input = document.getElementById('pdfExportPath');
-      const rows = tableState.rows.filter(row => tableState.selected.has(rowKey(row)));
-      if (rows.length === 0) { status.textContent = 'Bitte selektiere mindestens eine Tabellenzeile für den PDF-Export.'; return; }
-
-      try {
-        const data = await apiPost('/api/provisionen-goaffpro/export-pdf', { rows, pdfExportPath: input ? input.value : '' });
-        status.textContent = data.message;
-        if (filesBox && Array.isArray(data.files)) filesBox.innerHTML = `<strong>Exportierte Dateien:</strong><br>${data.files.map(f => `<code>${f}</code>`).join('<br>')}`;
-        if (input && data.pdfExportPath) input.value = data.pdfExportPath;
-      } catch (error) {
-        status.textContent = `Fehler beim PDF-Export: ${error.message}`;
-      }
-    }
-
 
 
     async function exportSelectedInvoiceDetailsPdfs() {
@@ -349,7 +330,6 @@
 
       const createdFiles = [];
       const failed = [];
-      let lastRequestUrl = '';
 
       for (let i = 0; i < paymentIds.length; i++) {
         const paymentId = paymentIds[i];
@@ -361,15 +341,9 @@
           });
           if (input && data.pdfExportPath) input.value = data.pdfExportPath;
           if (data.file) createdFiles.push(data.file);
-          if (data.requestUrl) lastRequestUrl = data.requestUrl;
         } catch (error) {
           failed.push({ paymentId, message: error.message });
         }
-      }
-
-      const requestPreview = document.getElementById('requestPreview');
-      if (requestPreview && lastRequestUrl) {
-        requestPreview.innerHTML = `<strong>Verwendeter Request für Rechnungsdetails:</strong><br>${lastRequestUrl}`;
       }
 
       if (filesBox) {
@@ -400,11 +374,6 @@
           pdfExportPath: input ? input.value : ''
         });
         if (input && data.pdfExportPath) input.value = data.pdfExportPath;
-        const requestPreview = document.getElementById('requestPreview');
-        if (requestPreview) {
-          const url = data.requestUrl || '(kein requestUrl erhalten)';
-          requestPreview.innerHTML = `<strong>Verwendeter Request für Rechnungsdetails:</strong><br>${url}`;
-        }
         status.textContent = data.opened
           ? `Rechnungsdetails-PDF erstellt und geöffnet: ${data.file}`
           : `Rechnungsdetails-PDF erstellt: ${data.file}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
@@ -502,12 +471,10 @@
 
         const pollingBtn = document.getElementById('togglePollingBtn');
         const saveBtn = document.getElementById('saveSettingsBtn');
-        const exportBtn = document.getElementById('exportPdfBtn');
         const pickBtn = document.getElementById('pickFolderBtn');
         const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
-        if (exportBtn) exportBtn.addEventListener('click', exportSelectedRowsAsPdf);
         if (pickBtn) pickBtn.addEventListener('click', pickFolder);
         if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
 
