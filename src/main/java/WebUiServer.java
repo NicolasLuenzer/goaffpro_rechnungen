@@ -376,7 +376,7 @@ public class WebUiServer {
                             "Affiliate-Name: " + safe(row.get("affiliateName"), ""),
                             "Affiliate-Land: " + safe(row.get("affiliateCountry"), ""),
                             "Affiliate-Steuernummer: " + safe(row.get("affiliateSteuernummer"), ""),
-                            "Betrag: " + safe(row.get("amount"), ""),
+                            "Provision: " + safe(row.get("amount"), ""),
                             "Waehrung: " + safe(row.get("currency"), "")
                     );
 
@@ -499,13 +499,13 @@ public class WebUiServer {
 
                     if (payment != null) {
                         float totalWidth = 530f;
-                        float keyWidth = totalWidth * 0.20f;
-                        float valueWidth = totalWidth * 0.80f;
+                        float keyWidth = totalWidth * 0.30f;
+                        float valueWidth = totalWidth * 0.70f;
 
                         List<String[]> headerRows = new ArrayList<>();
                         headerRows.add(new String[]{label("Zahlungs-ID", "id", 0), asText(payment, "id")});
                         headerRows.add(new String[]{label("Affiliate-ID", "affiliate_id", 0), asText(payment, "affiliate_id")});
-                        headerRows.add(new String[]{label("Betrag", "amount", 0), formatAmountEuro(asText(payment, "amount"))});
+                        headerRows.add(new String[]{label("Provision", "amount", 0), formatAmountEuro(asText(payment, "amount"))});
                         headerRows.add(new String[]{label("Zahlungsart", "payment_method", 0), asText(payment, "payment_method")});
                         headerRows.add(new String[]{label("Affiliate-Nachricht", "affiliate_message", 0), asText(payment, "affiliate_message")});
                         headerRows.add(new String[]{label("Admin-Notiz", "admin_note", 0), asText(payment, "admin_note")});
@@ -556,8 +556,8 @@ public class WebUiServer {
                             y -= 20;
 
                             float totalWidth = 560f;
-                            float keyWidth = totalWidth * 0.20f;
-                            float valueWidth = totalWidth * 0.80f;
+                            float keyWidth = totalWidth * 0.30f;
+                            float valueWidth = totalWidth * 0.70f;
                             float usedHeader = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, "Feld", "Wert");
                             y -= usedHeader;
 
@@ -686,7 +686,7 @@ public class WebUiServer {
             return switch (originalName) {
                 case "id" -> "Zahlungs-ID";
                 case "affiliate_id" -> "Affiliate-ID";
-                case "amount" -> "Betrag";
+                case "amount" -> "Provision";
                 case "payment_method" -> "Zahlungsart";
                 case "affiliate_message" -> "Affiliate-Nachricht";
                 case "admin_note" -> "Admin-Notiz";
