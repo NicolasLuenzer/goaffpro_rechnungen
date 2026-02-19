@@ -157,6 +157,7 @@
               <button id="togglePollingBtn">Polling starten</button>
               <label for="lastImportedSelect">since_id:</label>
               <select id="lastImportedSelect"></select>
+              <button id="addLatestCommissionBtn" class="secondary" type="button">Neusten Zahllauf hinzufügen</button>
               <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
               <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
             </div>
@@ -423,6 +424,19 @@
       };
       fill('lastImportedSelect');
       fill('analyticsSinceSelect');
+    }
+
+    async function addLatestCommission() {
+      const status = document.getElementById('pollStatus');
+      if (!status) return;
+      try {
+        status.textContent = 'Suche neuesten Zahllauf...';
+        const data = await apiPost('/api/commissions/add-latest', {});
+        updateCommissionSelect(data.lastImportedComissionHistory, '', data.commissionHistoryLabels);
+        status.textContent = `${data.message || 'Neuster Zahllauf verarbeitet.'} ID: ${data.latestId || 'n/a'}`;
+      } catch (error) {
+        status.textContent = `Fehler beim Hinzufügen des neuesten Zahllaufs: ${error.message}`;
+      }
     }
 
     function setPollingButtonState(isRunning) {
@@ -826,11 +840,13 @@
         const saveBtn = document.getElementById('saveSettingsBtn');
         const pickBtn = document.getElementById('pickFolderBtn');
         const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
+        const addLatestCommissionBtn = document.getElementById('addLatestCommissionBtn');
         const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
         if (pickBtn) pickBtn.addEventListener('click', pickFolder);
         if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
+        if (addLatestCommissionBtn) addLatestCommissionBtn.addEventListener('click', addLatestCommission);
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
 
         wireFolderPickerFallback();

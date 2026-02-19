@@ -59,6 +59,7 @@ public class WebUiServer {
     private static final Path CONFIG_PATH = Paths.get("src/main/java/config.properties");
     private static final Path UI_PATH = Paths.get("src/main/resources/ui/dashboard.html");
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
+    private static final String COMMISSION_HISTORY_DATES_KEY = "lastImportedComissionHistoryDates";
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
     private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
@@ -76,6 +77,7 @@ public class WebUiServer {
         server.createContext("/api/version", new VersionHandler());
         server.createContext("/api/version/history", new VersionHistoryHandler());
         server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
+        server.createContext("/api/commissions/add-latest", new AddLatestCommissionHandler());
         server.setExecutor(null);
         server.start();
 
@@ -196,7 +198,7 @@ public class WebUiServer {
                     emptyResult.put("message", "Keine neuen Zahlungen gefunden.");
                     emptyResult.put("lastImportedComission", activeLastImportedComission);
                     emptyResult.put("lastImportedComissionHistory", getCommissionHistory(config));
-                    emptyResult.put("commissionHistoryLabels", buildCommissionHistoryLabels(getCommissionHistory(config)));
+                    emptyResult.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(emptyResult));
                     return;
                 }
@@ -246,7 +248,7 @@ public class WebUiServer {
                 result.put("lastImportedComission", activeLastImportedComission);
                 result.put("highestDiscoveredComission", highestId);
                 result.put("lastImportedComissionHistory", getCommissionHistory(config));
-                result.put("commissionHistoryLabels", buildCommissionHistoryLabels(getCommissionHistory(config)));
+                result.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(result));
             } catch (Exception e) {
                 Map<String, String> err = new HashMap<>();
@@ -298,7 +300,7 @@ public class WebUiServer {
                 payload.put("sendEmailsEnabled", sendEmailsEnabled);
                 payload.put("emailRecipientMode", emailRecipientMode);
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
-                payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(getCommissionHistory(config)));
+                payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 return;
             }
@@ -359,7 +361,7 @@ public class WebUiServer {
                     payload.put("sendEmailsEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true")));
                     payload.put("emailRecipientMode", Objects.toString(config.getProperty("emailRecipientMode"), "contact"));
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
-                payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(getCommissionHistory(config)));
+                payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 } catch (Exception e) {
                     sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -368,6 +370,68 @@ public class WebUiServer {
             }
 
             sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+        }
+    }
+
+    private static class AddLatestCommissionHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
+
+                String latestUrl = "https://api.goaffpro.com/v1/admin/payments?created_at_min=2025-12-18T07%3A48%3A36.000Z&fields=id,created_at";
+                JsonNode root = requestJson(latestUrl, apiKey);
+                JsonNode payments = root.get("payments");
+                if (payments == null || !payments.isArray() || payments.size() == 0) {
+                    sendResponse(exchange, 404, "application/json", "{\"error\":\"Keine Zahlläufe gefunden\"}");
+                    return;
+                }
+
+                String maxId = "";
+                String maxCreatedAt = "";
+                for (JsonNode payment : payments) {
+                    String id = asText(payment, "id").trim();
+                    if (id.isBlank()) continue;
+                    if (maxId.isBlank() || isGreaterNumeric(id, maxId)) {
+                        maxId = id;
+                        maxCreatedAt = asText(payment, "created_at");
+                    }
+                }
+                if (maxId.isBlank()) {
+                    sendResponse(exchange, 404, "application/json", "{\"error\":\"Keine gültige Payment-ID gefunden\"}");
+                    return;
+                }
+
+                List<String> before = getCommissionHistory(config);
+                boolean alreadyPresent = before.contains(maxId);
+                ensureCommissionInHistory(config, maxId);
+                if (!maxCreatedAt.isBlank()) {
+                    setCommissionDate(config, maxId, toGermanDate(maxCreatedAt));
+                }
+                persistSettings(config);
+
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", alreadyPresent ? "Neuester Zahllauf war bereits vorhanden." : "Neuester Zahllauf wurde hinzugefügt.");
+                payload.put("latestId", maxId);
+                payload.put("latestCreatedAt", maxCreatedAt);
+                payload.put("lastImportedComissionHistory", getCommissionHistory(config));
+                payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
         }
     }
 
@@ -1857,6 +1921,7 @@ public class WebUiServer {
         ui.setProperty("sendEmailsEnabled", Objects.toString(source.getProperty("sendEmailsEnabled"), "true"));
         ui.setProperty("emailRecipientMode", Objects.toString(source.getProperty("emailRecipientMode"), "contact"));
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
+        ui.setProperty(COMMISSION_HISTORY_DATES_KEY, Objects.toString(source.getProperty(COMMISSION_HISTORY_DATES_KEY), ""));
 
         try (OutputStream os = Files.newOutputStream(uiSettingsFile(directory))) {
             ui.store(os, "GoAffPro UI settings");
@@ -1879,6 +1944,11 @@ public class WebUiServer {
         String uiHistory = Objects.toString(uiSettings.getProperty(COMMISSION_HISTORY_KEY), "").trim();
         if (!uiHistory.isEmpty()) {
             config.setProperty(COMMISSION_HISTORY_KEY, uiHistory);
+        }
+
+        String uiDates = Objects.toString(uiSettings.getProperty(COMMISSION_HISTORY_DATES_KEY), "").trim();
+        if (!uiDates.isEmpty()) {
+            config.setProperty(COMMISSION_HISTORY_DATES_KEY, uiDates);
         }
 
         String uiApiKey = Objects.toString(uiSettings.getProperty("goaffproAPIKey"), "").trim();
@@ -1949,9 +2019,8 @@ public class WebUiServer {
         return new ArrayList<>(unique);
     }
 
-    private static Map<String, String> buildCommissionHistoryLabels(List<String> history) {
-        Map<String, String> labels = new LinkedHashMap<>();
-        Map<String, String> knownDates = Map.of(
+    private static Map<String, String> getKnownCommissionDates() {
+        return Map.of(
                 "2103705", "26.03.2025",
                 "2167905", "28.04.2025",
                 "2190357", "06.05.2025",
@@ -1961,8 +2030,38 @@ public class WebUiServer {
                 "2497986", "29.08.2025",
                 "2565325", "30.09.2025"
         );
+    }
+
+    private static Map<String, String> getCommissionDatesFromConfig(Properties properties) {
+        Map<String, String> dates = new LinkedHashMap<>(getKnownCommissionDates());
+        String raw = Objects.toString(properties.getProperty(COMMISSION_HISTORY_DATES_KEY), "");
+        if (!raw.isBlank()) {
+            for (String part : raw.split(";")) {
+                String entry = part.trim();
+                if (entry.isEmpty() || !entry.contains("=")) continue;
+                int idx = entry.indexOf('=');
+                String id = entry.substring(0, idx).trim();
+                String date = entry.substring(idx + 1).trim();
+                if (!id.isEmpty() && !date.isEmpty()) dates.put(id, date);
+            }
+        }
+        return dates;
+    }
+
+    private static void setCommissionDate(Properties properties, String commission, String germanDate) {
+        if (commission == null || commission.isBlank() || germanDate == null || germanDate.isBlank()) return;
+        Map<String, String> dates = getCommissionDatesFromConfig(properties);
+        dates.put(commission, germanDate);
+        String raw = dates.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining(";"));
+        properties.setProperty(COMMISSION_HISTORY_DATES_KEY, raw);
+    }
+
+    private static Map<String, String> buildCommissionHistoryLabels(Properties properties) {
+        List<String> history = getCommissionHistory(properties);
+        Map<String, String> labels = new LinkedHashMap<>();
+        Map<String, String> dates = getCommissionDatesFromConfig(properties);
         for (String commission : history) {
-            String date = knownDates.get(commission);
+            String date = dates.get(commission);
             labels.put(commission, date == null ? commission : (commission + " (" + date + ")"));
         }
         return labels;
