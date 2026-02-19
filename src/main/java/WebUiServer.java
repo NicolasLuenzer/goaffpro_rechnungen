@@ -279,6 +279,7 @@ public class WebUiServer {
                 boolean smtpTls = Boolean.parseBoolean(Objects.toString(config.getProperty("smtpTls"), "false"));
                 boolean hasSmtpPassword = !Objects.toString(config.getProperty("smtpPassword"), "").trim().isBlank();
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
+                String emailRecipientMode = Objects.toString(config.getProperty("emailRecipientMode"), "contact").trim();
                 ensureCommissionInHistory(config, activeCommission);
                 persistSettings(config);
 
@@ -294,6 +295,7 @@ public class WebUiServer {
                 payload.put("smtpTls", smtpTls);
                 payload.put("hasSmtpPassword", hasSmtpPassword);
                 payload.put("sendEmailsEnabled", sendEmailsEnabled);
+                payload.put("emailRecipientMode", emailRecipientMode);
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(getCommissionHistory(config)));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
@@ -313,6 +315,8 @@ public class WebUiServer {
                     String smtpPassword = asText(body, "smtpPassword").trim();
                     boolean smtpTls = body.has("smtpTls") && body.get("smtpTls").asBoolean(false);
                     boolean sendEmailsEnabled = !body.has("sendEmailsEnabled") || body.get("sendEmailsEnabled").asBoolean(true);
+                    String emailRecipientMode = asText(body, "emailRecipientMode").trim();
+                    if (!"advisor".equals(emailRecipientMode)) emailRecipientMode = "contact";
 
                     Properties config = loadConfig();
                     Path chosenDir = newPath.isEmpty() ? resolveSettingsDirectory(config) : Paths.get(newPath).toAbsolutePath();
@@ -335,6 +339,7 @@ public class WebUiServer {
                         config.setProperty("smtpPassword", smtpPassword);
                     }
                     config.setProperty("sendEmailsEnabled", String.valueOf(sendEmailsEnabled));
+                    config.setProperty("emailRecipientMode", emailRecipientMode);
 
                     persistSettings(config);
 
@@ -351,6 +356,7 @@ public class WebUiServer {
                     payload.put("smtpTls", Boolean.parseBoolean(Objects.toString(config.getProperty("smtpTls"), "false")));
                     payload.put("hasSmtpPassword", !Objects.toString(config.getProperty("smtpPassword"), "").trim().isBlank());
                     payload.put("sendEmailsEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true")));
+                    payload.put("emailRecipientMode", Objects.toString(config.getProperty("emailRecipientMode"), "contact"));
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(getCommissionHistory(config)));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
@@ -825,14 +831,20 @@ public class WebUiServer {
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
-                if (sendEmailsEnabled && contactEmail.isBlank()) {
-                    sendResponse(exchange, 400, "application/json", "{\"error\":\"Kontakt-E-Mail ist nicht gesetzt. Bitte in den Einstellungen hinterlegen.\"}");
+                String emailRecipientMode = Objects.toString(config.getProperty("emailRecipientMode"), "contact").trim();
+                String advisorEmail = affiliate != null ? asText(affiliate, "email").trim() : "";
+                String targetEmail = "advisor".equals(emailRecipientMode) ? advisorEmail : contactEmail;
+                if (sendEmailsEnabled && targetEmail.isBlank()) {
+                    String errorText = "advisor".equals(emailRecipientMode)
+                            ? "Beraterinnen-E-Mail ist leer. Bitte Affiliate-E-Mail prüfen oder Versandziel umstellen."
+                            : "Kontakt-E-Mail ist nicht gesetzt. Bitte in den Einstellungen hinterlegen.";
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"" + escapeJson(errorText) + "\"}");
                     return;
                 }
                 if (sendEmailsEnabled) {
                     String periodLabel = buildPaymentPeriodLabel(payment);
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(contactEmail, pdfPath, jsonPath, affiliateNameForMail, periodLabel, payment, affiliate, resolveSmtpConfig(config));
+                    sendInvoiceMailWithAttachment(targetEmail, pdfPath, jsonPath, affiliateNameForMail, periodLabel, payment, affiliate, resolveSmtpConfig(config));
                 }
 
                 boolean opened = false;
@@ -852,7 +864,7 @@ public class WebUiServer {
                 persistSettings(config);
 
                 Map<String, Object> payload = new HashMap<>();
-                payload.put("message", sendEmailsEnabled ? "Rechnungsdetails-PDF erstellt und per E-Mail versendet." : "Rechnungsdetails-PDF erstellt (E-Mail-Versand deaktiviert).");
+                payload.put("message", sendEmailsEnabled ? ("advisor".equals(emailRecipientMode) ? "Rechnungsdetails-PDF erstellt und an Beraterinnen-E-Mail versendet." : "Rechnungsdetails-PDF erstellt und an Kontakt-E-Mail versendet.") : "Rechnungsdetails-PDF erstellt (E-Mail-Versand deaktiviert).");
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
@@ -1830,6 +1842,7 @@ public class WebUiServer {
         ui.setProperty("smtpPassword", Objects.toString(source.getProperty("smtpPassword"), ""));
         ui.setProperty("smtpTls", Objects.toString(source.getProperty("smtpTls"), "false"));
         ui.setProperty("sendEmailsEnabled", Objects.toString(source.getProperty("sendEmailsEnabled"), "true"));
+        ui.setProperty("emailRecipientMode", Objects.toString(source.getProperty("emailRecipientMode"), "contact"));
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
 
         try (OutputStream os = Files.newOutputStream(uiSettingsFile(directory))) {
@@ -1874,6 +1887,9 @@ public class WebUiServer {
         }
         config.setProperty("smtpTls", Objects.toString(uiSettings.getProperty("smtpTls"), Objects.toString(config.getProperty("smtpTls"), "false")).trim());
         config.setProperty("sendEmailsEnabled", Objects.toString(uiSettings.getProperty("sendEmailsEnabled"), Objects.toString(config.getProperty("sendEmailsEnabled"), "true")).trim());
+        String uiEmailRecipientMode = Objects.toString(uiSettings.getProperty("emailRecipientMode"), Objects.toString(config.getProperty("emailRecipientMode"), "contact")).trim();
+        if (!"advisor".equals(uiEmailRecipientMode)) uiEmailRecipientMode = "contact";
+        config.setProperty("emailRecipientMode", uiEmailRecipientMode);
 
         ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
     }
@@ -1884,6 +1900,10 @@ public class WebUiServer {
         }
         if (Objects.toString(config.getProperty("sendEmailsEnabled"), "").isBlank()) {
             config.setProperty("sendEmailsEnabled", "true");
+        }
+        String emailRecipientMode = Objects.toString(config.getProperty("emailRecipientMode"), "contact").trim();
+        if (!"advisor".equals(emailRecipientMode)) {
+            config.setProperty("emailRecipientMode", "contact");
         }
         if (Objects.toString(config.getProperty("goaffproAPIKey"), "").isBlank()) {
             config.setProperty("goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY);

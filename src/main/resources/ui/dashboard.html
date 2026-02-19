@@ -213,6 +213,8 @@
                 <input id="smtpPassword" type="password" placeholder="(unverändert lassen zum Beibehalten)" />
                 <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
                 <label><input id="sendEmailsEnabled" type="checkbox" checked /> E-Mails versenden</label>
+                <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> an Kontakt-E-Mail</label>
+                <label><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
                 <button id="saveSettingsBtn" class="secondary">Speichern</button>
               </div>
               <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
@@ -431,10 +433,12 @@
       const smtpPasswordInput = document.getElementById('smtpPassword');
       const smtpTlsInput = document.getElementById('smtpTls');
       const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
+      const emailRecipientContactInput = document.getElementById('emailRecipientContact');
+      const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
       if (!input) return;
       try {
         const data = await apiGet('/api/settings');
-        input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
+        input.value = data.pdfExportPath || 'C:\Users\nluenzer\Downloads\goaffpro';
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || '';
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || '';
@@ -443,6 +447,9 @@
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
+        const mode = data.emailRecipientMode || 'contact';
+        if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
+        if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
       } catch (error) {
         document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
@@ -460,6 +467,8 @@
       const smtpPasswordInput = document.getElementById('smtpPassword');
       const smtpTlsInput = document.getElementById('smtpTls');
       const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
+      const emailRecipientContactInput = document.getElementById('emailRecipientContact');
+      const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
       const status = document.getElementById('pollStatus');
       if (!input || !status || !select) return;
       try {
@@ -473,7 +482,8 @@
           smtpUsername: smtpUsernameInput ? smtpUsernameInput.value : '',
           smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
           smtpTls: smtpTlsInput ? smtpTlsInput.checked : false,
-          sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true
+          sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true,
+          emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact'
         });
         input.value = data.pdfExportPath || input.value;
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
@@ -484,6 +494,9 @@
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
+        const mode = data.emailRecipientMode || 'contact';
+        if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
+        if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
       } catch (error) {
@@ -491,7 +504,15 @@
       }
     }
 
+    function getEmailRecipientMode() {
+      const advisor = document.getElementById('emailRecipientAdvisor');
+      return advisor && advisor.checked ? 'advisor' : 'contact';
+    }
 
+    function shouldSendEmails() {
+      const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
+      return !sendEmailsEnabledInput || sendEmailsEnabledInput.checked;
+    }
 
     async function exportSelectedInvoiceDetailsPdfs() {
       const status = document.getElementById('pollStatus');
@@ -503,6 +524,14 @@
       if (paymentIds.length === 0) {
         status.textContent = 'Bitte selektiere mindestens eine Zeile mit gültiger Payment-ID.';
         return;
+      }
+
+      if (shouldSendEmails() && getEmailRecipientMode() === 'advisor') {
+        const confirmed = window.confirm('Die E-Mails werden an die jeweiligen Beraterinnen gesendet. Möchtest du fortfahren?');
+        if (!confirmed) {
+          status.textContent = 'Export abgebrochen.';
+          return;
+        }
       }
 
       const createdFiles = [];
@@ -547,6 +576,13 @@
       const status = document.getElementById('pollStatus');
       const input = document.getElementById('pdfExportPath');
       try {
+        if (shouldSendEmails() && getEmailRecipientMode() === 'advisor') {
+          const confirmed = window.confirm('Die E-Mail wird an die Beraterinnen-Adresse gesendet. Möchtest du fortfahren?');
+          if (!confirmed) {
+            status.textContent = 'Aktion abgebrochen.';
+            return;
+          }
+        }
         const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
           paymentId,
           pdfExportPath: input ? input.value : ''
