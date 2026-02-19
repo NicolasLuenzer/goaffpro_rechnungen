@@ -498,18 +498,22 @@ public class WebUiServer {
                     y -= 20;
 
                     if (payment != null) {
+                        float totalWidth = 530f;
+                        float keyWidth = totalWidth * 0.20f;
+                        float valueWidth = totalWidth * 0.80f;
+
                         List<String[]> headerRows = new ArrayList<>();
-                        headerRows.add(new String[]{"Payment-ID", asText(payment, "id")});
-                        headerRows.add(new String[]{"Affiliate-ID", asText(payment, "affiliate_id")});
-                        headerRows.add(new String[]{"Betrag", asText(payment, "amount") + " " + asText(payment, "currency")});
-                        headerRows.add(new String[]{"Payment Method", asText(payment, "payment_method")});
-                        headerRows.add(new String[]{"Affiliate Message", asText(payment, "affiliate_message")});
-                        headerRows.add(new String[]{"Admin Note", asText(payment, "admin_note")});
-                        headerRows.add(new String[]{"Created At", asText(payment, "created_at")});
+                        headerRows.add(new String[]{label("Zahlungs-ID", "id", 0), asText(payment, "id")});
+                        headerRows.add(new String[]{label("Affiliate-ID", "affiliate_id", 0), asText(payment, "affiliate_id")});
+                        headerRows.add(new String[]{label("Betrag", "amount", 0), formatAmountEuro(asText(payment, "amount"))});
+                        headerRows.add(new String[]{label("Zahlungsart", "payment_method", 0), asText(payment, "payment_method")});
+                        headerRows.add(new String[]{label("Affiliate-Nachricht", "affiliate_message", 0), asText(payment, "affiliate_message")});
+                        headerRows.add(new String[]{label("Admin-Notiz", "admin_note", 0), asText(payment, "admin_note")});
+                        headerRows.add(new String[]{label("Erstellt am", "created_at", 0), asText(payment, "created_at")});
 
                         for (String[] row : headerRows) {
-                            drawTableRow(cs, x, y, 18f, 180f, 350f, row[0], row[1]);
-                            y -= 18f;
+                            float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, row[0], row[1]);
+                            y -= used;
                         }
 
                         y -= 10;
@@ -525,9 +529,9 @@ public class WebUiServer {
                             var it = paymentDetails.fieldNames();
                             while (it.hasNext()) {
                                 String key = it.next();
-                                String value = asText(paymentDetails, key);
-                                drawTableRow(cs, x, y, 18f, 180f, 350f, key, value);
-                                y -= 18f;
+                                String value = "amount".equals(key) ? formatAmountEuro(asText(paymentDetails, key)) : asText(paymentDetails, key);
+                                float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Zahlungsdetail", key, 1), value);
+                                y -= used;
                                 if (y < 90f) break;
                             }
                         }
@@ -551,28 +555,31 @@ public class WebUiServer {
                             cs.endText();
                             y -= 20;
 
-                            drawTableRow(cs, x, y, 18f, 90f, 470f, "Spalte", "Wert");
-                            y -= 18f;
+                            float totalWidth = 560f;
+                            float keyWidth = totalWidth * 0.20f;
+                            float valueWidth = totalWidth * 0.80f;
+                            float usedHeader = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, "Feld", "Wert");
+                            y -= usedHeader;
 
                             while (idx < transactions.size() && y > 80f) {
                                 JsonNode tx = transactions.get(idx);
-                                drawTableRow(cs, x, y, 18f, 90f, 470f, "tx_id", asText(tx, "tx_id")); y -= 18f;
-                                drawTableRow(cs, x, y, 18f, 90f, 470f, "amount", asText(tx, "amount")); y -= 18f;
-                                drawTableRow(cs, x, y, 18f, 90f, 470f, "entity_type", asText(tx, "entity_type")); y -= 18f;
-                                drawTableRow(cs, x, y, 18f, 90f, 470f, "created_at", asText(tx, "created_at")); y -= 18f;
+                                float u1 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Transaktion", "tx_id", 1), asText(tx, "tx_id")); y -= u1;
+                                float u2 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Transaktion", "amount", 1), formatAmountEuro(asText(tx, "amount"))); y -= u2;
+                                float u3 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Transaktion", "entity_type", 1), asText(tx, "entity_type")); y -= u3;
+                                float u4 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Transaktion", "created_at", 1), asText(tx, "created_at")); y -= u4;
 
                                 JsonNode metadata = tx.get("metadata");
                                 if (metadata != null && metadata.isObject()) {
                                     var it = metadata.fieldNames();
                                     while (it.hasNext() && y > 80f) {
                                         String key = it.next();
-                                        drawTableRow(cs, x, y, 18f, 90f, 470f, "metadata." + key, asText(metadata, key));
-                                        y -= 18f;
+                                        float um = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Metadaten", key, 2), "amount".equals(key) || "affiliate_commission".equals(key) || "commission_on".equals(key) || "order_value".equals(key) ? formatAmountEuro(asText(metadata, key)) : asText(metadata, key));
+                                        y -= um;
                                     }
                                 }
 
-                                drawTableRow(cs, x, y, 12f, 560f, 0f, "", "");
-                                y -= 12f;
+                                float sep = drawTableRow(cs, x, y, 12f, totalWidth, 0f, "", "");
+                                y -= sep;
                                 idx++;
                             }
                         }
@@ -614,23 +621,79 @@ public class WebUiServer {
         rows.add(new String[]{prefix, node.asText()});
     }
 
-    private static void drawTableRow(PDPageContentStream cs, float x, float y, float rowHeight, float keyWidth, float valueWidth, String key, String value) throws IOException {
+    private static float drawTableRow(PDPageContentStream cs, float x, float y, float minRowHeight, float keyWidth, float valueWidth, String key, String value) throws IOException {
+            List<String> keyLines = wrapForPdf(key, Math.max(8, (int)(keyWidth / 4.8f)));
+            List<String> valueLines = valueWidth > 0 ? wrapForPdf(value, Math.max(8, (int)(valueWidth / 4.8f))) : List.of("");
+            int lines = Math.max(keyLines.size(), valueLines.size());
+            float rowHeight = Math.max(minRowHeight, lines * 10f + 8f);
+
             cs.setLineWidth(0.5f);
             cs.addRect(x, y - rowHeight, keyWidth, rowHeight);
-            cs.addRect(x + keyWidth, y - rowHeight, valueWidth, rowHeight);
+            if (valueWidth > 0f) {
+                cs.addRect(x + keyWidth, y - rowHeight, valueWidth, rowHeight);
+            }
             cs.stroke();
 
-            cs.beginText();
-            cs.setFont(PDType1Font.HELVETICA_BOLD, 9);
-            cs.newLineAtOffset(x + 4, y - 14);
-            cs.showText(shortenForPdf(key, 34));
-            cs.endText();
+            float textY = y - 12f;
+            for (int i = 0; i < lines; i++) {
+                String kl = i < keyLines.size() ? keyLines.get(i) : "";
+                String vl = i < valueLines.size() ? valueLines.get(i) : "";
 
-            cs.beginText();
-            cs.setFont(PDType1Font.HELVETICA, 9);
-            cs.newLineAtOffset(x + keyWidth + 4, y - 14);
-            cs.showText(shortenForPdf(value, 74));
-            cs.endText();
+                cs.beginText();
+                cs.setFont(PDType1Font.HELVETICA_BOLD, 9);
+                cs.newLineAtOffset(x + 4, textY - (i * 10f));
+                cs.showText(shortenForPdf(kl, 200));
+                cs.endText();
+
+                if (valueWidth > 0f) {
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA, 9);
+                    cs.newLineAtOffset(x + keyWidth + 4, textY - (i * 10f));
+                    cs.showText(shortenForPdf(vl, 400));
+                    cs.endText();
+                }
+            }
+            return rowHeight;
+        }
+
+    private static List<String> wrapForPdf(String text, int maxChars) {
+            String safe = text == null ? "" : text.replaceAll("[\r\n]+", " ");
+            List<String> lines = new ArrayList<>();
+            if (safe.isBlank()) {
+                lines.add("");
+                return lines;
+            }
+
+            StringBuilder current = new StringBuilder();
+            for (String word : safe.split("\s+")) {
+                if (current.length() == 0) {
+                    current.append(word);
+                } else if (current.length() + 1 + word.length() <= maxChars) {
+                    current.append(" ").append(word);
+                } else {
+                    lines.add(current.toString());
+                    current = new StringBuilder(word);
+                }
+            }
+            if (current.length() > 0) lines.add(current.toString());
+            return lines;
+        }
+
+    private static String label(String germanName, String originalName, int indentLevel) {
+            String indent = "  ".repeat(Math.max(0, indentLevel));
+            return indent + germanName + " (" + originalName + ")";
+        }
+
+    private static String formatAmountEuro(String raw) {
+            if (raw == null || raw.isBlank() || "null".equalsIgnoreCase(raw)) {
+                return raw == null ? "" : raw;
+            }
+            try {
+                double v = Double.parseDouble(raw.replace(",", "."));
+                return String.format(java.util.Locale.GERMANY, "%.2f €", v);
+            } catch (Exception e) {
+                return raw;
+            }
         }
 
     private static String shortenForPdf(String text, int maxLen) {
@@ -662,7 +725,7 @@ public class WebUiServer {
                 return;
             }
             if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-                sendResponse(exchange, 405, "application/json", "{"error":"Method not allowed"}");
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
                 return;
             }
 
