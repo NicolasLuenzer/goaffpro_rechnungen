@@ -247,6 +247,10 @@
         <div class="toolbar">
           <label for="analyticsSinceSelect">since_id:</label>
           <select id="analyticsSinceSelect"></select>
+          <label for="analyticsFromDate">von:</label>
+          <input id="analyticsFromDate" type="date" style="min-width:170px" />
+          <label for="analyticsToDate">bis:</label>
+          <input id="analyticsToDate" type="date" style="min-width:170px" />
           <button id="fetchAnalyticsBtn" class="secondary" type="button">Daten ziehen</button>
         </div>
         <p id="analyticsStatus" class="status">Noch keine Auswertung geladen.</p>
@@ -408,7 +412,12 @@
         if (!select) return;
         const list = Array.isArray(history) ? history : [];
         const current = activeValue || '';
-        const unique = [...new Set([...list, current].filter(Boolean))];
+        const unique = [...new Set([...list, current].filter(Boolean))]
+          .sort((a, b) => {
+            const an = Number(a), bn = Number(b);
+            if (!Number.isNaN(an) && !Number.isNaN(bn)) return bn - an;
+            return b.localeCompare(a, 'de', { sensitivity: 'base' });
+          });
         select.innerHTML = unique.map(value => `<option value="${value}">${(historyLabels && historyLabels[value]) || value}</option>`).join('');
         if (current) select.value = current;
       };
@@ -701,10 +710,16 @@
     async function fetchAnalyticsData() {
       const status = document.getElementById('analyticsStatus');
       const select = document.getElementById('analyticsSinceSelect');
+      const fromDateInput = document.getElementById('analyticsFromDate');
+      const toDateInput = document.getElementById('analyticsToDate');
       if (!status || !select) return;
       try {
         status.textContent = 'Lade Auswertungsdaten...';
-        const data = await apiPost('/api/analytics/fetch', { sinceId: select.value || '0' });
+        const data = await apiPost('/api/analytics/fetch', {
+          sinceId: select.value || '0',
+          fromDate: fromDateInput ? fromDateInput.value : '',
+          toDate: toDateInput ? toDateInput.value : ''
+        });
         renderAnalytics(data);
         const count = (data.summary && data.summary.paymentsCount) || 0;
         status.textContent = `Auswertung geladen (${count} Zahlläufe).`;

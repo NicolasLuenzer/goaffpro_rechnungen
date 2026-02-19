@@ -34,6 +34,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
@@ -386,6 +387,8 @@ public class WebUiServer {
                 JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 String sinceId = asText(body, "sinceId").trim();
                 if (sinceId.isBlank()) sinceId = "0";
+                LocalDate fromDate = parseIsoDate(asText(body, "fromDate"));
+                LocalDate toDate = parseIsoDate(asText(body, "toDate"));
 
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
@@ -400,8 +403,17 @@ public class WebUiServer {
                     payments = OBJECT_MAPPER.createArrayNode();
                 }
 
-                List<String> affiliateIds = new ArrayList<>();
+                List<JsonNode> filteredPayments = new ArrayList<>();
                 for (JsonNode payment : payments) {
+                    LocalDate paymentDate = parseIsoDateTimeToLocalDate(asText(payment, "created_at"));
+                    if (paymentDate == null) continue;
+                    if (fromDate != null && paymentDate.isBefore(fromDate)) continue;
+                    if (toDate != null && paymentDate.isAfter(toDate)) continue;
+                    filteredPayments.add(payment);
+                }
+
+                List<String> affiliateIds = new ArrayList<>();
+                for (JsonNode payment : filteredPayments) {
                     String affiliateId = asText(payment, "affiliate_id");
                     if (!affiliateId.isBlank() && !affiliateIds.contains(affiliateId)) affiliateIds.add(affiliateId);
                 }
@@ -428,7 +440,7 @@ public class WebUiServer {
                 List<Map<String, Object>> rewardStatusRows = new ArrayList<>();
                 double pendingDueTotal = 0.0;
                 double rewardAmountTotal = 0.0;
-                for (JsonNode payment : payments) {
+                for (JsonNode payment : filteredPayments) {
                     String paymentId = asText(payment, "id");
                     String affiliateId = asText(payment, "affiliate_id");
                     JsonNode affiliate = affiliatesById.get(affiliateId);
@@ -518,16 +530,15 @@ public class WebUiServer {
 
                 Map<String, Object> summary = new LinkedHashMap<>();
                 summary.put("sinceId", sinceId);
-                summary.put("paymentsCount", payments.size());
+                summary.put("fromDate", fromDate != null ? fromDate.toString() : "");
+                summary.put("toDate", toDate != null ? toDate.toString() : "");
+                summary.put("paymentsCount", filteredPayments.size());
                 summary.put("totalAmount", totalAmount);
                 summary.put("totalTransactions", totalTransactions);
                 summary.put("advisorCount", advisorRows.size());
                 summary.put("selfCommission", totalSelfCommission);
                 summary.put("teamCommission", totalTeamCommission);
-                summary.put("pendingDueTotal", pendingDueTotal);
-                summary.put("trafficSources", trafficSourceRows.size());
-                summary.put("rewardAmountTotal", rewardAmountTotal);
-
+                
                 List<Map<String, Object>> countryRows = new ArrayList<>();
                 for (Map.Entry<String, Integer> entry : countryAgg.entrySet()) {
                     Map<String, Object> c = new LinkedHashMap<>();
@@ -1968,7 +1979,25 @@ public class WebUiServer {
         properties.setProperty(COMMISSION_HISTORY_KEY, String.join(",", history));
     }
 
-    private static String toGermanDate(String input) {
+        private static LocalDate parseIsoDate(String input) {
+        if (input == null || input.isBlank()) return null;
+        try {
+            return LocalDate.parse(input.trim());
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static LocalDate parseIsoDateTimeToLocalDate(String input) {
+        if (input == null || input.isBlank()) return null;
+        try {
+            return OffsetDateTime.parse(input).atZoneSameInstant(ZoneId.of("Europe/Berlin")).toLocalDate();
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+private static String toGermanDate(String input) {
         if (input == null || input.isBlank()) {
             return "";
         }
