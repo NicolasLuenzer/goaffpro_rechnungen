@@ -460,6 +460,7 @@ public class WebUiServer {
 
                 Map<String, Object> payload = new HashMap<>();
                 payload.put("message", "Rechnungsdetails-PDF erstellt.");
+                payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
                 payload.put("opened", opened);
                 payload.put("openMessage", openMessage);

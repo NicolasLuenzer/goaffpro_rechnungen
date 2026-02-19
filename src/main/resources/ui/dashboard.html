@@ -31,6 +31,7 @@
     .version-popup-header { font-weight: bold; margin-bottom: 6px; }
     .version-popup ul { margin: 0; padding-left: 18px; }
     .version-popup li { margin-bottom: 8px; font-size: 13px; }
+    .request-preview { margin: 10px 0; padding: 10px; border: 1px solid #cbd5e1; border-radius: 8px; background: #f8fafc; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: #0f172a; word-break: break-all; }
   </style>
 </head>
 <body>
@@ -159,6 +160,7 @@
 
           <p id="pollStatus" class="status">Noch nicht gestartet.</p>
           <div id="exportedFiles" class="files"></div>
+          <div id="requestPreview" class="request-preview">Noch kein Rechnungsdetails-Request ausgeführt.</div>
 
           <table>
             <thead>
@@ -340,6 +342,11 @@
           pdfExportPath: input ? input.value : ''
         });
         if (input && data.pdfExportPath) input.value = data.pdfExportPath;
+        const requestPreview = document.getElementById('requestPreview');
+        if (requestPreview) {
+          const url = data.requestUrl || '(kein requestUrl erhalten)';
+          requestPreview.innerHTML = `<strong>Verwendeter Request für Rechnungsdetails:</strong><br>${url}`;
+        }
         status.textContent = data.opened
           ? `Rechnungsdetails-PDF erstellt und geöffnet: ${data.file}`
           : `Rechnungsdetails-PDF erstellt: ${data.file}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
