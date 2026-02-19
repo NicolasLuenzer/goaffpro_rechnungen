@@ -19,6 +19,10 @@
     .status { margin: 12px 0; color: #374151; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
     .settings { margin: 12px 0; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; }
+    .settings-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(520px,1fr)); gap:12px; }
+    .settings-group { border:1px solid #dbe3ef; border-radius:10px; background:#fff; padding:12px; }
+    .settings-group h3 { margin:0 0 6px; font-size:15px; color:#1e3a8a; }
+    .settings-hint { color:#475569; font-size:12px; margin-top:6px; }
     input[type="text"], input[type="email"], input[type="number"], select { min-width: 420px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
     button { background: #10b981; color: white; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
     button.secondary { background: #3b82f6; }
@@ -189,42 +193,58 @@
           <div id="main-settings" class="section-panel">
             <div class="settings">
               <strong>Einstellungen</strong>
-              <div class="toolbar">
-                <label for="pdfExportPath">PDF Zielverzeichnis:</label>
-                <input id="pdfExportPath" type="text" placeholder="C:\\Users\\nluenzer\\Downloads\\goaffpro" />
-                <button id="pickFolderBtn" type="button" class="secondary">Ordner auswählen…</button>
-                <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
+              <div class="settings-grid">
+                <div class="settings-group">
+                  <h3>GoAffPro & Zahlläufe</h3>
+                  <div class="toolbar">
+                    <label for="goaffproAPIKey">GoAffPro API-Key:</label>
+                    <input id="goaffproAPIKey" type="text" placeholder="API-Key" />
+                  </div>
+                  <div class="toolbar"><label>Editierbare Zahlläufe (chronologisch):</label></div>
+                  <div id="commissionHistoryEditor" class="pill-list"></div>
+                </div>
+
+                <div class="settings-group">
+                  <h3>Export</h3>
+                  <div class="toolbar">
+                    <label for="pdfExportPath">PDF Zielverzeichnis:</label>
+                    <input id="pdfExportPath" type="text" placeholder="C:\\Users\\nluenzer\\Downloads\\goaffpro" />
+                    <button id="pickFolderBtn" type="button" class="secondary">Ordner auswählen…</button>
+                    <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
+                  </div>
+                </div>
+
+                <div class="settings-group">
+                  <h3>E-Mail Versand</h3>
+                  <div class="toolbar">
+                    <label for="contactEmail">Kontakt-E-Mail:</label>
+                    <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="smtpHost">SMTP Host:</label>
+                    <input id="smtpHost" type="text" placeholder="smtp.example.com" />
+                    <label for="smtpPort">Port:</label>
+                    <input id="smtpPort" type="number" placeholder="587" style="max-width:120px" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="smtpUsername">SMTP Benutzer:</label>
+                    <input id="smtpUsername" type="text" placeholder="user@example.com" />
+                    <label for="smtpPassword">SMTP Passwort:</label>
+                    <input id="smtpPassword" type="password" placeholder="(unverändert lassen zum Beibehalten)" />
+                  </div>
+                  <div class="toolbar">
+                    <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
+                    <label><input id="sendEmailsEnabled" type="checkbox" checked /> E-Mails versenden</label>
+                    <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> an Kontakt-E-Mail</label>
+                    <label><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
+                  </div>
+                </div>
               </div>
-              <div class="toolbar">
-                <label for="goaffproAPIKey">GoAffPro API-Key:</label>
-                <input id="goaffproAPIKey" type="text" placeholder="API-Key" />
-              </div>
-              <div class="toolbar">
-                <label for="contactEmail">Kontakt-E-Mail:</label>
-                <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
-              </div>
-              <div class="toolbar">
-                <label for="smtpHost">SMTP Host:</label>
-                <input id="smtpHost" type="text" placeholder="smtp.example.com" />
-                <label for="smtpPort">Port:</label>
-                <input id="smtpPort" type="number" placeholder="587" style="max-width:120px" />
-              </div>
-              <div class="toolbar">
-                <label for="smtpUsername">SMTP Benutzer:</label>
-                <input id="smtpUsername" type="text" placeholder="user@example.com" />
-                <label for="smtpPassword">SMTP Passwort:</label>
-                <input id="smtpPassword" type="password" placeholder="(unverändert lassen zum Beibehalten)" />
-                <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
-                <label><input id="sendEmailsEnabled" type="checkbox" checked /> E-Mails versenden</label>
-                <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> an Kontakt-E-Mail</label>
-                <label><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
-                <button id="saveSettingsBtn" class="secondary">Speichern</button>
-              </div>
-              <div class="toolbar"><label>Editierbare Zahlläufe:</label></div>
-              <div id="commissionHistoryEditor" class="pill-list"></div>
-              <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
+              <div class="toolbar"><button id="saveSettingsBtn" class="secondary">Speichern</button></div>
+              <div class="settings-hint">Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</div>
             </div>
           </div>
+
         `;
       } else {
         panel.innerHTML = `<h2>${executable.displayName || executable.name}</h2><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
@@ -423,10 +443,20 @@
       }
     }
 
+    function sortCommissionsChronologically(values) {
+      const list = Array.isArray(values) ? values.filter(Boolean) : [];
+      const unique = [...new Set(list)];
+      return unique.sort((a, b) => {
+        const an = Number(a), bn = Number(b);
+        if (!Number.isNaN(an) && !Number.isNaN(bn)) return an - bn;
+        return a.localeCompare(b, "de", { sensitivity: "base" });
+      });
+    }
+
     function renderCommissionHistoryEditor(history, historyLabels) {
       const box = document.getElementById('commissionHistoryEditor');
       if (!box) return;
-      const list = Array.isArray(history) ? history : [];
+      const list = sortCommissionsChronologically(history);
       box.innerHTML = list.map(value => {
         const label = (historyLabels && historyLabels[value]) || value;
         return `<span class="pill">${label}<button type="button" data-remove-commission="${value}">x</button></span>`;
@@ -444,14 +474,9 @@
       const fill = (id) => {
         const select = document.getElementById(id);
         if (!select) return;
-        const list = Array.isArray(history) ? history : [];
+        const list = sortCommissionsChronologically(history);
         const current = activeValue || '';
-        const unique = [...new Set([...list, current].filter(Boolean))]
-          .sort((a, b) => {
-            const an = Number(a), bn = Number(b);
-            if (!Number.isNaN(an) && !Number.isNaN(bn)) return bn - an;
-            return b.localeCompare(a, 'de', { sensitivity: 'base' });
-          });
+        const unique = sortCommissionsChronologically([...list, current]);
         select.innerHTML = unique.map(value => `<option value="${value}">${(historyLabels && historyLabels[value]) || value}</option>`).join('');
         if (current) select.value = current;
       };

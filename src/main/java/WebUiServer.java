@@ -2093,7 +2093,22 @@ public class WebUiServer {
         if (!active.isEmpty()) {
             unique.add(active);
         }
-        return new ArrayList<>(unique);
+        return sortCommissionsChronologically(new ArrayList<>(unique));
+    }
+
+    private static List<String> sortCommissionsChronologically(List<String> values) {
+        List<String> sorted = values == null ? new ArrayList<>() : values.stream()
+                .filter(v -> v != null && !v.isBlank())
+                .distinct()
+                .collect(Collectors.toCollection(ArrayList::new));
+        sorted.sort((a, b) -> {
+            try {
+                return Long.compare(Long.parseLong(a), Long.parseLong(b));
+            } catch (Exception e) {
+                return a.compareToIgnoreCase(b);
+            }
+        });
+        return sorted;
     }
 
     private static Map<String, String> getKnownCommissionDates() {
