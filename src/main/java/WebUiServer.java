@@ -234,6 +234,7 @@ public class WebUiServer {
                     item.put("affiliateSteuernummer", affiliate != null ? asText(affiliate, "tax_identification_number") : "");
                     String iban = asText(payment.path("payment_details"), "account_number").trim();
                     item.put("hasIban", iban.isBlank() ? "Nein" : "Ja");
+                    item.put("hasValidIban", isValidIban(iban) ? "Ja" : "Nein");
                     item.put("amount", asText(payment, "amount"));
                     item.put("currency", asText(payment, "currency"));
                     responsePayments.add(item);
@@ -843,11 +844,25 @@ public class WebUiServer {
                 Path exportDir = Paths.get(exportDirValue).toAbsolutePath();
                 Files.createDirectories(exportDir);
 
+                String highestPaymentId = selectedRows.stream()
+                        .map(r -> safe(r.get("paymentId"), "0"))
+                        .max((a, b) -> isGreaterNumeric(a, b) ? 1 : (isGreaterNumeric(b, a) ? -1 : 0))
+                        .orElse("0");
+                String maxBelegdatum = selectedRows.stream()
+                        .map(r -> safe(r.get("belegdatum"), ""))
+                        .map(WebUiServer::parseGermanDate)
+                        .filter(Objects::nonNull)
+                        .max(LocalDate::compareTo)
+                        .map(d -> d.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")))
+                        .orElse("unbekanntes-datum");
+                Path runExportDir = exportDir.resolve("export_" + sanitizeFilename(maxBelegdatum + "_" + highestPaymentId));
+                Files.createDirectories(runExportDir);
+
                 List<String> exportedFiles = new ArrayList<>();
                 for (Map<String, String> row : selectedRows) {
                     String paymentId = safe(row.get("paymentId"), "unbekannt");
                     String filename = "payment_" + sanitizeFilename(paymentId) + "_" + FILE_TIMESTAMP.format(LocalDateTime.now()) + ".pdf";
-                    Path pdfPath = exportDir.resolve(filename);
+                    Path pdfPath = runExportDir.resolve(filename);
                     createPdfForPayment(pdfPath, row);
                     exportedFiles.add(pdfPath.toString());
                 }
@@ -960,10 +975,16 @@ public class WebUiServer {
                 Path exportDir = Paths.get(exportDirValue).toAbsolutePath();
                 Files.createDirectories(exportDir);
 
+                String belegdatum = toGermanDate(asText(payment, "created_at"));
+                LocalDate belegDate = parseGermanDate(belegdatum);
+                String belegFolder = belegDate != null ? belegDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : "unbekanntes-datum";
+                Path runExportDir = exportDir.resolve("export_" + sanitizeFilename(belegFolder + "_" + paymentId));
+                Files.createDirectories(runExportDir);
+
                 String timestamp = FILE_TIMESTAMP.format(LocalDateTime.now());
                 String baseFilename = "rechnungsdetails_" + sanitizeFilename(paymentId) + "_" + timestamp;
-                Path pdfPath = exportDir.resolve(baseFilename + ".pdf");
-                Path jsonPath = exportDir.resolve(baseFilename + ".json");
+                Path pdfPath = runExportDir.resolve(baseFilename + ".pdf");
+                Path jsonPath = runExportDir.resolve(baseFilename + ".json");
                 createInvoiceDetailsPdf(pdfPath, response, affiliate);
                 writeOriginalJson(jsonPath, response);
 
@@ -2245,6 +2266,35 @@ private static String toGermanDate(String input) {
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
         }
+    }
+
+
+    private static LocalDate parseGermanDate(String input) {
+        if (input == null || input.isBlank()) return null;
+        try {
+            return LocalDate.parse(input.trim(), DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static boolean isValidIban(String rawIban) {
+        if (rawIban == null) return false;
+        String iban = rawIban.replaceAll("\\s+", "").toUpperCase();
+        if (iban.length() < 15 || iban.length() > 34) return false;
+        if (!iban.matches("[A-Z]{2}[0-9A-Z]+")) return false;
+        String rearranged = iban.substring(4) + iban.substring(0, 4);
+        StringBuilder numeric = new StringBuilder();
+        for (char c : rearranged.toCharArray()) {
+            if (Character.isDigit(c)) numeric.append(c);
+            else if (c >= 'A' && c <= 'Z') numeric.append((int) (c - 'A' + 10));
+            else return false;
+        }
+        int mod = 0;
+        for (int i = 0; i < numeric.length(); i++) {
+            mod = (mod * 10 + (numeric.charAt(i) - '0')) % 97;
+        }
+        return mod == 1;
     }
 
     private static String sanitizeFilename(String value) {

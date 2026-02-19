@@ -38,6 +38,7 @@
     .pill button { padding:2px 8px; font-size:12px; background:#ef4444; }
     .warning-banner { margin: 10px 0; padding: 10px 12px; border: 1px solid #fecaca; background: #fee2e2; color: #991b1b; border-radius: 8px; font-weight: 600; }
     .recipient-advisor-label { color: #b91c1c; font-weight: 700; }
+    tr.row-warning td { background: #fef2f2; }
     .app-version { position: fixed; top: 12px; right: 16px; background: #111827; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; z-index: 1000; cursor: pointer; }
     .version-popup { position: fixed; top: 42px; right: 16px; width: 460px; max-height: 360px; overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); z-index: 1001; padding: 8px; }
     .version-popup-header { font-weight: bold; margin-bottom: 6px; }
@@ -72,6 +73,7 @@
     const API_BASE = "http://localhost:8080";
     const tableState = { rows: [], selected: new Set(), sortBy: 'paymentId', sortDirection: 'desc', filter: '' };
     let pollIntervalId = null;
+    let settingsSnapshot = null;
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -186,6 +188,7 @@
                   <th data-col="affiliateCountry">Affiliate-Land</th>
                   <th data-col="affiliateSteuernummer">Affiliate-Steuernummer</th>
                   <th data-col="hasIban">IBAN vorhanden</th>
+                  <th data-col="hasValidIban">IBAN korrekt</th>
                   <th data-col="amount">Betrag</th>
                   <th data-col="actions">Aktion</th>
                 </tr>
@@ -237,7 +240,6 @@
                     <input id="smtpPassword" type="password" placeholder="(unverändert lassen zum Beibehalten)" />
                   </div>
                   <div class="toolbar">
-                    <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
                     <label><input id="sendEmailsEnabled" type="checkbox" checked /> E-Mails versenden</label>
                     <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> an Kontakt-E-Mail</label>
                     <label class="recipient-advisor-label"><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
@@ -389,7 +391,12 @@
         const key = rowKey(row);
         const checked = tableState.selected.has(key) ? 'checked' : '';
         const ibanState = (row.hasIban || '').toLowerCase() === 'ja' ? '✅' : '❌';
-        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateEmail || ''}</td><td>${row.affiliateAddress || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td title="${row.hasIban || ''}">${ibanState}</td><td>${formatEuroAmount(row.amount)}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
+        const ibanValidState = (row.hasValidIban || '').toLowerCase() === 'ja' ? '✅' : '❌';
+        const missingName = !(row.affiliateName || '').trim();
+        const missingIban = (row.hasIban || '').toLowerCase() !== 'ja';
+        const invalidIban = (row.hasValidIban || '').toLowerCase() !== 'ja';
+        if (missingName || missingIban || invalidIban) tr.classList.add('row-warning');
+        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateEmail || ''}</td><td>${row.affiliateAddress || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td title="${row.hasIban || ''}">${ibanState}</td><td title="${row.hasValidIban || ''}">${ibanValidState}</td><td>${formatEuroAmount(row.amount)}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
         body.appendChild(tr);
       });
 
@@ -444,6 +451,7 @@
         const data = await apiPost('/api/commissions/remove', { commission });
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        settingsSnapshot = buildSettingsSnapshot();
         if (status) status.textContent = data.message || 'Zahllauf entfernt.';
       } catch (error) {
         if (status) status.textContent = `Fehler beim Entfernen: ${error.message}`;
@@ -541,8 +549,7 @@
       const smtpPortInput = document.getElementById('smtpPort');
       const smtpUsernameInput = document.getElementById('smtpUsername');
       const smtpPasswordInput = document.getElementById('smtpPassword');
-      const smtpTlsInput = document.getElementById('smtpTls');
-      const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
+            const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
       if (!input) return;
@@ -555,7 +562,6 @@
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || '587';
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || '';
         if (smtpPasswordInput) smtpPasswordInput.value = '';
-        if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         const mode = data.emailRecipientMode || 'contact';
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
@@ -563,6 +569,7 @@
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        settingsSnapshot = buildSettingsSnapshot();
       } catch (error) {
         document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
       }
@@ -577,13 +584,13 @@
       const smtpPortInput = document.getElementById('smtpPort');
       const smtpUsernameInput = document.getElementById('smtpUsername');
       const smtpPasswordInput = document.getElementById('smtpPassword');
-      const smtpTlsInput = document.getElementById('smtpTls');
-      const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
+            const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
       const status = document.getElementById('pollStatus');
       if (!input || !status || !select) return;
       try {
+        const beforeSnapshot = settingsSnapshot || buildSettingsSnapshot();
         const data = await apiPost('/api/settings', {
           pdfExportPath: input.value,
           lastImportedComission: select.value,
@@ -593,7 +600,6 @@
           smtpPort: smtpPortInput ? smtpPortInput.value : '587',
           smtpUsername: smtpUsernameInput ? smtpUsernameInput.value : '',
           smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
-          smtpTls: smtpTlsInput ? smtpTlsInput.checked : false,
           sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true,
           emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact'
         });
@@ -604,7 +610,6 @@
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || smtpPortInput.value || '587';
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || smtpUsernameInput.value;
         if (smtpPasswordInput) smtpPasswordInput.value = '';
-        if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         const mode = data.emailRecipientMode || 'contact';
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
@@ -612,7 +617,12 @@
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
-        status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
+        const afterSnapshot = buildSettingsSnapshot();
+        const changed = JSON.stringify(beforeSnapshot) !== JSON.stringify(afterSnapshot);
+        settingsSnapshot = afterSnapshot;
+        status.textContent = changed
+          ? `Einstellungen gespeichert. Änderungen wurden übernommen.`
+          : `Einstellungen gespeichert. Es wurden keine inhaltlichen Änderungen erkannt.`;
       } catch (error) {
         status.textContent = `Fehler beim Speichern der Einstellungen: ${error.message}`;
       }
@@ -626,6 +636,20 @@
     function shouldSendEmails() {
       const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       return !sendEmailsEnabledInput || sendEmailsEnabledInput.checked;
+    }
+
+    function buildSettingsSnapshot() {
+      return {
+        pdfExportPath: (document.getElementById('pdfExportPath')?.value || '').trim(),
+        lastImportedComission: (document.getElementById('lastImportedSelect')?.value || '').trim(),
+        goaffproAPIKey: (document.getElementById('goaffproAPIKey')?.value || '').trim(),
+        contactEmail: (document.getElementById('contactEmail')?.value || '').trim(),
+        smtpHost: (document.getElementById('smtpHost')?.value || '').trim(),
+        smtpPort: String((document.getElementById('smtpPort')?.value || '587')).trim(),
+        smtpUsername: (document.getElementById('smtpUsername')?.value || '').trim(),
+        sendEmailsEnabled: !!document.getElementById('sendEmailsEnabled')?.checked,
+        emailRecipientMode: getEmailRecipientMode()
+      };
     }
 
     async function exportSelectedInvoiceDetailsPdfs() {
