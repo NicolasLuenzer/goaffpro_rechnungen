@@ -9,14 +9,15 @@
     h1 { margin-bottom: 8px; }
     .hint { margin-bottom: 16px; color: #4b5563; }
     .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-    .tab { border: 1px solid #cbd5e1; border-radius: 8px; padding: 8px 12px; background: white; cursor: pointer; }
-    .tab.active { background: #2563eb; color: white; border-color: #2563eb; }
+    .tab { border: 1px solid #93c5fd; border-radius: 8px; padding: 10px 14px; background: #dbeafe; color: #1e3a8a; font-weight: 600; cursor: pointer; transition: all .15s ease; }
+    .tab:hover { background: #bfdbfe; }
+    .tab.active { background: #2563eb; color: white; border-color: #2563eb; box-shadow: 0 2px 8px rgba(37,99,235,.35); }
     .panel { display: none; border: 1px solid #d1d5db; border-radius: 10px; background: white; padding: 16px; }
     .panel.active { display: block; }
     .status { margin: 12px 0; color: #374151; }
     .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0; }
     .settings { margin: 12px 0; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; }
-    input[type="text"], select { min-width: 420px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
+    input[type="text"], input[type="email"], input[type="number"], select { min-width: 420px; padding: 8px; border: 1px solid #cbd5e1; border-radius: 6px; }
     button { background: #10b981; color: white; border: none; border-radius: 6px; padding: 10px 14px; cursor: pointer; }
     button.secondary { background: #3b82f6; }
     button.danger { background: #ef4444; }
@@ -164,6 +165,7 @@
               <label for="smtpPassword">SMTP Passwort:</label>
               <input id="smtpPassword" type="password" placeholder="(unverändert lassen zum Beibehalten)" />
               <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
+              <label><input id="sendEmailsEnabled" type="checkbox" checked /> E-Mails versenden</label>
               <button id="saveSettingsBtn" class="secondary">Speichern</button>
             </div>
             <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
@@ -200,6 +202,28 @@
         panel.innerHTML = `<h2>${executable.name}</h2><p>Pfad: <code>${executable.path}</code></p><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
       }
 
+      panels.appendChild(panel);
+    }
+
+
+    function createAnalyticsTabAndPanel() {
+      const tabs = document.getElementById('tabs');
+      const panels = document.getElementById('panels');
+
+      const tab = document.createElement('button');
+      tab.className = 'tab';
+      tab.textContent = 'Auswertungen';
+      tab.dataset.target = 'analytics-panel';
+      tabs.appendChild(tab);
+
+      const panel = document.createElement('section');
+      panel.className = 'panel';
+      panel.id = 'analytics-panel';
+      panel.innerHTML = `
+        <h2>Auswertungen</h2>
+        <p>Hier können zukünftig KPI-Analysen, Summen je Zeitraum und Trend-Auswertungen ergänzt werden.</p>
+        <p>Aktuell ist dieser Bereich als Platzhalter vorbereitet.</p>
+      `;
       panels.appendChild(panel);
     }
 
@@ -318,6 +342,7 @@
       const smtpUsernameInput = document.getElementById('smtpUsername');
       const smtpPasswordInput = document.getElementById('smtpPassword');
       const smtpTlsInput = document.getElementById('smtpTls');
+      const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       if (!input) return;
       try {
         const data = await apiGet('/api/settings');
@@ -328,6 +353,7 @@
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || '';
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
+        if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
       } catch (error) {
         document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
@@ -343,6 +369,7 @@
       const smtpUsernameInput = document.getElementById('smtpUsername');
       const smtpPasswordInput = document.getElementById('smtpPassword');
       const smtpTlsInput = document.getElementById('smtpTls');
+      const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       const status = document.getElementById('pollStatus');
       if (!input || !status || !select) return;
       try {
@@ -354,7 +381,8 @@
           smtpPort: smtpPortInput ? smtpPortInput.value : '587',
           smtpUsername: smtpUsernameInput ? smtpUsernameInput.value : '',
           smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
-          smtpTls: smtpTlsInput ? smtpTlsInput.checked : false
+          smtpTls: smtpTlsInput ? smtpTlsInput.checked : false,
+          sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true
         });
         input.value = data.pdfExportPath || input.value;
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
@@ -363,6 +391,7 @@
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || smtpUsernameInput.value;
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
+        if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
         status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
       } catch (error) {
@@ -521,6 +550,7 @@
         }
 
         executables.forEach((exe, index) => createTabAndPanel(exe, index === 0));
+        createAnalyticsTabAndPanel();
         wireTabSwitching();
         await loadVersion();
         wireVersionPopup();
