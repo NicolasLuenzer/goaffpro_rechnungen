@@ -155,6 +155,7 @@
           <div class="toolbar">
             <button id="togglePollingBtn">Polling starten</button>
             <button id="exportPdfBtn" class="secondary">Selektierte Zeilen als PDF exportieren</button>
+            <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
             <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
           </div>
 
@@ -333,6 +334,63 @@
     }
 
 
+
+    async function exportSelectedInvoiceDetailsPdfs() {
+      const status = document.getElementById('pollStatus');
+      const filesBox = document.getElementById('exportedFiles');
+      const input = document.getElementById('pdfExportPath');
+      const rows = tableState.rows.filter(row => tableState.selected.has(rowKey(row)));
+      const paymentIds = [...new Set(rows.map(row => row.paymentId).filter(Boolean))];
+
+      if (paymentIds.length === 0) {
+        status.textContent = 'Bitte selektiere mindestens eine Zeile mit gültiger Payment-ID.';
+        return;
+      }
+
+      const createdFiles = [];
+      const failed = [];
+      let lastRequestUrl = '';
+
+      for (let i = 0; i < paymentIds.length; i++) {
+        const paymentId = paymentIds[i];
+        status.textContent = `Erzeuge Rechnungsdetails-PDF ${i + 1}/${paymentIds.length} für Payment-ID ${paymentId} ...`;
+        try {
+          const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
+            paymentId,
+            pdfExportPath: input ? input.value : ''
+          });
+          if (input && data.pdfExportPath) input.value = data.pdfExportPath;
+          if (data.file) createdFiles.push(data.file);
+          if (data.requestUrl) lastRequestUrl = data.requestUrl;
+        } catch (error) {
+          failed.push({ paymentId, message: error.message });
+        }
+      }
+
+      const requestPreview = document.getElementById('requestPreview');
+      if (requestPreview && lastRequestUrl) {
+        requestPreview.innerHTML = `<strong>Verwendeter Request für Rechnungsdetails:</strong><br>${lastRequestUrl}`;
+      }
+
+      if (filesBox) {
+        const okHtml = createdFiles.length > 0
+          ? `<strong>Exportierte Rechnungsdetails-PDFs:</strong><br>${createdFiles.map(f => `<code>${f}</code>`).join('<br>')}`
+          : '<strong>Keine Rechnungsdetails-PDF erstellt.</strong>';
+        const failHtml = failed.length > 0
+          ? `<br><br><strong>Fehler:</strong><br>${failed.map(f => `<code>${f.paymentId}</code>: ${f.message}`).join('<br>')}`
+          : '';
+        filesBox.innerHTML = `${okHtml}${failHtml}`;
+      }
+
+      if (failed.length === 0) {
+        status.textContent = `${createdFiles.length} Rechnungsdetails-PDF(s) erstellt.`;
+      } else if (createdFiles.length === 0) {
+        status.textContent = `Keine Rechnungsdetails-PDF erstellt. Fehler bei ${failed.length} Payment-ID(s).`;
+      } else {
+        status.textContent = `${createdFiles.length} Rechnungsdetails-PDF(s) erstellt, ${failed.length} Fehler.`;
+      }
+    }
+
     async function loadInvoiceDetailsPdf(paymentId) {
       const status = document.getElementById('pollStatus');
       const input = document.getElementById('pdfExportPath');
@@ -446,10 +504,12 @@
         const saveBtn = document.getElementById('saveSettingsBtn');
         const exportBtn = document.getElementById('exportPdfBtn');
         const pickBtn = document.getElementById('pickFolderBtn');
+        const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
         if (exportBtn) exportBtn.addEventListener('click', exportSelectedRowsAsPdf);
         if (pickBtn) pickBtn.addEventListener('click', pickFolder);
+        if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
 
         wireFolderPickerFallback();
         wireSortingAndFiltering();
