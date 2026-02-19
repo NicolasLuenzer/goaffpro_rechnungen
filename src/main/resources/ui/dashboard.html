@@ -50,6 +50,7 @@
     .section-tab.active { background: #2563eb; color: #fff; border-color: #2563eb; }
     .section-panel { display: none; }
     .section-panel.active { display: block; }
+    .help-doc { white-space: pre-wrap; background:#f8fafc; border:1px solid #dbe3ef; border-radius:8px; padding:12px; font-size:13px; line-height:1.5; }
   </style>
 </head>
 <body>
@@ -337,6 +338,42 @@
         <canvas id="analyticsTxChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
       `;
       panels.appendChild(panel);
+    }
+
+
+    function createHelpTabAndPanel() {
+      const tabs = document.getElementById('tabs');
+      const panels = document.getElementById('panels');
+
+      const tab = document.createElement('button');
+      tab.className = 'tab';
+      tab.textContent = 'Hilfe';
+      tab.dataset.target = 'help-panel';
+      tabs.appendChild(tab);
+
+      const panel = document.createElement('section');
+      panel.className = 'panel';
+      panel.id = 'help-panel';
+      panel.innerHTML = `
+        <h2>Hilfe</h2>
+        <p class="status" id="helpStatus">Lade Dokumentation…</p>
+        <div id="helpDoc" class="help-doc"></div>
+      `;
+      panels.appendChild(panel);
+    }
+
+    async function loadHelpDocumentation() {
+      const status = document.getElementById('helpStatus');
+      const box = document.getElementById('helpDoc');
+      if (!status || !box) return;
+      try {
+        const data = await apiGet('/api/help');
+        status.textContent = data.title || 'Hilfe';
+        box.textContent = data.content || 'Keine Dokumentation vorhanden.';
+      } catch (error) {
+        status.textContent = `Dokumentation konnte nicht geladen werden: ${error.message}`;
+        box.textContent = '';
+      }
     }
 
     function activateTab(targetId) {
@@ -977,8 +1014,10 @@
         }
         createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
         createAnalyticsTabAndPanel();
+        createHelpTabAndPanel();
         wireTabSwitching();
         await loadVersion();
+        await loadHelpDocumentation();
         wireVersionPopup();
 
         const pollingBtn = document.getElementById('togglePollingBtn');

@@ -59,6 +59,7 @@ public class WebUiServer {
     private static final DateTimeFormatter FILE_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
     private static final Path CONFIG_PATH = Paths.get("src/main/java/config.properties");
     private static final Path UI_PATH = Paths.get("src/main/resources/ui/dashboard.html");
+    private static final Path HELP_DOC_PATH = Paths.get("docs/HILFE.md");
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
     private static final String COMMISSION_HISTORY_DATES_KEY = "lastImportedComissionHistoryDates";
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
@@ -80,6 +81,7 @@ public class WebUiServer {
         server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
         server.createContext("/api/commissions/add-latest", new AddLatestCommissionHandler());
         server.createContext("/api/commissions/remove", new RemoveCommissionHandler());
+        server.createContext("/api/help", new HelpHandler());
         server.setExecutor(null);
         server.start();
 
@@ -486,6 +488,32 @@ public class WebUiServer {
                 payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+
+    private static class HelpHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                String text = Files.exists(HELP_DOC_PATH)
+                        ? Files.readString(HELP_DOC_PATH, StandardCharsets.UTF_8)
+                        : "Hilfe-Dokumentation konnte nicht gefunden werden.";
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("title", "Hilfe- und Funktionsdokumentation");
+                payload.put("content", text);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
