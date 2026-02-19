@@ -164,6 +164,9 @@ Im Reiter **Validierung** stehen schnelle Filter zur Verfügung:
 
 - nur ohne IBAN
 - nur mit ungültiger IBAN
+- nur mit gültiger IBAN
+- nur mit Steuernummer
+- nur ohne Steuernummer
 - nur ohne Adresse
 - nur ohne Name
 - Status-Filter (Dropdown)

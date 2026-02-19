@@ -1774,6 +1774,7 @@ public class WebUiServer {
             row.put("company", asText(a, "company_name"));
             row.put("address", formatAffiliateAddress(a));
             row.put("country", asText(a, "country"));
+            row.put("dateOfBirth", asText(a, "date_of_birth"));
             row.put("taxNumber", asText(a, "tax_identification_number"));
             row.put("status", asText(a, "status"));
             row.put("paymentMethod", asText(a, "payment_method"));
@@ -1787,7 +1788,7 @@ public class WebUiServer {
     }
 
     private static boolean isValidationRowRelevant(Map<String, String> row) {
-        String[] keys = new String[]{"name", "email", "phone", "address", "country", "taxNumber", "iban", "paymentMethod"};
+        String[] keys = new String[]{"name", "email", "phone", "address", "country", "dateOfBirth", "taxNumber", "iban", "paymentMethod"};
         for (String key : keys) {
             if (!Objects.toString(row.get(key), "").isBlank()) return true;
         }

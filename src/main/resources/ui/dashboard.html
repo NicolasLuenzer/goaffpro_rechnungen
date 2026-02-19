@@ -371,6 +371,9 @@
           <button id="loadValidationBtn" class="secondary" type="button">Stammdaten laden / neu laden</button>
           <label><input id="filterMissingIban" type="checkbox" /> nur ohne IBAN</label>
           <label><input id="filterInvalidIban" type="checkbox" /> nur mit ungültiger IBAN</label>
+          <label><input id="filterValidIban" type="checkbox" /> nur mit gültiger IBAN</label>
+          <label><input id="filterWithTaxNumber" type="checkbox" /> nur mit Steuernummer</label>
+          <label><input id="filterWithoutTaxNumber" type="checkbox" /> nur ohne Steuernummer</label>
           <label><input id="filterMissingAddress" type="checkbox" /> nur ohne Adresse</label>
           <label><input id="filterMissingName" type="checkbox" /> nur ohne Name</label>
           <label for="filterStatusSelect">Status:</label>
@@ -379,7 +382,7 @@
         <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
         <table>
           <thead>
-            <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>IBAN korrekt</th><th>Status</th></tr>
+            <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>IBAN korrekt</th><th>Status</th></tr>
           </thead>
           <tbody id="validationBody"></tbody>
         </table>
@@ -392,6 +395,9 @@
       const body = document.getElementById('validationBody');
       const filterMissingIban = !!document.getElementById('filterMissingIban')?.checked;
       const filterInvalidIban = !!document.getElementById('filterInvalidIban')?.checked;
+      const filterValidIban = !!document.getElementById('filterValidIban')?.checked;
+      const filterWithTaxNumber = !!document.getElementById('filterWithTaxNumber')?.checked;
+      const filterWithoutTaxNumber = !!document.getElementById('filterWithoutTaxNumber')?.checked;
       const filterMissingAddress = !!document.getElementById('filterMissingAddress')?.checked;
       const filterMissingName = !!document.getElementById('filterMissingName')?.checked;
       const statusFilter = (document.getElementById('filterStatusSelect')?.value || '').trim().toLowerCase();
@@ -400,18 +406,23 @@
       const filtered = validationRowsCache.filter(r => {
         const missingIban = !(r.iban || '').trim();
         const invalidIban = (r.ibanValid || '').toLowerCase() !== 'ja';
+        const hasValidIban = (r.ibanValid || '').toLowerCase() === 'ja';
         const missingAddress = !(r.address || '').trim();
         const missingName = !(r.name || '').trim();
+        const hasTaxNumber = !!(r.taxNumber || '').trim();
         const statusMatch = !statusFilter || (r.status || '').trim().toLowerCase() === statusFilter;
         if (filterMissingIban && !missingIban) return false;
         if (filterInvalidIban && !invalidIban) return false;
+        if (filterValidIban && !hasValidIban) return false;
+        if (filterWithTaxNumber && !hasTaxNumber) return false;
+        if (filterWithoutTaxNumber && hasTaxNumber) return false;
         if (filterMissingAddress && !missingAddress) return false;
         if (filterMissingName && !missingName) return false;
         if (!statusMatch) return false;
         return true;
       });
 
-      body.innerHTML = filtered.map(r => `<tr><td>${r.id || ''}</td><td>${r.name || ''}</td><td>${r.email || ''}</td><td>${r.phone || ''}</td><td>${r.address || ''}</td><td>${r.country || ''}</td><td>${r.taxNumber || ''}</td><td>${r.paymentMethod || ''}</td><td>${r.iban || ''}</td><td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td><td>${r.status || ''}</td></tr>`).join('');
+      body.innerHTML = filtered.map(r => `<tr><td>${r.id || ''}</td><td>${r.name || ''}</td><td>${r.email || ''}</td><td>${r.phone || ''}</td><td>${r.address || ''}</td><td>${r.country || ''}</td><td>${r.dateOfBirth || ''}</td><td>${r.taxNumber || ''}</td><td>${r.paymentMethod || ''}</td><td>${r.iban || ''}</td><td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td><td>${r.status || ''}</td></tr>`).join('');
       status.textContent = `${filtered.length} von ${validationRowsCache.length} Datensätzen angezeigt.`;
     }
 
@@ -1218,7 +1229,7 @@
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
 
-        ['filterMissingIban','filterInvalidIban','filterMissingAddress','filterMissingName','filterStatusSelect'].forEach(id => {
+        ['filterMissingIban','filterInvalidIban','filterValidIban','filterWithTaxNumber','filterWithoutTaxNumber','filterMissingAddress','filterMissingName','filterStatusSelect'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.addEventListener('change', renderValidationTable);
         });
