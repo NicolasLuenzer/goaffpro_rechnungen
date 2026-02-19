@@ -29,6 +29,9 @@
     th { background: #f3f4f6; cursor: pointer; user-select: none; }
     th.sort-active { background: #dbeafe; }
     .files { margin-top: 8px; font-size: 13px; color: #1f2937; }
+    .pill-list { display:flex; flex-wrap:wrap; gap:8px; margin: 8px 0; }
+    .pill { display:inline-flex; align-items:center; gap:6px; background:#eef2ff; color:#1f2937; border:1px solid #c7d2fe; border-radius:999px; padding:6px 10px; font-size:12px; }
+    .pill button { padding:2px 8px; font-size:12px; background:#ef4444; }
     .app-version { position: fixed; top: 12px; right: 16px; background: #111827; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; z-index: 1000; cursor: pointer; }
     .version-popup { position: fixed; top: 42px; right: 16px; width: 460px; max-height: 360px; overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); z-index: 1001; padding: 8px; }
     .version-popup-header { font-weight: bold; margin-bottom: 6px; }
@@ -161,6 +164,7 @@
               <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
               <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
             </div>
+            <div id="commissionHistoryEditor" class="pill-list"></div>
 
             <p id="pollStatus" class="status">Noch nicht gestartet.</p>
             <div id="exportedFiles" class="files"></div>
@@ -407,6 +411,35 @@
       });
     }
 
+    async function removeCommissionFromHistory(commission) {
+      const status = document.getElementById('pollStatus');
+      try {
+        const data = await apiPost('/api/commissions/remove', { commission });
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        if (status) status.textContent = data.message || 'Zahllauf entfernt.';
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Entfernen: ${error.message}`;
+      }
+    }
+
+    function renderCommissionHistoryEditor(history, historyLabels) {
+      const box = document.getElementById('commissionHistoryEditor');
+      if (!box) return;
+      const list = Array.isArray(history) ? history : [];
+      box.innerHTML = list.map(value => {
+        const label = (historyLabels && historyLabels[value]) || value;
+        return `<span class="pill">${label}<button type="button" data-remove-commission="${value}">x</button></span>`;
+      }).join('');
+      box.querySelectorAll('button[data-remove-commission]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const commission = btn.getAttribute('data-remove-commission') || '';
+          if (!commission) return;
+          await removeCommissionFromHistory(commission);
+        });
+      });
+    }
+
     function updateCommissionSelect(history, activeValue, historyLabels) {
       const fill = (id) => {
         const select = document.getElementById(id);
@@ -433,6 +466,7 @@
         status.textContent = 'Suche neuesten Zahllauf...';
         const data = await apiPost('/api/commissions/add-latest', {});
         updateCommissionSelect(data.lastImportedComissionHistory, '', data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
         status.textContent = `${data.message || 'Neuster Zahllauf verarbeitet.'} ID: ${data.latestId || 'n/a'}`;
       } catch (error) {
         status.textContent = `Fehler beim Hinzufügen des neuesten Zahllaufs: ${error.message}`;
@@ -461,7 +495,7 @@
       if (!input) return;
       try {
         const data = await apiGet('/api/settings');
-        input.value = data.pdfExportPath || 'C:\Users\nluenzer\Downloads\goaffpro';
+        input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || '';
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || '';
@@ -474,6 +508,7 @@
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
       } catch (error) {
         document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
       }
@@ -521,6 +556,7 @@
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
         status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
       } catch (error) {
         status.textContent = `Fehler beim Speichern der Einstellungen: ${error.message}`;
@@ -721,6 +757,35 @@
       drawBarChart('analyticsTxChart', chart.labels || [], chart.txSeries || [], '#10b981');
     }
 
+    function wireAnalyticsDateRange() {
+      const fromDateInput = document.getElementById('analyticsFromDate');
+      const toDateInput = document.getElementById('analyticsToDate');
+      if (!fromDateInput || !toDateInput) return;
+
+      const normalize = () => {
+        if (fromDateInput.value && !toDateInput.value) toDateInput.value = fromDateInput.value;
+        if (toDateInput.value && !fromDateInput.value) fromDateInput.value = toDateInput.value;
+        if (fromDateInput.value && toDateInput.value && fromDateInput.value > toDateInput.value) {
+          toDateInput.value = fromDateInput.value;
+        }
+      };
+
+      const trigger = () => {
+        normalize();
+        fetchAnalyticsData();
+      };
+
+      fromDateInput.addEventListener('focus', () => {
+        if (!fromDateInput.value && toDateInput.value) fromDateInput.value = toDateInput.value;
+      });
+      toDateInput.addEventListener('focus', () => {
+        if (!toDateInput.value && fromDateInput.value) toDateInput.value = fromDateInput.value;
+      });
+
+      fromDateInput.addEventListener('change', trigger);
+      toDateInput.addEventListener('change', trigger);
+    }
+
     async function fetchAnalyticsData() {
       const status = document.getElementById('analyticsStatus');
       const select = document.getElementById('analyticsSinceSelect');
@@ -755,6 +820,7 @@
           renderTable();
         }
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
         status.textContent = data.message || 'Polling erfolgreich.';
       } catch (error) {
         status.textContent = `Fehler beim Polling: ${error.message}`;
@@ -852,6 +918,7 @@
         wireFolderPickerFallback();
         wireMainSectionTabs();
         wireSortingAndFiltering();
+        wireAnalyticsDateRange();
         renderTable();
         setPollingButtonState(false);
         await loadSettings();

@@ -78,6 +78,7 @@ public class WebUiServer {
         server.createContext("/api/version/history", new VersionHistoryHandler());
         server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
         server.createContext("/api/commissions/add-latest", new AddLatestCommissionHandler());
+        server.createContext("/api/commissions/remove", new RemoveCommissionHandler());
         server.setExecutor(null);
         server.start();
 
@@ -426,6 +427,53 @@ public class WebUiServer {
                 payload.put("message", alreadyPresent ? "Neuester Zahllauf war bereits vorhanden." : "Neuester Zahllauf wurde hinzugefügt.");
                 payload.put("latestId", maxId);
                 payload.put("latestCreatedAt", maxCreatedAt);
+                payload.put("lastImportedComissionHistory", getCommissionHistory(config));
+                payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class RemoveCommissionHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String commission = asText(body, "commission").trim();
+                if (commission.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"commission fehlt\"}");
+                    return;
+                }
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+
+                boolean removed = removeCommissionFromHistory(config, commission);
+                removeCommissionDate(config, commission);
+
+                String active = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
+                if (commission.equals(active)) {
+                    List<String> history = getCommissionHistory(config);
+                    config.setProperty("lastImportedComission", history.isEmpty() ? "0" : history.get(0));
+                }
+
+                persistSettings(config);
+
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", removed ? "Zahllauf entfernt." : "Zahllauf war nicht in der Liste.");
+                payload.put("removed", removed);
+                payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
@@ -1991,8 +2039,10 @@ public class WebUiServer {
         if (Objects.toString(config.getProperty("goaffproAPIKey"), "").isBlank()) {
             config.setProperty("goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY);
         }
-        for (String commission : DEFAULT_COMMISSION_HISTORY) {
-            ensureCommissionInHistory(config, commission);
+        if (Objects.toString(config.getProperty(COMMISSION_HISTORY_KEY), "").isBlank()) {
+            for (String commission : DEFAULT_COMMISSION_HISTORY) {
+                ensureCommissionInHistory(config, commission);
+            }
         }
         storeConfig(config);
         saveUiSettings(resolveSettingsDirectory(config), config);
@@ -2008,9 +2058,6 @@ public class WebUiServer {
                     unique.add(value);
                 }
             }
-        }
-        for (String value : DEFAULT_COMMISSION_HISTORY) {
-            unique.add(value);
         }
         String active = Objects.toString(properties.getProperty("lastImportedComission"), "").trim();
         if (!active.isEmpty()) {
@@ -2078,7 +2125,23 @@ public class WebUiServer {
         properties.setProperty(COMMISSION_HISTORY_KEY, String.join(",", history));
     }
 
-        private static LocalDate parseIsoDate(String input) {
+    private static boolean removeCommissionFromHistory(Properties properties, String commission) {
+        if (commission == null || commission.isBlank()) return false;
+        List<String> history = getCommissionHistory(properties);
+        boolean removed = history.removeIf(v -> commission.equals(v));
+        properties.setProperty(COMMISSION_HISTORY_KEY, String.join(",", history));
+        return removed;
+    }
+
+    private static void removeCommissionDate(Properties properties, String commission) {
+        if (commission == null || commission.isBlank()) return;
+        Map<String, String> dates = getCommissionDatesFromConfig(properties);
+        dates.remove(commission);
+        String raw = dates.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining(";"));
+        properties.setProperty(COMMISSION_HISTORY_DATES_KEY, raw);
+    }
+
+    private static LocalDate parseIsoDate(String input) {
         if (input == null || input.isBlank()) return null;
         try {
             return LocalDate.parse(input.trim());
