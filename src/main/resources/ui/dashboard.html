@@ -147,6 +147,10 @@
             <div class="toolbar">
               <label for="lastImportedSelect">Aktive LastImportedComission (since_id):</label>
               <select id="lastImportedSelect"></select>
+            </div>
+            <div class="toolbar">
+              <label for="contactEmail">Kontakt-E-Mail:</label>
+              <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
               <button id="saveSettingsBtn" class="secondary">Speichern</button>
             </div>
             <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
@@ -288,10 +292,12 @@
 
     async function loadSettings() {
       const input = document.getElementById('pdfExportPath');
+      const contactEmailInput = document.getElementById('contactEmail');
       if (!input) return;
       try {
         const data = await apiGet('/api/settings');
         input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
+        if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
       } catch (error) {
         document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
@@ -301,14 +307,17 @@
     async function saveSettings() {
       const input = document.getElementById('pdfExportPath');
       const select = document.getElementById('lastImportedSelect');
+      const contactEmailInput = document.getElementById('contactEmail');
       const status = document.getElementById('pollStatus');
       if (!input || !status || !select) return;
       try {
         const data = await apiPost('/api/settings', {
           pdfExportPath: input.value,
-          lastImportedComission: select.value
+          lastImportedComission: select.value,
+          contactEmail: contactEmailInput ? contactEmailInput.value : ''
         });
         input.value = data.pdfExportPath || input.value;
+        if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
         status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
       } catch (error) {

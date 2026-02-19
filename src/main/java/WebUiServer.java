@@ -248,6 +248,7 @@ public class WebUiServer {
 
                 String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH);
                 String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
+                String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 ensureCommissionInHistory(config, activeCommission);
                 persistSettings(config);
 
@@ -255,6 +256,7 @@ public class WebUiServer {
                 payload.put("pdfExportPath", exportDir);
                 payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 payload.put("lastImportedComission", activeCommission);
+                payload.put("contactEmail", contactEmail);
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 return;
@@ -265,6 +267,7 @@ public class WebUiServer {
                     JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                     String newPath = asText(body, "pdfExportPath").trim();
                     String selectedCommission = asText(body, "lastImportedComission").trim();
+                    String contactEmail = asText(body, "contactEmail").trim();
 
                     Properties config = loadConfig();
                     Path chosenDir = newPath.isEmpty() ? resolveSettingsDirectory(config) : Paths.get(newPath).toAbsolutePath();
@@ -275,6 +278,7 @@ public class WebUiServer {
                         config.setProperty("lastImportedComission", selectedCommission);
                         ensureCommissionInHistory(config, selectedCommission);
                     }
+                    config.setProperty("contactEmail", contactEmail);
 
                     persistSettings(config);
 
@@ -283,6 +287,7 @@ public class WebUiServer {
                     payload.put("pdfExportPath", Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH));
                     payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                     payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
+                    payload.put("contactEmail", Objects.toString(config.getProperty("contactEmail"), ""));
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 } catch (Exception e) {
@@ -1162,6 +1167,7 @@ public class WebUiServer {
         Properties ui = new Properties();
         ui.setProperty("pdfExportPath", Objects.toString(source.getProperty("pdfExportPath"), directory.toString()));
         ui.setProperty("lastImportedComission", Objects.toString(source.getProperty("lastImportedComission"), "0"));
+        ui.setProperty("contactEmail", Objects.toString(source.getProperty("contactEmail"), ""));
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
 
         try (OutputStream os = Files.newOutputStream(uiSettingsFile(directory))) {
@@ -1185,6 +1191,11 @@ public class WebUiServer {
         String uiHistory = Objects.toString(uiSettings.getProperty(COMMISSION_HISTORY_KEY), "").trim();
         if (!uiHistory.isEmpty()) {
             config.setProperty(COMMISSION_HISTORY_KEY, uiHistory);
+        }
+
+        String uiContactEmail = Objects.toString(uiSettings.getProperty("contactEmail"), "").trim();
+        if (!uiContactEmail.isEmpty() || config.containsKey("contactEmail")) {
+            config.setProperty("contactEmail", uiContactEmail);
         }
 
         ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
