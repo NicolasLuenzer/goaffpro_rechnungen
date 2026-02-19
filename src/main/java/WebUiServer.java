@@ -422,24 +422,14 @@ public class WebUiServer {
                 mergeUiSettingsIntoConfig(config, uiSettings);
 
                 String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
-                String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + paymentId
-                        + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
+                String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + paymentId;
                 JsonNode response = requestJson(detailsUrl, apiKey);
                 JsonNode payments = response.get("payments");
                 if (payments == null || !payments.isArray() || payments.size() == 0) {
                     sendResponse(exchange, 404, "application/json", "{\"error\":\"Keine Payment-Details gefunden\"}");
                     return;
                 }
-                JsonNode payment = null;
-                for (JsonNode pNode : payments) {
-                    if (paymentId.equals(asText(pNode, "id"))) {
-                        payment = pNode;
-                        break;
-                    }
-                }
-                if (payment == null) {
-                    payment = payments.get(0);
-                }
+                // Verwende die gesamte API-Antwort für die PDF, wie vom Request zurückgegeben.
 
                 String exportDirValue = requestedDir.isEmpty()
                         ? Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH)
@@ -449,7 +439,7 @@ public class WebUiServer {
 
                 String filename = "rechnungsdetails_" + sanitizeFilename(paymentId) + "_" + FILE_TIMESTAMP.format(LocalDateTime.now()) + ".pdf";
                 Path pdfPath = exportDir.resolve(filename);
-                createInvoiceDetailsPdf(pdfPath, payment);
+                createInvoiceDetailsPdf(pdfPath, response);
 
                 boolean opened = false;
                 String openMessage = "";
@@ -479,39 +469,40 @@ public class WebUiServer {
             }
         }
 
-        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode payment) throws IOException {
+        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse) throws IOException {
             try (PDDocument document = new PDDocument()) {
-                PDPage page = new PDPage();
-                document.addPage(page);
+                List<String[]> rows = new ArrayList<>();
+                flattenJsonForPdf("response", apiResponse, rows);
 
-                try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
-                    float startX = 50f;
-                    float tableTopY = 710f;
-                    float rowHeight = 22f;
-                    float keyColWidth = 190f;
-                    float valueColWidth = 330f;
+                if (rows.isEmpty()) {
+                    rows.add(new String[]{"response", "(leer)"});
+                }
 
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
-                    cs.newLineAtOffset(50, 750);
-                    cs.showText("GoAffPro Rechnungsdetails");
-                    cs.endText();
+                final float startX = 40f;
+                final float topY = 740f;
+                final float bottomY = 60f;
+                final float rowHeight = 20f;
+                final float keyColWidth = 210f;
+                final float valueColWidth = 330f;
 
-                    List<String[]> rows = List.of(
-                            new String[]{"Payment-ID", asText(payment, "id")},
-                            new String[]{"Affiliate-ID", asText(payment, "affiliate_id")},
-                            new String[]{"Betrag", asText(payment, "amount") + " " + asText(payment, "currency")},
-                            new String[]{"Payment Method", asText(payment, "payment_method")},
-                            new String[]{"Payment Details", asText(payment, "payment_details")},
-                            new String[]{"Affiliate Message", asText(payment, "affiliate_message")},
-                            new String[]{"Admin Note", asText(payment, "admin_note")},
-                            new String[]{"Transactions", asText(payment, "transactions")},
-                            new String[]{"Created At", asText(payment, "created_at")}
-                    );
+                int index = 0;
+                while (index < rows.size()) {
+                    PDPage page = new PDPage();
+                    document.addPage(page);
+                    try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
+                        cs.beginText();
+                        cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
+                        cs.newLineAtOffset(startX, 770);
+                        cs.showText("GoAffPro Rechnungsdetails (admin/payments?since_id)");
+                        cs.endText();
 
-                    for (int i = 0; i < rows.size(); i++) {
-                        float y = tableTopY - (i * rowHeight);
-                        drawTableRow(cs, startX, y, rowHeight, keyColWidth, valueColWidth, rows.get(i)[0], rows.get(i)[1]);
+                        float y = topY;
+                        while (index < rows.size() && (y - rowHeight) > bottomY) {
+                            String[] row = rows.get(index);
+                            drawTableRow(cs, startX, y, rowHeight, keyColWidth, valueColWidth, row[0], row[1]);
+                            y -= rowHeight;
+                            index++;
+                        }
                     }
                 }
 
@@ -521,6 +512,34 @@ public class WebUiServer {
     }
 
 
+    private static void flattenJsonForPdf(String prefix, JsonNode node, List<String[]> rows) {
+        if (node == null || node.isNull()) {
+            rows.add(new String[]{prefix, "null"});
+            return;
+        }
+
+        if (node.isObject()) {
+            node.fieldNames().forEachRemaining(field -> {
+                JsonNode child = node.get(field);
+                String nextPrefix = prefix.isEmpty() ? field : prefix + "." + field;
+                flattenJsonForPdf(nextPrefix, child, rows);
+            });
+            return;
+        }
+
+        if (node.isArray()) {
+            if (node.size() == 0) {
+                rows.add(new String[]{prefix, "[]"});
+                return;
+            }
+            for (int i = 0; i < node.size(); i++) {
+                flattenJsonForPdf(prefix + "[" + i + "]", node.get(i), rows);
+            }
+            return;
+        }
+
+        rows.add(new String[]{prefix, node.asText()});
+    }
 
     private static void drawTableRow(PDPageContentStream cs, float x, float y, float rowHeight, float keyWidth, float valueWidth, String key, String value) throws IOException {
             cs.setLineWidth(0.5f);
