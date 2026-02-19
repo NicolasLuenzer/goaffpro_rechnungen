@@ -509,7 +509,7 @@ public class WebUiServer {
                         headerRows.add(new String[]{label("Zahlungsart", "payment_method", 0), asText(payment, "payment_method")});
                         headerRows.add(new String[]{label("Affiliate-Nachricht", "affiliate_message", 0), asText(payment, "affiliate_message")});
                         headerRows.add(new String[]{label("Admin-Notiz", "admin_note", 0), asText(payment, "admin_note")});
-                        headerRows.add(new String[]{label("Erstellt am", "created_at", 0), asText(payment, "created_at")});
+                        headerRows.add(new String[]{label("Bestelldatum", "created_at", 0), asText(payment, "created_at")});
 
                         for (String[] row : headerRows) {
                             float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, row[0], row[1]);
@@ -530,7 +530,7 @@ public class WebUiServer {
                             while (it.hasNext()) {
                                 String key = it.next();
                                 String value = "amount".equals(key) ? formatAmountEuro(asText(paymentDetails, key)) : asText(paymentDetails, key);
-                                float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Zahlungsdetail", key, 1), value);
+                                float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel(key), key, 1), translateFieldValue(key, value));
                                 y -= used;
                                 if (y < 90f) break;
                             }
@@ -563,17 +563,20 @@ public class WebUiServer {
 
                             while (idx < transactions.size() && y > 80f) {
                                 JsonNode tx = transactions.get(idx);
-                                float u1 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Transaktion", "tx_id", 1), asText(tx, "tx_id")); y -= u1;
-                                float u2 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Transaktion", "amount", 1), formatAmountEuro(asText(tx, "amount"))); y -= u2;
-                                float u3 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Transaktion", "entity_type", 1), asText(tx, "entity_type")); y -= u3;
-                                float u4 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Transaktion", "created_at", 1), asText(tx, "created_at")); y -= u4;
+                                float u1 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("tx_id"), "tx_id", 1), translateFieldValue("tx_id", asText(tx, "tx_id"))); y -= u1;
+                                float u2 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("amount"), "amount", 1), translateFieldValue("amount", asText(tx, "amount"))); y -= u2;
+                                float u3 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("entity_type"), "entity_type", 1), translateFieldValue("entity_type", asText(tx, "entity_type"))); y -= u3;
+                                float u4 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("created_at"), "created_at", 1), translateFieldValue("created_at", asText(tx, "created_at"))); y -= u4;
 
                                 JsonNode metadata = tx.get("metadata");
                                 if (metadata != null && metadata.isObject()) {
                                     var it = metadata.fieldNames();
                                     while (it.hasNext() && y > 80f) {
                                         String key = it.next();
-                                        float um = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label("Metadaten", key, 2), "amount".equals(key) || "affiliate_commission".equals(key) || "commission_on".equals(key) || "order_value".equals(key) ? formatAmountEuro(asText(metadata, key)) : asText(metadata, key));
+                                        String rawValue = asText(metadata, key);
+                                        float um = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth,
+                                                label(resolveGermanLabel(key), key, 2),
+                                                translateFieldValue(key, rawValue));
                                         y -= um;
                                     }
                                 }
@@ -677,6 +680,45 @@ public class WebUiServer {
             }
             if (current.length() > 0) lines.add(current.toString());
             return lines;
+        }
+
+    private static String resolveGermanLabel(String originalName) {
+            return switch (originalName) {
+                case "id" -> "Zahlungs-ID";
+                case "affiliate_id" -> "Affiliate-ID";
+                case "amount" -> "Betrag";
+                case "payment_method" -> "Zahlungsart";
+                case "affiliate_message" -> "Affiliate-Nachricht";
+                case "admin_note" -> "Admin-Notiz";
+                case "created_at" -> "Bestelldatum";
+                case "tx_id" -> "Transaktions-ID";
+                case "entity_type" -> "Entitätstyp";
+                case "order_number" -> "Bestellnummer";
+                case "order_id" -> "Bestell-ID";
+                case "status" -> "Status";
+                case "order_value" -> "Bestellwert abzgl. Rabatte";
+                case "commission_on" -> "Provisionsberechtigter Rechnungsbetrag";
+                case "affiliate_commission" -> "Affiliate-Provision";
+                default -> "Feld";
+            };
+        }
+
+    private static String translateFieldValue(String fieldName, String rawValue) {
+            if (rawValue == null || rawValue.isBlank() || "null".equalsIgnoreCase(rawValue)) {
+                return rawValue == null ? "" : rawValue;
+            }
+
+            if ("status".equals(fieldName) && "approved".equalsIgnoreCase(rawValue)) {
+                return "freigegeben";
+            }
+
+            if ("amount".equals(fieldName)
+                    || "affiliate_commission".equals(fieldName)
+                    || "commission_on".equals(fieldName)
+                    || "order_value".equals(fieldName)) {
+                return formatAmountEuro(rawValue);
+            }
+            return rawValue;
         }
 
     private static String label(String germanName, String originalName, int indentLevel) {
