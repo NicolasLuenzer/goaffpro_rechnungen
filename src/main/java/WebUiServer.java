@@ -552,7 +552,10 @@ public class WebUiServer {
                             cs.beginText();
                             cs.setFont(PDType1Font.HELVETICA_BOLD, 13);
                             cs.newLineAtOffset(x, y);
-                            cs.showText("Transaktion " + (idx + 1));
+                            JsonNode metadataForTitle = tx.get("metadata");
+                            String orderNumberTitle = metadataForTitle != null ? asText(metadataForTitle, "order_number") : "";
+                            String title = (orderNumberTitle == null || orderNumberTitle.isBlank()) ? "Transaktion" : "Bestellung " + orderNumberTitle;
+                            cs.showText(title);
                             cs.endText();
                             y -= 20;
 
@@ -748,6 +751,9 @@ public class WebUiServer {
 
             if ("status".equals(fieldName) && "approved".equalsIgnoreCase(rawValue)) {
                 return "freigegeben";
+            }
+            if ("entity_type".equals(fieldName) && "rewards".equalsIgnoreCase(rawValue)) {
+                return "Team-Provision";
             }
 
             if ("amount".equals(fieldName)
