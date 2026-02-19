@@ -1821,9 +1821,8 @@ public class WebUiServer {
 
     private static String buildInvoiceMailBody(JsonNode payment, JsonNode affiliate, String periodLabel) {
         String affiliateName = affiliate != null ? asText(affiliate, "name") : "";
-        String affiliateEmail = affiliate != null ? asText(affiliate, "email") : "";
+        String salutationName = (affiliateName == null || affiliateName.isBlank()) ? "liebe Beraterin" : ("liebe " + affiliateName.trim());
         String paymentId = payment != null ? asText(payment, "id") : "";
-        String affiliateId = payment != null ? asText(payment, "affiliate_id") : "";
         String payout = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
         String method = payment != null ? asText(payment, "payment_method") : "";
         String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
@@ -1832,19 +1831,18 @@ public class WebUiServer {
         JsonNode transactions = payment != null ? payment.get("transactions") : null;
         if (transactions != null && transactions.isArray()) txCount = transactions.size();
 
-        return "Guten Tag,\n\n"
-                + "anbei erhalten Sie den Provisionsnachweis als PDF-Anhang.\n\n"
-                + "Zahllauf-Informationen:\n"
+        return "Hallo " + salutationName + ",\n\n"
+                + "gerade hat ein neuer Zahllauf stattgefunden. Ihre Provision ist damit zur Auszahlung vorgesehen. "
+                + "Die Überweisung sollte in der Regel innerhalb der nächsten 2 Bankarbeitstage auf Ihrem Konto eingehen.\n\n"
+                + "Kurze Übersicht zu Ihrem aktuellen Zahllauf:\n"
                 + "- Zeitraum: " + periodLabel + "\n"
                 + "- Zahllauf-ID: " + paymentId + "\n"
-                + "- Affiliate-ID: " + affiliateId + "\n"
-                + "- Name der Beraterin: " + affiliateName + "\n"
-                + "- E-Mail der Beraterin: " + affiliateEmail + "\n"
                 + "- Auszahlungsbetrag: " + payout + "\n"
                 + "- Zahlungsmethode: " + method + "\n"
                 + "- Auszahlungsdatum (System): " + created + "\n"
-                + "- Anzahl Transaktionen im Zahllauf: " + txCount + "\n\n"
-                + "Freundliche Grüße\n"
+                + "- Anzahl Transaktionen: " + txCount + "\n\n"
+                + "Im Anhang finden Sie Ihren Provisionsnachweis als PDF sowie die zugehörige JSON-Datei.\n\n"
+                + "Viele Grüße\n"
                 + "S+R Linear Technology GmbH";
     }
 

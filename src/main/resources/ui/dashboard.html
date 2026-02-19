@@ -36,6 +36,8 @@
     .pill-list { display:flex; flex-wrap:wrap; gap:8px; margin: 8px 0; }
     .pill { display:inline-flex; align-items:center; gap:6px; background:#eef2ff; color:#1f2937; border:1px solid #c7d2fe; border-radius:999px; padding:6px 10px; font-size:12px; }
     .pill button { padding:2px 8px; font-size:12px; background:#ef4444; }
+    .warning-banner { margin: 10px 0; padding: 10px 12px; border: 1px solid #fecaca; background: #fee2e2; color: #991b1b; border-radius: 8px; font-weight: 600; }
+    .recipient-advisor-label { color: #b91c1c; font-weight: 700; }
     .app-version { position: fixed; top: 12px; right: 16px; background: #111827; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; z-index: 1000; cursor: pointer; }
     .version-popup { position: fixed; top: 42px; right: 16px; width: 460px; max-height: 360px; overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); z-index: 1001; padding: 8px; }
     .version-popup-header { font-weight: bold; margin-bottom: 6px; }
@@ -168,6 +170,7 @@
               <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
               <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
             </div>
+            <div id="advisorMailWarning" class="warning-banner" style="display:none">⚠️ Versandmodus aktiv: Rechnungsdetails werden an die Beraterinnen-E-Mail gesendet.</div>
             <p id="pollStatus" class="status">Noch nicht gestartet.</p>
             <div id="exportedFiles" class="files"></div>
 
@@ -237,7 +240,7 @@
                     <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
                     <label><input id="sendEmailsEnabled" type="checkbox" checked /> E-Mails versenden</label>
                     <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> an Kontakt-E-Mail</label>
-                    <label><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
+                    <label class="recipient-advisor-label"><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
                   </div>
                 </div>
               </div>
@@ -400,6 +403,8 @@
         if (e.target.checked) tableState.selected.add(key); else tableState.selected.delete(key);
       }));
 
+      applyAdvisorRecipientUiState();
+
       document.querySelectorAll('.details-btn').forEach(btn => btn.addEventListener('click', async (e) => {
         const paymentId = e.target.dataset.paymentId;
         await loadInvoiceDetailsPdf(paymentId);
@@ -455,6 +460,27 @@
       });
     }
 
+    function sortCommissionsNewestFirst(values) {
+      return sortCommissionsChronologically(values).reverse();
+    }
+
+    function applyAdvisorRecipientUiState() {
+      const advisorMode = shouldSendEmails() && getEmailRecipientMode() === 'advisor';
+      const warning = document.getElementById('advisorMailWarning');
+      if (warning) warning.style.display = advisorMode ? 'block' : 'none';
+
+      const exportBtn = document.getElementById('exportInvoiceDetailsBtn');
+      if (exportBtn) {
+        exportBtn.classList.toggle('danger', advisorMode);
+        exportBtn.classList.toggle('secondary', !advisorMode);
+      }
+
+      document.querySelectorAll('.details-btn').forEach(btn => {
+        btn.classList.toggle('danger', advisorMode);
+        btn.classList.toggle('secondary', !advisorMode);
+      });
+    }
+
     function renderCommissionHistoryEditor(history, historyLabels) {
       const box = document.getElementById('commissionHistoryEditor');
       if (!box) return;
@@ -476,9 +502,9 @@
       const fill = (id) => {
         const select = document.getElementById(id);
         if (!select) return;
-        const list = sortCommissionsChronologically(history);
+        const list = sortCommissionsNewestFirst(history);
         const current = activeValue || '';
-        const unique = sortCommissionsChronologically([...list, current]);
+        const unique = sortCommissionsNewestFirst([...list, current]);
         select.innerHTML = unique.map(value => `<option value="${value}">${(historyLabels && historyLabels[value]) || value}</option>`).join('');
         if (current) select.value = current;
       };
@@ -534,6 +560,7 @@
         const mode = data.emailRecipientMode || 'contact';
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
+        applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
       } catch (error) {
@@ -582,6 +609,7 @@
         const mode = data.emailRecipientMode || 'contact';
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
+        applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
         status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
@@ -941,6 +969,13 @@
         if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
         if (addLatestCommissionBtn) addLatestCommissionBtn.addEventListener('click', addLatestCommission);
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
+
+        const emailRecipientContactInput = document.getElementById('emailRecipientContact');
+        const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
+        const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
+        if (emailRecipientContactInput) emailRecipientContactInput.addEventListener('change', applyAdvisorRecipientUiState);
+        if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.addEventListener('change', applyAdvisorRecipientUiState);
+        if (sendEmailsEnabledInput) sendEmailsEnabledInput.addEventListener('change', applyAdvisorRecipientUiState);
 
         wireFolderPickerFallback();
         wireMainSectionTabs();
