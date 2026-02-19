@@ -60,10 +60,6 @@ public class WebUiServer {
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
     private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
-    private static final String SMTP_HOST = "smtp.mandrillapp.com";
-    private static final int SMTP_PORT = 587;
-    private static final String SMTP_USERNAME = "smtp@sr-gmbh.de";
-    private static final String SMTP_PASSWORD = "md-RAS4iZ8P9L_Jxc2e8UI4sQ";
 
     public static void main(String[] args) throws IOException {
         HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
@@ -263,6 +259,11 @@ public class WebUiServer {
                 String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH);
                 String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
+                String smtpHost = Objects.toString(config.getProperty("smtpHost"), "").trim();
+                String smtpPort = Objects.toString(config.getProperty("smtpPort"), "587").trim();
+                String smtpUsername = Objects.toString(config.getProperty("smtpUsername"), "").trim();
+                boolean smtpTls = Boolean.parseBoolean(Objects.toString(config.getProperty("smtpTls"), "false"));
+                boolean hasSmtpPassword = !Objects.toString(config.getProperty("smtpPassword"), "").trim().isBlank();
                 ensureCommissionInHistory(config, activeCommission);
                 persistSettings(config);
 
@@ -271,6 +272,11 @@ public class WebUiServer {
                 payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 payload.put("lastImportedComission", activeCommission);
                 payload.put("contactEmail", contactEmail);
+                payload.put("smtpHost", smtpHost);
+                payload.put("smtpPort", smtpPort);
+                payload.put("smtpUsername", smtpUsername);
+                payload.put("smtpTls", smtpTls);
+                payload.put("hasSmtpPassword", hasSmtpPassword);
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 return;
@@ -282,6 +288,11 @@ public class WebUiServer {
                     String newPath = asText(body, "pdfExportPath").trim();
                     String selectedCommission = asText(body, "lastImportedComission").trim();
                     String contactEmail = asText(body, "contactEmail").trim();
+                    String smtpHost = asText(body, "smtpHost").trim();
+                    String smtpPort = asText(body, "smtpPort").trim();
+                    String smtpUsername = asText(body, "smtpUsername").trim();
+                    String smtpPassword = asText(body, "smtpPassword").trim();
+                    boolean smtpTls = body.has("smtpTls") && body.get("smtpTls").asBoolean(false);
 
                     Properties config = loadConfig();
                     Path chosenDir = newPath.isEmpty() ? resolveSettingsDirectory(config) : Paths.get(newPath).toAbsolutePath();
@@ -293,6 +304,13 @@ public class WebUiServer {
                         ensureCommissionInHistory(config, selectedCommission);
                     }
                     config.setProperty("contactEmail", contactEmail);
+                    config.setProperty("smtpHost", smtpHost);
+                    config.setProperty("smtpPort", smtpPort.isBlank() ? "587" : smtpPort);
+                    config.setProperty("smtpUsername", smtpUsername);
+                    config.setProperty("smtpTls", String.valueOf(smtpTls));
+                    if (!smtpPassword.isBlank()) {
+                        config.setProperty("smtpPassword", smtpPassword);
+                    }
 
                     persistSettings(config);
 
@@ -302,6 +320,11 @@ public class WebUiServer {
                     payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                     payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
                     payload.put("contactEmail", Objects.toString(config.getProperty("contactEmail"), ""));
+                    payload.put("smtpHost", Objects.toString(config.getProperty("smtpHost"), ""));
+                    payload.put("smtpPort", Objects.toString(config.getProperty("smtpPort"), "587"));
+                    payload.put("smtpUsername", Objects.toString(config.getProperty("smtpUsername"), ""));
+                    payload.put("smtpTls", Boolean.parseBoolean(Objects.toString(config.getProperty("smtpTls"), "false")));
+                    payload.put("hasSmtpPassword", !Objects.toString(config.getProperty("smtpPassword"), "").trim().isBlank());
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 } catch (Exception e) {
@@ -477,7 +500,7 @@ public class WebUiServer {
                 }
                 String periodLabel = buildPaymentPeriodLabel(payment);
                 String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                sendInvoiceMailWithAttachment(contactEmail, pdfPath, affiliateNameForMail, periodLabel, payment, affiliate);
+                sendInvoiceMailWithAttachment(contactEmail, pdfPath, affiliateNameForMail, periodLabel, payment, affiliate, resolveSmtpConfig(config));
 
                 boolean opened = false;
                 String openMessage = "";
@@ -1202,18 +1225,18 @@ public class WebUiServer {
                 + maxDate.atZoneSameInstant(ZoneId.of("Europe/Berlin")).format(f);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, Path pdfPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, Path pdfPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, SmtpConfig smtpConfig) throws Exception {
         Properties props = new Properties();
-        props.put("mail.smtp.host", SMTP_HOST);
-        props.put("mail.smtp.port", String.valueOf(SMTP_PORT));
+        props.put("mail.smtp.host", smtpConfig.host);
+        props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
         props.put("mail.smtp.auth", "true");
-        props.put("mail.smtp.starttls.enable", "false");
+        props.put("mail.smtp.starttls.enable", String.valueOf(smtpConfig.tls));
         props.put("mail.smtp.ssl.enable", "false");
 
         Session session = Session.getInstance(props);
 
         MimeMessage message = new MimeMessage(session);
-        message.setFrom(new InternetAddress(SMTP_USERNAME));
+        message.setFrom(new InternetAddress(smtpConfig.username));
         message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail, false));
 
         String displayName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
@@ -1235,7 +1258,7 @@ public class WebUiServer {
 
         Transport transport = session.getTransport("smtp");
         try {
-            transport.connect(SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD);
+            transport.connect(smtpConfig.host, smtpConfig.port, smtpConfig.username, smtpConfig.password);
             transport.sendMessage(message, message.getAllRecipients());
             System.out.println("E-Mail versendet an " + toEmail + " | Betreff: " + subject);
         } finally {
@@ -1312,6 +1335,67 @@ public class WebUiServer {
         }
     }
 
+    private static SmtpConfig resolveSmtpConfig(Properties config) throws IOException {
+        String host = firstNonBlank(
+                Objects.toString(config.getProperty("smtpHost"), ""),
+                System.getenv("GOAFFPRO_SMTP_HOST")
+        );
+        String portRaw = firstNonBlank(
+                Objects.toString(config.getProperty("smtpPort"), ""),
+                System.getenv("GOAFFPRO_SMTP_PORT"),
+                "587"
+        );
+        String username = firstNonBlank(
+                Objects.toString(config.getProperty("smtpUsername"), ""),
+                System.getenv("GOAFFPRO_SMTP_USERNAME")
+        );
+        String password = firstNonBlank(
+                Objects.toString(config.getProperty("smtpPassword"), ""),
+                System.getenv("GOAFFPRO_SMTP_PASSWORD")
+        );
+        String tlsRaw = firstNonBlank(
+                Objects.toString(config.getProperty("smtpTls"), ""),
+                System.getenv("GOAFFPRO_SMTP_TLS"),
+                "false"
+        );
+
+        if (host.isBlank() || username.isBlank() || password.isBlank()) {
+            throw new IOException("SMTP-Konfiguration unvollständig. Bitte Host, Benutzername und Passwort in den Einstellungen setzen.");
+        }
+
+        int port;
+        try {
+            port = Integer.parseInt(portRaw);
+        } catch (Exception e) {
+            port = 587;
+        }
+        boolean tls = Boolean.parseBoolean(tlsRaw);
+        return new SmtpConfig(host, port, username, password, tls);
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) return value.trim();
+        }
+        return "";
+    }
+
+    private static class SmtpConfig {
+        final String host;
+        final int port;
+        final String username;
+        final String password;
+        final boolean tls;
+
+        SmtpConfig(String host, int port, String username, String password, boolean tls) {
+            this.host = host;
+            this.port = port;
+            this.username = username;
+            this.password = password;
+            this.tls = tls;
+        }
+    }
+
     private static JsonNode requestJson(String apiUrl, String apiKey) throws Exception {
         URL url = new URL(apiUrl);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
@@ -1372,6 +1456,11 @@ public class WebUiServer {
         ui.setProperty("pdfExportPath", Objects.toString(source.getProperty("pdfExportPath"), directory.toString()));
         ui.setProperty("lastImportedComission", Objects.toString(source.getProperty("lastImportedComission"), "0"));
         ui.setProperty("contactEmail", Objects.toString(source.getProperty("contactEmail"), ""));
+        ui.setProperty("smtpHost", Objects.toString(source.getProperty("smtpHost"), ""));
+        ui.setProperty("smtpPort", Objects.toString(source.getProperty("smtpPort"), "587"));
+        ui.setProperty("smtpUsername", Objects.toString(source.getProperty("smtpUsername"), ""));
+        ui.setProperty("smtpPassword", Objects.toString(source.getProperty("smtpPassword"), ""));
+        ui.setProperty("smtpTls", Objects.toString(source.getProperty("smtpTls"), "false"));
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
 
         try (OutputStream os = Files.newOutputStream(uiSettingsFile(directory))) {
@@ -1401,6 +1490,15 @@ public class WebUiServer {
         if (!uiContactEmail.isEmpty() || config.containsKey("contactEmail")) {
             config.setProperty("contactEmail", uiContactEmail);
         }
+
+        config.setProperty("smtpHost", Objects.toString(uiSettings.getProperty("smtpHost"), Objects.toString(config.getProperty("smtpHost"), "")).trim());
+        config.setProperty("smtpPort", Objects.toString(uiSettings.getProperty("smtpPort"), Objects.toString(config.getProperty("smtpPort"), "587")).trim());
+        config.setProperty("smtpUsername", Objects.toString(uiSettings.getProperty("smtpUsername"), Objects.toString(config.getProperty("smtpUsername"), "")).trim());
+        String uiSmtpPassword = Objects.toString(uiSettings.getProperty("smtpPassword"), "").trim();
+        if (!uiSmtpPassword.isEmpty() || config.containsKey("smtpPassword")) {
+            config.setProperty("smtpPassword", uiSmtpPassword);
+        }
+        config.setProperty("smtpTls", Objects.toString(uiSettings.getProperty("smtpTls"), Objects.toString(config.getProperty("smtpTls"), "false")).trim());
 
         ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
     }

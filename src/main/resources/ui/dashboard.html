@@ -151,6 +151,19 @@
             <div class="toolbar">
               <label for="contactEmail">Kontakt-E-Mail:</label>
               <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
+            </div>
+            <div class="toolbar">
+              <label for="smtpHost">SMTP Host:</label>
+              <input id="smtpHost" type="text" placeholder="smtp.example.com" />
+              <label for="smtpPort">Port:</label>
+              <input id="smtpPort" type="number" placeholder="587" style="max-width:120px" />
+            </div>
+            <div class="toolbar">
+              <label for="smtpUsername">SMTP Benutzer:</label>
+              <input id="smtpUsername" type="text" placeholder="user@example.com" />
+              <label for="smtpPassword">SMTP Passwort:</label>
+              <input id="smtpPassword" type="password" placeholder="(unverändert lassen zum Beibehalten)" />
+              <label><input id="smtpTls" type="checkbox" /> TLS aktivieren</label>
               <button id="saveSettingsBtn" class="secondary">Speichern</button>
             </div>
             <div class="toolbar"><small>Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</small></div>
@@ -300,11 +313,21 @@
     async function loadSettings() {
       const input = document.getElementById('pdfExportPath');
       const contactEmailInput = document.getElementById('contactEmail');
+      const smtpHostInput = document.getElementById('smtpHost');
+      const smtpPortInput = document.getElementById('smtpPort');
+      const smtpUsernameInput = document.getElementById('smtpUsername');
+      const smtpPasswordInput = document.getElementById('smtpPassword');
+      const smtpTlsInput = document.getElementById('smtpTls');
       if (!input) return;
       try {
         const data = await apiGet('/api/settings');
         input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
+        if (smtpHostInput) smtpHostInput.value = data.smtpHost || '';
+        if (smtpPortInput) smtpPortInput.value = data.smtpPort || '587';
+        if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || '';
+        if (smtpPasswordInput) smtpPasswordInput.value = '';
+        if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
       } catch (error) {
         document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
@@ -315,16 +338,31 @@
       const input = document.getElementById('pdfExportPath');
       const select = document.getElementById('lastImportedSelect');
       const contactEmailInput = document.getElementById('contactEmail');
+      const smtpHostInput = document.getElementById('smtpHost');
+      const smtpPortInput = document.getElementById('smtpPort');
+      const smtpUsernameInput = document.getElementById('smtpUsername');
+      const smtpPasswordInput = document.getElementById('smtpPassword');
+      const smtpTlsInput = document.getElementById('smtpTls');
       const status = document.getElementById('pollStatus');
       if (!input || !status || !select) return;
       try {
         const data = await apiPost('/api/settings', {
           pdfExportPath: input.value,
           lastImportedComission: select.value,
-          contactEmail: contactEmailInput ? contactEmailInput.value : ''
+          contactEmail: contactEmailInput ? contactEmailInput.value : '',
+          smtpHost: smtpHostInput ? smtpHostInput.value : '',
+          smtpPort: smtpPortInput ? smtpPortInput.value : '587',
+          smtpUsername: smtpUsernameInput ? smtpUsernameInput.value : '',
+          smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
+          smtpTls: smtpTlsInput ? smtpTlsInput.checked : false
         });
         input.value = data.pdfExportPath || input.value;
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
+        if (smtpHostInput) smtpHostInput.value = data.smtpHost || smtpHostInput.value;
+        if (smtpPortInput) smtpPortInput.value = data.smtpPort || smtpPortInput.value || '587';
+        if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || smtpUsernameInput.value;
+        if (smtpPasswordInput) smtpPasswordInput.value = '';
+        if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
         status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
       } catch (error) {
