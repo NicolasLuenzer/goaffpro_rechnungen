@@ -477,7 +477,7 @@ public class WebUiServer {
                 }
                 String periodLabel = buildPaymentPeriodLabel(payment);
                 String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                sendInvoiceMailWithAttachment(contactEmail, pdfPath, affiliateNameForMail, periodLabel);
+                sendInvoiceMailWithAttachment(contactEmail, pdfPath, affiliateNameForMail, periodLabel, payment, affiliate);
 
                 boolean opened = false;
                 String openMessage = "";
@@ -1202,7 +1202,7 @@ public class WebUiServer {
                 + maxDate.atZoneSameInstant(ZoneId.of("Europe/Berlin")).format(f);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, Path pdfPath, String affiliateName, String periodLabel) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, Path pdfPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", SMTP_HOST);
         props.put("mail.smtp.port", String.valueOf(SMTP_PORT));
@@ -1221,7 +1221,7 @@ public class WebUiServer {
         message.setSubject(subject, StandardCharsets.UTF_8.name());
 
         MimeBodyPart textPart = new MimeBodyPart();
-        textPart.setText("Guten Tag,\n\nanbei erhalten Sie den Provisionsnachweis als PDF-Anhang.\n\nFreundliche Grüße\nS+R Linear Technology GmbH", StandardCharsets.UTF_8.name());
+        textPart.setText(buildInvoiceMailBody(payment, affiliate, periodLabel), StandardCharsets.UTF_8.name());
 
         MimeBodyPart attachmentPart = new MimeBodyPart();
         FileDataSource fds = new FileDataSource(pdfPath.toFile());
@@ -1240,6 +1240,75 @@ public class WebUiServer {
             System.out.println("E-Mail versendet an " + toEmail + " | Betreff: " + subject);
         } finally {
             transport.close();
+        }
+    }
+
+
+    private static String buildInvoiceMailBody(JsonNode payment, JsonNode affiliate, String periodLabel) {
+        String affiliateName = affiliate != null ? asText(affiliate, "name") : "";
+        String affiliateEmail = affiliate != null ? asText(affiliate, "email") : "";
+        String paymentId = payment != null ? asText(payment, "id") : "";
+        String affiliateId = payment != null ? asText(payment, "affiliate_id") : "";
+        String payout = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
+        String method = payment != null ? asText(payment, "payment_method") : "";
+        String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
+
+        int txCount = 0;
+        JsonNode transactions = payment != null ? payment.get("transactions") : null;
+        if (transactions != null && transactions.isArray()) txCount = transactions.size();
+
+        return "Guten Tag,
+
+" +
+                "anbei erhalten Sie den Provisionsnachweis als PDF-Anhang.
+
+" +
+                "Zahllauf-Informationen:
+" +
+                "- Zeitraum: " + periodLabel + "
+" +
+                "- Zahllauf-ID: " + paymentId + "
+" +
+                "- Affiliate-ID: " + affiliateId + "
+" +
+                "- Name der Beraterin: " + affiliateName + "
+" +
+                "- E-Mail der Beraterin: " + affiliateEmail + "
+" +
+                "- Auszahlungsbetrag: " + payout + "
+" +
+                "- Zahlungsmethode: " + method + "
+" +
+                "- Auszahlungsdatum (System): " + created + "
+" +
+                "- Anzahl Transaktionen im Zahllauf: " + txCount + "
+
+" +
+                "Freundliche Grüße
+" +
+                "S+R Linear Technology GmbH";
+    }
+
+    private static String euroStatic(double value) {
+        return String.format(java.util.Locale.GERMANY, "%.2f €", value);
+    }
+
+    private static double parseDoubleSafeStatic(String raw) {
+        if (raw == null || raw.isBlank() || "null".equalsIgnoreCase(raw)) return 0.0;
+        try {
+            return Double.parseDouble(raw.replace(",", "."));
+        } catch (Exception e) {
+            return 0.0;
+        }
+    }
+
+    private static String formatDateTimeEuropeBerlinStatic(String input) {
+        if (input == null || input.isBlank()) return "";
+        try {
+            OffsetDateTime dt = OffsetDateTime.parse(input);
+            return dt.atZoneSameInstant(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+        } catch (Exception ignored) {
+            return input;
         }
     }
 

@@ -177,7 +177,6 @@
                 <th data-col="affiliateCountry">Affiliate-Land</th>
                 <th data-col="affiliateSteuernummer">Affiliate-Steuernummer</th>
                 <th data-col="amount">Betrag</th>
-                <th data-col="currency">Währung</th>
                 <th data-col="actions">Aktion</th>
               </tr>
             </thead>
@@ -197,7 +196,15 @@
     }
 
     function wireTabSwitching() { document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => activateTab(tab.dataset.target))); }
-    function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}|${row.currency}`; }
+    function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}`; }
+
+
+    function formatEuroAmount(raw) {
+      if (raw === null || raw === undefined || raw === '') return '';
+      const value = Number(raw);
+      if (Number.isNaN(value)) return `${raw} €`;
+      return `${value.toFixed(2).replace('.', ',')} €`;
+    }
 
     function filteredRows() {
       const needle = tableState.filter.trim().toLowerCase();
@@ -226,7 +233,7 @@
         const tr = document.createElement('tr');
         const key = rowKey(row);
         const checked = tableState.selected.has(key) ? 'checked' : '';
-        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateEmail || ''}</td><td>${row.affiliateAddress || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td>${row.amount || ''}</td><td>${row.currency || ''}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
+        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td>${row.affiliateName || ''}</td><td>${row.affiliateEmail || ''}</td><td>${row.affiliateAddress || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td>${formatEuroAmount(row.amount)}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
         body.appendChild(tr);
       });
 
