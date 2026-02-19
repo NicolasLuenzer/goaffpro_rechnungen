@@ -164,12 +164,17 @@ public class WebUiServer {
             }
 
             try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
 
                 String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
-                String activeLastImportedComission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
+                String requestedCommission = asText(body, "sinceId").trim();
+                String activeLastImportedComission = requestedCommission.isBlank()
+                        ? Objects.toString(config.getProperty("lastImportedComission"), "0").trim()
+                        : requestedCommission;
 
                 String paymentsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + activeLastImportedComission
                         + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,created_at";
@@ -178,6 +183,7 @@ public class WebUiServer {
                 JsonNode payments = paymentRoot.get("payments");
 
                 if (payments == null || !payments.isArray() || payments.size() == 0) {
+                    config.setProperty("lastImportedComission", activeLastImportedComission);
                     ensureCommissionInHistory(config, activeLastImportedComission);
                     persistSettings(config);
 
@@ -224,6 +230,7 @@ public class WebUiServer {
                     }
                 }
 
+                config.setProperty("lastImportedComission", activeLastImportedComission);
                 ensureCommissionInHistory(config, activeLastImportedComission);
                 ensureCommissionInHistory(config, highestId);
                 persistSettings(config);

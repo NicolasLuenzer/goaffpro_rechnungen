@@ -3,11 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>GoAffPro Rechnungen Dashboard</title>
+  <title>VEMMiNA Provisionssystem</title>
   <style>
     body { font-family: Arial, sans-serif; margin: 24px; background: #f6f8fb; color: #1f2937; }
-    h1 { margin-bottom: 8px; }
-    .hint { margin-bottom: 16px; color: #4b5563; }
+    h1 { margin: 0; font-size: 28px; }
+    .app-header { display:flex; align-items:center; gap:14px; margin-bottom: 14px; background: linear-gradient(120deg, #ffffff, #eef6ff); border: 1px solid #dbeafe; border-radius: 12px; padding: 12px 14px; }
+    .app-logo { height: 42px; width: auto; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.12)); }
+    .app-subtitle { margin: 2px 0 0; color: #4b5563; font-size: 13px; }
     .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
     .tab { border: 1px solid #93c5fd; border-radius: 8px; padding: 10px 14px; background: #dbeafe; color: #1e3a8a; font-weight: 600; cursor: pointer; transition: all .15s ease; }
     .tab:hover { background: #bfdbfe; }
@@ -41,8 +43,13 @@
   </style>
 </head>
 <body>
-  <h1>Weboberfläche: App-Visualisierung</h1>
-  <p class="hint">Die Reiter werden aus allen ausführbaren Java-Dateien (mit <code>main</code>-Methode) aufgebaut.</p>
+  <div class="app-header">
+    <img class="app-logo" src="https://cdn.shopify.com/s/files/1/0791/6748/8345/files/grau2.png" alt="VEMMiNA Logo" />
+    <div>
+      <h1>VEMMiNA Provisionssystem</h1>
+      <p class="app-subtitle">Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.</p>
+    </div>
+  </div>
   <div id="appVersion" class="app-version" title="Klicken für Versionshistorie">Version: lädt…</div>
   <div id="versionHistoryPopup" class="version-popup" style="display:none">
     <div class="version-popup-header">Letzte Versionen</div>
@@ -129,7 +136,7 @@
 
       const tab = document.createElement('button');
       tab.className = `tab ${isActive ? 'active' : ''}`;
-      tab.textContent = executable.name;
+      tab.textContent = executable.displayName || executable.name;
       tab.dataset.target = executable.id;
       tabs.appendChild(tab);
 
@@ -139,7 +146,7 @@
 
       if (executable.name === 'MainProvisionenGoaffpro') {
         panel.innerHTML = `
-          <h2>${executable.name}</h2>
+          <h2>${executable.displayName || executable.name}</h2>
           <p>Pfad: <code>${executable.path}</code></p>
 
           <div class="section-tabs">
@@ -150,6 +157,8 @@
           <div id="main-workspace" class="section-panel active">
             <div class="toolbar">
               <button id="togglePollingBtn">Polling starten</button>
+              <label for="lastImportedSelect">since_id:</label>
+              <select id="lastImportedSelect"></select>
               <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
               <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
             </div>
@@ -186,10 +195,6 @@
                 <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
               </div>
               <div class="toolbar">
-                <label for="lastImportedSelect">Aktive LastImportedComission (since_id):</label>
-                <select id="lastImportedSelect"></select>
-              </div>
-              <div class="toolbar">
                 <label for="contactEmail">Kontakt-E-Mail:</label>
                 <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
               </div>
@@ -213,7 +218,7 @@
           </div>
         `;
       } else {
-        panel.innerHTML = `<h2>${executable.name}</h2><p>Pfad: <code>${executable.path}</code></p><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
+        panel.innerHTML = `<h2>${executable.displayName || executable.name}</h2><p>Pfad: <code>${executable.path}</code></p><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
       }
 
       panels.appendChild(panel);
@@ -613,7 +618,8 @@
     async function pollOnce() {
       const status = document.getElementById('pollStatus');
       try {
-        const data = await apiPost('/api/provisionen-goaffpro/poll', {});
+        const sinceSelect = document.getElementById('lastImportedSelect');
+        const data = await apiPost('/api/provisionen-goaffpro/poll', { sinceId: sinceSelect ? (sinceSelect.value || '0') : '0' });
         if (Array.isArray(data.payments) && data.payments.length > 0) {
           data.payments.forEach(payment => {
             const key = rowKey(payment);
@@ -692,7 +698,12 @@
           return;
         }
 
-        executables.forEach((exe, index) => createTabAndPanel(exe, index === 0));
+        const mainExecutable = executables.find(exe => exe.name === 'MainProvisionenGoaffpro');
+        if (!mainExecutable) {
+          document.getElementById('panels').innerHTML = '<p>MainProvisionenGoaffpro konnte nicht gefunden werden.</p>';
+          return;
+        }
+        createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
         createAnalyticsTabAndPanel();
         wireTabSwitching();
         await loadVersion();
