@@ -416,7 +416,12 @@ public class WebUiServer {
                 Map<String, Integer> countryAgg = new LinkedHashMap<>();
                 Map<String, Map<String, Object>> leaderAgg = new LinkedHashMap<>();
                 List<Map<String, Object>> paymentRows = new ArrayList<>();
-
+                List<Map<String, Object>> pendingRows = new ArrayList<>();
+                List<Map<String, Object>> trafficSourceRows = new ArrayList<>();
+                List<Map<String, Object>> orderStatusRows = new ArrayList<>();
+                List<Map<String, Object>> rewardStatusRows = new ArrayList<>();
+                double pendingDueTotal = 0.0;
+                double rewardAmountTotal = 0.0;
                 for (JsonNode payment : payments) {
                     String paymentId = asText(payment, "id");
                     String affiliateId = asText(payment, "affiliate_id");
@@ -513,6 +518,9 @@ public class WebUiServer {
                 summary.put("advisorCount", advisorRows.size());
                 summary.put("selfCommission", totalSelfCommission);
                 summary.put("teamCommission", totalTeamCommission);
+                summary.put("pendingDueTotal", pendingDueTotal);
+                summary.put("trafficSources", trafficSourceRows.size());
+                summary.put("rewardAmountTotal", rewardAmountTotal);
 
                 List<Map<String, Object>> countryRows = new ArrayList<>();
                 for (Map.Entry<String, Integer> entry : countryAgg.entrySet()) {
@@ -533,12 +541,116 @@ public class WebUiServer {
                 }
                 leaderRows.sort((a,b)->Double.compare((Double)b.get("teamTotalAmount"),(Double)a.get("teamTotalAmount")));
 
+                try {
+                    JsonNode pendingRoot = requestJson("https://api.goaffpro.com/v1/admin/payments/pending?limit=100", apiKey);
+                    JsonNode pending = pendingRoot.get("pending");
+                    if (pending != null && pending.isArray()) {
+                        for (JsonNode item : pending) {
+                            double total = parseDoubleSafeStatic(asText(item, "total"));
+                            double paid = parseDoubleSafeStatic(asText(item, "paid_out"));
+                            double due = Math.max(0.0, total - paid);
+                            pendingDueTotal += due;
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put("affiliateId", asText(item, "affiliate_id"));
+                            row.put("name", asText(item, "name"));
+                            row.put("total", total);
+                            row.put("paidOut", paid);
+                            row.put("due", due);
+                            pendingRows.add(row);
+                        }
+                        pendingRows.sort((a,b)->Double.compare((Double)b.get("due"),(Double)a.get("due")));
+                        if (pendingRows.size() > 15) pendingRows = new ArrayList<>(pendingRows.subList(0, 15));
+                    }
+                } catch (Exception ignored) {
+                }
+
+                try {
+                    JsonNode trafficRoot = requestJson("https://api.goaffpro.com/v1/admin/traffic?limit=250", apiKey);
+                    JsonNode traffic = trafficRoot.get("traffic");
+                    Map<String, Map<String, Object>> sourceAgg = new LinkedHashMap<>();
+                    if (traffic != null && traffic.isArray()) {
+                        for (JsonNode visit : traffic) {
+                            String source = asText(visit, "source");
+                            if (source.isBlank()) source = "(ohne Quelle)";
+                            int pageViews = (int) parseDoubleSafeStatic(asText(visit, "page_views"));
+                            Map<String, Object> agg = sourceAgg.computeIfAbsent(source, k -> {
+                                Map<String, Object> m = new LinkedHashMap<>();
+                                m.put("source", source);
+                                m.put("visits", 0);
+                                m.put("pageViews", 0);
+                                return m;
+                            });
+                            agg.put("visits", ((Integer) agg.get("visits")) + 1);
+                            agg.put("pageViews", ((Integer) agg.get("pageViews")) + pageViews);
+                        }
+                    }
+                    trafficSourceRows = new ArrayList<>(sourceAgg.values());
+                    trafficSourceRows.sort((a,b)->Integer.compare((Integer)b.get("visits"),(Integer)a.get("visits")));
+                    if (trafficSourceRows.size() > 15) trafficSourceRows = new ArrayList<>(trafficSourceRows.subList(0, 15));
+                } catch (Exception ignored) {
+                }
+
+                try {
+                    JsonNode orderRoot = requestJson("https://api.goaffpro.com/v1/admin/orders?limit=250&fields=order_id,affiliate_id,status,created_at", apiKey);
+                    JsonNode orders = orderRoot.get("orders");
+                    Map<String, Integer> statusAgg = new LinkedHashMap<>();
+                    if (orders != null && orders.isArray()) {
+                        for (JsonNode order : orders) {
+                            String status = asText(order, "status");
+                            if (status.isBlank()) status = "(ohne Status)";
+                            statusAgg.put(status, statusAgg.getOrDefault(status, 0) + 1);
+                        }
+                    }
+                    for (Map.Entry<String, Integer> e : statusAgg.entrySet()) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("status", e.getKey());
+                        row.put("count", e.getValue());
+                        orderStatusRows.add(row);
+                    }
+                    orderStatusRows.sort((a,b)->Integer.compare((Integer)b.get("count"),(Integer)a.get("count")));
+                } catch (Exception ignored) {
+                }
+
+                try {
+                    JsonNode rewardRoot = requestJson("https://api.goaffpro.com/v1/admin/rewards?limit=250&fields=id,affiliate_id,amount,status,created_at", apiKey);
+                    JsonNode rewards = rewardRoot.get("rewards");
+                    Map<String, Map<String, Object>> rewardAgg = new LinkedHashMap<>();
+                    if (rewards != null && rewards.isArray()) {
+                        for (JsonNode reward : rewards) {
+                            String status = asText(reward, "status");
+                            if (status.isBlank()) status = "(ohne Status)";
+                            double amount = parseDoubleSafeStatic(asText(reward, "amount"));
+                            rewardAmountTotal += amount;
+                            Map<String, Object> agg = rewardAgg.computeIfAbsent(status, k -> {
+                                Map<String, Object> m = new LinkedHashMap<>();
+                                m.put("status", status);
+                                m.put("count", 0);
+                                m.put("amount", 0.0);
+                                return m;
+                            });
+                            agg.put("count", ((Integer) agg.get("count")) + 1);
+                            agg.put("amount", ((Double) agg.get("amount")) + amount);
+                        }
+                    }
+                    rewardStatusRows = new ArrayList<>(rewardAgg.values());
+                    rewardStatusRows.sort((a,b)->Double.compare((Double)b.get("amount"),(Double)a.get("amount")));
+                } catch (Exception ignored) {
+                }
+
+                summary.put("pendingDueTotal", pendingDueTotal);
+                summary.put("trafficSources", trafficSourceRows.size());
+                summary.put("rewardAmountTotal", rewardAmountTotal);
+
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("summary", summary);
                 payload.put("advisorRows", advisorRows);
                 payload.put("leaderRows", leaderRows);
                 payload.put("countryRows", countryRows);
                 payload.put("paymentRows", paymentRows);
+                payload.put("pendingRows", pendingRows);
+                payload.put("trafficSourceRows", trafficSourceRows);
+                payload.put("orderStatusRows", orderStatusRows);
+                payload.put("rewardStatusRows", rewardStatusRows);
                 Map<String, Object> chartData = new LinkedHashMap<>();
                 chartData.put("labels", labels);
                 chartData.put("amountSeries", amountSeries);

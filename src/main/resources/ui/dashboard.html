@@ -273,6 +273,27 @@
           <tbody id="analyticsCountryBody"></tbody>
         </table>
 
+        <div class="toolbar"><strong>Weitere API-Auswertungen</strong></div>
+        <table>
+          <thead><tr><th>Offene Auszahlungen (Top)</th><th>Affiliate-ID</th><th>Offen</th><th>Gesamt</th><th>Bereits ausgezahlt</th></tr></thead>
+          <tbody id="analyticsPendingBody"></tbody>
+        </table>
+
+        <table>
+          <thead><tr><th>Traffic-Quelle</th><th>Besuche</th><th>Page-Views</th></tr></thead>
+          <tbody id="analyticsTrafficBody"></tbody>
+        </table>
+
+        <table>
+          <thead><tr><th>Order-Status</th><th>Anzahl</th></tr></thead>
+          <tbody id="analyticsOrderStatusBody"></tbody>
+        </table>
+
+        <table>
+          <thead><tr><th>Reward-Status</th><th>Anzahl</th><th>Reward-Betrag</th></tr></thead>
+          <tbody id="analyticsRewardStatusBody"></tbody>
+        </table>
+
         <div class="toolbar"><strong>Grafiken</strong></div>
         <canvas id="analyticsAmountChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
         <div style="height:8px"></div>
@@ -590,7 +611,11 @@
       const advisorBody = document.getElementById('analyticsAdvisorBody');
       const leaderBody = document.getElementById('analyticsLeaderBody');
       const countryBody = document.getElementById('analyticsCountryBody');
-      if (!summaryBody || !advisorBody || !leaderBody || !countryBody) return;
+      const pendingBody = document.getElementById('analyticsPendingBody');
+      const trafficBody = document.getElementById('analyticsTrafficBody');
+      const orderStatusBody = document.getElementById('analyticsOrderStatusBody');
+      const rewardStatusBody = document.getElementById('analyticsRewardStatusBody');
+      if (!summaryBody || !advisorBody || !leaderBody || !countryBody || !pendingBody || !trafficBody || !orderStatusBody || !rewardStatusBody) return;
 
       const summary = data.summary || {};
       const summaryRows = [
@@ -600,7 +625,10 @@
         ['Anzahl Transaktionen', summary.totalTransactions || 0],
         ['Beraterinnen gesamt', summary.advisorCount || 0],
         ['Eigenprovision gesamt', formatEuroAmount(summary.selfCommission || 0)],
-        ['Teamprovision gesamt', formatEuroAmount(summary.teamCommission || 0)]
+        ['Teamprovision gesamt', formatEuroAmount(summary.teamCommission || 0)],
+        ['Offene Auszahlungen gesamt', formatEuroAmount(summary.pendingDueTotal || 0)],
+        ['Reward-Betrag gesamt', formatEuroAmount(summary.rewardAmountTotal || 0)],
+        ['Traffic-Quellen (Top)', summary.trafficSources || 0]
       ];
       summaryBody.innerHTML = summaryRows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
 
@@ -616,6 +644,18 @@
 
       const countries = Array.isArray(data.countryRows) ? data.countryRows : [];
       countryBody.innerHTML = countries.map(r => `<tr><td>${r.country || ''}</td><td>${r.payments || 0}</td></tr>`).join('');
+
+      const pending = Array.isArray(data.pendingRows) ? data.pendingRows : [];
+      pendingBody.innerHTML = pending.map(r => `<tr><td>${r.name || ''}</td><td>${r.affiliateId || ''}</td><td>${formatEuroAmount(r.due || 0)}</td><td>${formatEuroAmount(r.total || 0)}</td><td>${formatEuroAmount(r.paidOut || 0)}</td></tr>`).join('');
+
+      const traffic = Array.isArray(data.trafficSourceRows) ? data.trafficSourceRows : [];
+      trafficBody.innerHTML = traffic.map(r => `<tr><td>${r.source || ''}</td><td>${r.visits || 0}</td><td>${r.pageViews || 0}</td></tr>`).join('');
+
+      const orderStatuses = Array.isArray(data.orderStatusRows) ? data.orderStatusRows : [];
+      orderStatusBody.innerHTML = orderStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${r.count || 0}</td></tr>`).join('');
+
+      const rewardStatuses = Array.isArray(data.rewardStatusRows) ? data.rewardStatusRows : [];
+      rewardStatusBody.innerHTML = rewardStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${r.count || 0}</td><td>${formatEuroAmount(r.amount || 0)}</td></tr>`).join('');
 
       const chart = data.chartData || {};
       drawBarChart('analyticsAmountChart', chart.labels || [], chart.amountSeries || [], '#2563eb');
