@@ -60,6 +60,8 @@ public class WebUiServer {
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
+    private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
+    private static final List<String> DEFAULT_COMMISSION_HISTORY = List.of("2103705", "2167905", "2190357", "2230376", "2336836", "2421355", "2497986", "2565325");
     private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
 
     public static void main(String[] args) throws IOException {
@@ -171,7 +173,7 @@ public class WebUiServer {
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
 
-                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
+                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
                 String requestedCommission = asText(body, "sinceId").trim();
                 String activeLastImportedComission = requestedCommission.isBlank()
                         ? Objects.toString(config.getProperty("lastImportedComission"), "0").trim()
@@ -193,6 +195,7 @@ public class WebUiServer {
                     emptyResult.put("message", "Keine neuen Zahlungen gefunden.");
                     emptyResult.put("lastImportedComission", activeLastImportedComission);
                     emptyResult.put("lastImportedComissionHistory", getCommissionHistory(config));
+                    emptyResult.put("commissionHistoryLabels", buildCommissionHistoryLabels(getCommissionHistory(config)));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(emptyResult));
                     return;
                 }
@@ -242,6 +245,7 @@ public class WebUiServer {
                 result.put("lastImportedComission", activeLastImportedComission);
                 result.put("highestDiscoveredComission", highestId);
                 result.put("lastImportedComissionHistory", getCommissionHistory(config));
+                result.put("commissionHistoryLabels", buildCommissionHistoryLabels(getCommissionHistory(config)));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(result));
             } catch (Exception e) {
                 Map<String, String> err = new HashMap<>();
@@ -267,6 +271,7 @@ public class WebUiServer {
 
                 String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH);
                 String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
+                String goaffproAPIKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 String smtpHost = Objects.toString(config.getProperty("smtpHost"), "").trim();
                 String smtpPort = Objects.toString(config.getProperty("smtpPort"), "587").trim();
@@ -281,6 +286,7 @@ public class WebUiServer {
                 payload.put("pdfExportPath", exportDir);
                 payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 payload.put("lastImportedComission", activeCommission);
+                payload.put("goaffproAPIKey", goaffproAPIKey);
                 payload.put("contactEmail", contactEmail);
                 payload.put("smtpHost", smtpHost);
                 payload.put("smtpPort", smtpPort);
@@ -289,6 +295,7 @@ public class WebUiServer {
                 payload.put("hasSmtpPassword", hasSmtpPassword);
                 payload.put("sendEmailsEnabled", sendEmailsEnabled);
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
+                payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(getCommissionHistory(config)));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 return;
             }
@@ -298,6 +305,7 @@ public class WebUiServer {
                     JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                     String newPath = asText(body, "pdfExportPath").trim();
                     String selectedCommission = asText(body, "lastImportedComission").trim();
+                    String goaffproAPIKey = asText(body, "goaffproAPIKey").trim();
                     String contactEmail = asText(body, "contactEmail").trim();
                     String smtpHost = asText(body, "smtpHost").trim();
                     String smtpPort = asText(body, "smtpPort").trim();
@@ -311,6 +319,9 @@ public class WebUiServer {
                     Files.createDirectories(chosenDir);
 
                     config.setProperty("pdfExportPath", chosenDir.toString());
+                    if (!goaffproAPIKey.isEmpty()) {
+                        config.setProperty("goaffproAPIKey", goaffproAPIKey);
+                    }
                     if (!selectedCommission.isEmpty()) {
                         config.setProperty("lastImportedComission", selectedCommission);
                         ensureCommissionInHistory(config, selectedCommission);
@@ -332,6 +343,7 @@ public class WebUiServer {
                     payload.put("pdfExportPath", Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH));
                     payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                     payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
+                    payload.put("goaffproAPIKey", Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY));
                     payload.put("contactEmail", Objects.toString(config.getProperty("contactEmail"), ""));
                     payload.put("smtpHost", Objects.toString(config.getProperty("smtpHost"), ""));
                     payload.put("smtpPort", Objects.toString(config.getProperty("smtpPort"), "587"));
@@ -340,6 +352,7 @@ public class WebUiServer {
                     payload.put("hasSmtpPassword", !Objects.toString(config.getProperty("smtpPassword"), "").trim().isBlank());
                     payload.put("sendEmailsEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true")));
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
+                payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(getCommissionHistory(config)));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 } catch (Exception e) {
                     sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -371,7 +384,7 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
+                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
 
                 String paymentsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + sinceId
                         + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
@@ -669,7 +682,7 @@ public class WebUiServer {
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
 
-                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), "").trim();
+                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
                 String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?id=" + paymentId
                         + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
                 JsonNode response = requestJson(detailsUrl, apiKey);
@@ -1697,6 +1710,7 @@ public class WebUiServer {
         Properties ui = new Properties();
         ui.setProperty("pdfExportPath", Objects.toString(source.getProperty("pdfExportPath"), directory.toString()));
         ui.setProperty("lastImportedComission", Objects.toString(source.getProperty("lastImportedComission"), "0"));
+        ui.setProperty("goaffproAPIKey", Objects.toString(source.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY));
         ui.setProperty("contactEmail", Objects.toString(source.getProperty("contactEmail"), ""));
         ui.setProperty("smtpHost", Objects.toString(source.getProperty("smtpHost"), ""));
         ui.setProperty("smtpPort", Objects.toString(source.getProperty("smtpPort"), "587"));
@@ -1729,6 +1743,11 @@ public class WebUiServer {
             config.setProperty(COMMISSION_HISTORY_KEY, uiHistory);
         }
 
+        String uiApiKey = Objects.toString(uiSettings.getProperty("goaffproAPIKey"), "").trim();
+        if (!uiApiKey.isEmpty()) {
+            config.setProperty("goaffproAPIKey", uiApiKey);
+        }
+
         String uiContactEmail = Objects.toString(uiSettings.getProperty("contactEmail"), "").trim();
         if (!uiContactEmail.isEmpty() || config.containsKey("contactEmail")) {
             config.setProperty("contactEmail", uiContactEmail);
@@ -1754,6 +1773,12 @@ public class WebUiServer {
         if (Objects.toString(config.getProperty("sendEmailsEnabled"), "").isBlank()) {
             config.setProperty("sendEmailsEnabled", "true");
         }
+        if (Objects.toString(config.getProperty("goaffproAPIKey"), "").isBlank()) {
+            config.setProperty("goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY);
+        }
+        for (String commission : DEFAULT_COMMISSION_HISTORY) {
+            ensureCommissionInHistory(config, commission);
+        }
         storeConfig(config);
         saveUiSettings(resolveSettingsDirectory(config), config);
     }
@@ -1769,11 +1794,33 @@ public class WebUiServer {
                 }
             }
         }
+        for (String value : DEFAULT_COMMISSION_HISTORY) {
+            unique.add(value);
+        }
         String active = Objects.toString(properties.getProperty("lastImportedComission"), "").trim();
         if (!active.isEmpty()) {
             unique.add(active);
         }
         return new ArrayList<>(unique);
+    }
+
+    private static Map<String, String> buildCommissionHistoryLabels(List<String> history) {
+        Map<String, String> labels = new LinkedHashMap<>();
+        Map<String, String> knownDates = Map.of(
+                "2103705", "26.03.2025",
+                "2167905", "28.04.2025",
+                "2190357", "06.05.2025",
+                "2230376", "28.05.2025",
+                "2336836", "30.06.2025",
+                "2421355", "31.07.2025",
+                "2497986", "29.08.2025",
+                "2565325", "30.09.2025"
+        );
+        for (String commission : history) {
+            String date = knownDates.get(commission);
+            labels.put(commission, date == null ? commission : (commission + " (" + date + ")"));
+        }
+        return labels;
     }
 
     private static void ensureCommissionInHistory(Properties properties, String commission) {

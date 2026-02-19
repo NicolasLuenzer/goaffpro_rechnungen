@@ -147,9 +147,7 @@
       if (executable.name === 'MainProvisionenGoaffpro') {
         panel.innerHTML = `
           <h2>${executable.displayName || executable.name}</h2>
-          <p>Pfad: <code>${executable.path}</code></p>
-
-          <div class="section-tabs">
+                    <div class="section-tabs">
             <button class="section-tab active" data-section-target="main-workspace">Arbeitsbereich</button>
             <button class="section-tab" data-section-target="main-settings">⚙ Einstellungen</button>
           </div>
@@ -195,6 +193,10 @@
                 <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
               </div>
               <div class="toolbar">
+                <label for="goaffproAPIKey">GoAffPro API-Key:</label>
+                <input id="goaffproAPIKey" type="text" placeholder="API-Key" />
+              </div>
+              <div class="toolbar">
                 <label for="contactEmail">Kontakt-E-Mail:</label>
                 <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
               </div>
@@ -218,7 +220,7 @@
           </div>
         `;
       } else {
-        panel.innerHTML = `<h2>${executable.displayName || executable.name}</h2><p>Pfad: <code>${executable.path}</code></p><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
+        panel.innerHTML = `<h2>${executable.displayName || executable.name}</h2><p>Für diesen Reiter ist aktuell keine interaktive Aktion hinterlegt.</p>`;
       }
 
       panels.appendChild(panel);
@@ -377,14 +379,14 @@
       });
     }
 
-    function updateCommissionSelect(history, activeValue) {
+    function updateCommissionSelect(history, activeValue, historyLabels) {
       const fill = (id) => {
         const select = document.getElementById(id);
         if (!select) return;
         const list = Array.isArray(history) ? history : [];
         const current = activeValue || '';
         const unique = [...new Set([...list, current].filter(Boolean))];
-        select.innerHTML = unique.map(value => `<option value="${value}">${value}</option>`).join('');
+        select.innerHTML = unique.map(value => `<option value="${value}">${(historyLabels && historyLabels[value]) || value}</option>`).join('');
         if (current) select.value = current;
       };
       fill('lastImportedSelect');
@@ -400,6 +402,7 @@
 
     async function loadSettings() {
       const input = document.getElementById('pdfExportPath');
+      const goaffproAPIKeyInput = document.getElementById('goaffproAPIKey');
       const contactEmailInput = document.getElementById('contactEmail');
       const smtpHostInput = document.getElementById('smtpHost');
       const smtpPortInput = document.getElementById('smtpPort');
@@ -411,6 +414,7 @@
       try {
         const data = await apiGet('/api/settings');
         input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
+        if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || '';
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || '';
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || '587';
@@ -418,7 +422,7 @@
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
-        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
       } catch (error) {
         document.getElementById('pollStatus').textContent = `Konnte Einstellungen nicht laden: ${error.message}`;
       }
@@ -427,6 +431,7 @@
     async function saveSettings() {
       const input = document.getElementById('pdfExportPath');
       const select = document.getElementById('lastImportedSelect');
+      const goaffproAPIKeyInput = document.getElementById('goaffproAPIKey');
       const contactEmailInput = document.getElementById('contactEmail');
       const smtpHostInput = document.getElementById('smtpHost');
       const smtpPortInput = document.getElementById('smtpPort');
@@ -440,6 +445,7 @@
         const data = await apiPost('/api/settings', {
           pdfExportPath: input.value,
           lastImportedComission: select.value,
+          goaffproAPIKey: goaffproAPIKeyInput ? goaffproAPIKeyInput.value : '',
           contactEmail: contactEmailInput ? contactEmailInput.value : '',
           smtpHost: smtpHostInput ? smtpHostInput.value : '',
           smtpPort: smtpPortInput ? smtpPortInput.value : '587',
@@ -449,6 +455,7 @@
           sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true
         });
         input.value = data.pdfExportPath || input.value;
+        if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || smtpHostInput.value;
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || smtpPortInput.value || '587';
@@ -456,7 +463,7 @@
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (smtpTlsInput) smtpTlsInput.checked = !!data.smtpTls;
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
-        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         status.textContent = `Einstellungen gespeichert (Datei im Zielordner).`;
       } catch (error) {
         status.textContent = `Fehler beim Speichern der Einstellungen: ${error.message}`;
@@ -642,7 +649,7 @@
           });
           renderTable();
         }
-        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission);
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         status.textContent = data.message || 'Polling erfolgreich.';
       } catch (error) {
         status.textContent = `Fehler beim Polling: ${error.message}`;
