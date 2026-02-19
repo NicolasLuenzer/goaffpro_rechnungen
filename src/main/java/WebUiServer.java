@@ -540,8 +540,9 @@ public class WebUiServer {
 
                 JsonNode transactions = payment != null ? payment.get("transactions") : null;
                 if (transactions != null && transactions.isArray() && transactions.size() > 0) {
-                    int idx = 0;
-                    while (idx < transactions.size()) {
+                    for (int idx = 0; idx < transactions.size(); idx++) {
+                        JsonNode tx = transactions.get(idx);
+
                         PDPage txPage = new PDPage();
                         document.addPage(txPage);
                         try (PDPageContentStream cs = new PDPageContentStream(document, txPage)) {
@@ -551,7 +552,7 @@ public class WebUiServer {
                             cs.beginText();
                             cs.setFont(PDType1Font.HELVETICA_BOLD, 13);
                             cs.newLineAtOffset(x, y);
-                            cs.showText("Transactions");
+                            cs.showText("Transaktion " + (idx + 1));
                             cs.endText();
                             y -= 20;
 
@@ -561,29 +562,31 @@ public class WebUiServer {
                             float usedHeader = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, "Feld", "Wert");
                             y -= usedHeader;
 
-                            while (idx < transactions.size() && y > 80f) {
-                                JsonNode tx = transactions.get(idx);
-                                float u1 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("tx_id"), "tx_id", 1), translateFieldValue("tx_id", asText(tx, "tx_id"))); y -= u1;
-                                float u2 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("amount"), "amount", 1), translateFieldValue("amount", asText(tx, "amount"))); y -= u2;
-                                float u3 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("entity_type"), "entity_type", 1), translateFieldValue("entity_type", asText(tx, "entity_type"))); y -= u3;
-                                float u4 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("created_at"), "created_at", 1), translateFieldValue("created_at", asText(tx, "created_at"))); y -= u4;
+                            JsonNode metadata = tx.get("metadata");
+                            String orderNumber = metadata != null ? asText(metadata, "order_number") : "";
+                            float uOrder = drawTableRowBold(cs, x, y, 18f, keyWidth, valueWidth,
+                                    label(resolveGermanLabel("order_number"), "order_number", 1),
+                                    translateFieldValue("order_number", orderNumber));
+                            y -= uOrder;
 
-                                JsonNode metadata = tx.get("metadata");
-                                if (metadata != null && metadata.isObject()) {
-                                    var it = metadata.fieldNames();
-                                    while (it.hasNext() && y > 80f) {
-                                        String key = it.next();
-                                        String rawValue = asText(metadata, key);
-                                        float um = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth,
-                                                label(resolveGermanLabel(key), key, 2),
-                                                translateFieldValue(key, rawValue));
-                                        y -= um;
+                            float u1 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("tx_id"), "tx_id", 1), translateFieldValue("tx_id", asText(tx, "tx_id"))); y -= u1;
+                            float u2 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("amount"), "amount", 1), translateFieldValue("amount", asText(tx, "amount"))); y -= u2;
+                            float u3 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("entity_type"), "entity_type", 1), translateFieldValue("entity_type", asText(tx, "entity_type"))); y -= u3;
+                            float u4 = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, label(resolveGermanLabel("created_at"), "created_at", 1), translateFieldValue("created_at", asText(tx, "created_at"))); y -= u4;
+
+                            if (metadata != null && metadata.isObject()) {
+                                var it = metadata.fieldNames();
+                                while (it.hasNext() && y > 80f) {
+                                    String key = it.next();
+                                    if ("amount".equals(key) || "order_number".equals(key)) {
+                                        continue;
                                     }
+                                    String rawValue = asText(metadata, key);
+                                    float um = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth,
+                                            label(resolveGermanLabel(key), key, 2),
+                                            translateFieldValue(key, rawValue));
+                                    y -= um;
                                 }
-
-                                float sep = drawTableRow(cs, x, y, 12f, totalWidth, 0f, "", "");
-                                y -= sep;
-                                idx++;
                             }
                         }
                     }
@@ -651,6 +654,41 @@ public class WebUiServer {
                 if (valueWidth > 0f) {
                     cs.beginText();
                     cs.setFont(PDType1Font.HELVETICA, 9);
+                    cs.newLineAtOffset(x + keyWidth + 4, textY - (i * 10f));
+                    cs.showText(shortenForPdf(vl, 400));
+                    cs.endText();
+                }
+            }
+            return rowHeight;
+        }
+
+    private static float drawTableRowBold(PDPageContentStream cs, float x, float y, float minRowHeight, float keyWidth, float valueWidth, String key, String value) throws IOException {
+            List<String> keyLines = wrapForPdf(key, Math.max(8, (int)(keyWidth / 4.8f)));
+            List<String> valueLines = valueWidth > 0 ? wrapForPdf(value, Math.max(8, (int)(valueWidth / 4.8f))) : List.of("");
+            int lines = Math.max(keyLines.size(), valueLines.size());
+            float rowHeight = Math.max(minRowHeight, lines * 10f + 8f);
+
+            cs.setLineWidth(0.8f);
+            cs.addRect(x, y - rowHeight, keyWidth, rowHeight);
+            if (valueWidth > 0f) {
+                cs.addRect(x + keyWidth, y - rowHeight, valueWidth, rowHeight);
+            }
+            cs.stroke();
+
+            float textY = y - 12f;
+            for (int i = 0; i < lines; i++) {
+                String kl = i < keyLines.size() ? keyLines.get(i) : "";
+                String vl = i < valueLines.size() ? valueLines.get(i) : "";
+
+                cs.beginText();
+                cs.setFont(PDType1Font.HELVETICA_BOLD, 9);
+                cs.newLineAtOffset(x + 4, textY - (i * 10f));
+                cs.showText(shortenForPdf(kl, 200));
+                cs.endText();
+
+                if (valueWidth > 0f) {
+                    cs.beginText();
+                    cs.setFont(PDType1Font.HELVETICA_BOLD, 9);
                     cs.newLineAtOffset(x + keyWidth + 4, textY - (i * 10f));
                     cs.showText(shortenForPdf(vl, 400));
                     cs.endText();
