@@ -1909,7 +1909,7 @@ public class WebUiServer {
     }
 
     private static String extractParentAffiliateId(JsonNode node) {
-        for (String key : List.of("parent_id", "parent_affiliate_id", "upline_affiliate_id", "upline_id")) {
+        for (String key : List.of("parent", "parent_id", "parent_affiliate_id", "upline_affiliate_id", "upline_id", "parentId")) {
             String value = asText(node, key).trim();
             if (!value.isBlank() && !"0".equals(value)) return value;
         }
