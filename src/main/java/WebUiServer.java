@@ -81,6 +81,7 @@ public class WebUiServer {
         server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
         server.createContext("/api/commissions/add-latest", new AddLatestCommissionHandler());
         server.createContext("/api/commissions/remove", new RemoveCommissionHandler());
+        server.createContext("/api/commissions/rebuild-from-payments", new RebuildCommissionHistoryHandler());
         server.createContext("/api/help", new HelpHandler());
         server.createContext("/api/validation/advisors", new ValidationAdvisorsHandler());
         server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
@@ -324,6 +325,7 @@ public class WebUiServer {
                 payload.put("emailTemplateHtmlDefault", getDefaultInvoiceMailHtmlTemplate());
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
+                payload.put("commissionDaySummary", buildCommissionDaySummary(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 return;
             }
@@ -389,6 +391,7 @@ public class WebUiServer {
                     payload.put("emailTemplateHtmlDefault", getDefaultInvoiceMailHtmlTemplate());
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
+                payload.put("commissionDaySummary", buildCommissionDaySummary(config));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 } catch (Exception e) {
                     sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -455,6 +458,7 @@ public class WebUiServer {
                 payload.put("latestCreatedAt", maxCreatedAt);
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
+                payload.put("commissionDaySummary", buildCommissionDaySummary(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -502,6 +506,7 @@ public class WebUiServer {
                 payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
+                payload.put("commissionDaySummary", buildCommissionDaySummary(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -509,6 +514,39 @@ public class WebUiServer {
         }
     }
 
+
+    private static class RebuildCommissionHistoryHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
+
+                rebuildCommissionHistoryFromPayments(config, apiKey);
+                persistSettings(config);
+
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", "Zahllauf-Liste aus Payments neu aufgebaut.");
+                payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
+                payload.put("lastImportedComissionHistory", getCommissionHistory(config));
+                payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
+                payload.put("commissionDaySummary", buildCommissionDaySummary(config));
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
 
     private static class ValidationAdvisorsHandler implements HttpHandler {
         @Override
@@ -2543,6 +2581,88 @@ public class WebUiServer {
         dates.put(commission, germanDate);
         String raw = dates.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining(";"));
         properties.setProperty(COMMISSION_HISTORY_DATES_KEY, raw);
+    }
+
+    private static void rebuildCommissionHistoryFromPayments(Properties config, String apiKey) throws Exception {
+        JsonNode root = requestJson("https://api.goaffpro.com/v1/admin/payments?fields=id,created_at", apiKey);
+        JsonNode payments = root.get("payments");
+        if (payments == null || !payments.isArray() || payments.size() == 0) {
+            throw new IOException("Keine Payments zum Neuaufbau gefunden.");
+        }
+
+        List<Map<String, String>> rows = new ArrayList<>();
+        for (JsonNode payment : payments) {
+            String id = asText(payment, "id").trim();
+            if (id.isBlank()) continue;
+            String createdAt = asText(payment, "created_at").trim();
+            String date = createdAt.isBlank() ? "" : toGermanDate(createdAt);
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("id", id);
+            row.put("date", date);
+            row.put("createdAt", createdAt);
+            rows.add(row);
+        }
+        if (rows.isEmpty()) throw new IOException("Keine gültigen Payment-IDs gefunden.");
+
+        rows.sort((a, b) -> {
+            String da = Objects.toString(a.get("date"), "");
+            String db = Objects.toString(b.get("date"), "");
+            LocalDate lda = parseGermanDate(da);
+            LocalDate ldb = parseGermanDate(db);
+            if (lda != null && ldb != null && !lda.equals(ldb)) return lda.compareTo(ldb);
+            return compareAsNumericString(a.get("id"), b.get("id"));
+        });
+
+        List<String> history = new ArrayList<>();
+        Map<String, String> dates = new LinkedHashMap<>();
+        String latestId = "";
+        for (Map<String, String> row : rows) {
+            String id = row.get("id");
+            if (!history.contains(id)) history.add(id);
+            String date = Objects.toString(row.get("date"), "");
+            if (!date.isBlank()) dates.put(id, date);
+            if (latestId.isBlank() || compareAsNumericString(id, latestId) > 0) latestId = id;
+        }
+
+        config.setProperty(COMMISSION_HISTORY_KEY, String.join(",", history));
+        String rawDates = dates.entrySet().stream().map(e -> e.getKey() + "=" + e.getValue()).collect(Collectors.joining(";"));
+        config.setProperty(COMMISSION_HISTORY_DATES_KEY, rawDates);
+        if (!latestId.isBlank()) config.setProperty("lastImportedComission", latestId);
+    }
+
+    private static int compareAsNumericString(String a, String b) {
+        try {
+            return Long.compare(Long.parseLong(Objects.toString(a, "0")), Long.parseLong(Objects.toString(b, "0")));
+        } catch (Exception e) {
+            return Objects.toString(a, "").compareTo(Objects.toString(b, ""));
+        }
+    }
+
+    private static List<Map<String, Object>> buildCommissionDaySummary(Properties properties) {
+        List<String> history = getCommissionHistory(properties);
+        Map<String, String> dates = getCommissionDatesFromConfig(properties);
+        Map<String, Integer> counts = new LinkedHashMap<>();
+        for (String commission : history) {
+            String day = Objects.toString(dates.get(commission), "ohne Datum").trim();
+            if (day.isBlank()) day = "ohne Datum";
+            counts.put(day, counts.getOrDefault(day, 0) + 1);
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (Map.Entry<String, Integer> entry : counts.entrySet()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("date", entry.getKey());
+            row.put("count", entry.getValue());
+            rows.add(row);
+        }
+        rows.sort((a, b) -> {
+            LocalDate da = parseGermanDate(Objects.toString(a.get("date"), ""));
+            LocalDate db = parseGermanDate(Objects.toString(b.get("date"), ""));
+            if (da != null && db != null) return db.compareTo(da);
+            if (da != null) return -1;
+            if (db != null) return 1;
+            return Objects.toString(a.get("date"), "").compareToIgnoreCase(Objects.toString(b.get("date"), ""));
+        });
+        return rows;
     }
 
     private static Map<String, String> buildCommissionHistoryLabels(Properties properties) {

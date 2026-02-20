@@ -250,6 +250,13 @@
                   </div>
                   <div class="toolbar"><label>Editierbare Zahlläufe (chronologisch):</label></div>
                   <div id="commissionHistoryEditor" class="pill-list"></div>
+                  <div class="toolbar">
+                    <button id="rebuildCommissionHistoryBtn" type="button" class="secondary">Zahlläufe aus Payments neu aufbauen</button>
+                  </div>
+                  <table>
+                    <thead><tr><th>Tag</th><th>Anzahl Zahlläufe</th></tr></thead>
+                    <tbody id="commissionDaySummaryBody"></tbody>
+                  </table>
                 </div>
 
                 <div class="settings-group">
@@ -976,6 +983,7 @@
         const data = await apiPost('/api/commissions/remove', { commission });
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        renderCommissionDaySummary(data.commissionDaySummary);
         settingsSnapshot = buildSettingsSnapshot();
         updateSaveButtonState();
         if (status) status.textContent = data.message || 'Zahllauf entfernt.';
@@ -1060,6 +1068,22 @@
       }
     }
 
+    async function rebuildCommissionHistoryFromPayments() {
+      const status = document.getElementById('pollStatus');
+      try {
+        if (status) status.textContent = 'Baue Zahllauf-Liste aus Payments neu auf...';
+        const data = await apiPost('/api/commissions/rebuild-from-payments', {});
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        renderCommissionDaySummary(data.commissionDaySummary);
+        settingsSnapshot = buildSettingsSnapshot();
+        updateSaveButtonState();
+        if (status) status.textContent = data.message || 'Zahlläufe neu aufgebaut.';
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Neuaufbau der Zahlläufe: ${error.message}`;
+      }
+    }
+
     function setPollingButtonState(isRunning) {
       const btn = document.getElementById('togglePollingBtn');
       if (!btn) return;
@@ -1067,6 +1091,16 @@
       btn.classList.toggle('danger', isRunning);
     }
 
+
+
+    function renderCommissionDaySummary(rows) {
+      const body = document.getElementById('commissionDaySummaryBody');
+      if (!body) return;
+      const list = Array.isArray(rows) ? rows : [];
+      body.innerHTML = list.map(r => `<tr><td>${escapeHtml(r.date || '')}</td><td>${escapeHtml(String(r.count ?? ''))}</td></tr>`).join('');
+      applyTableFilterAndSort(body.closest('table'));
+      ensureResizableColumns(body.closest('table') || document);
+    }
     async function loadSettings() {
       const input = document.getElementById('pdfExportPath');
       const goaffproAPIKeyInput = document.getElementById('goaffproAPIKey');
@@ -1098,6 +1132,7 @@
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        renderCommissionDaySummary(data.commissionDaySummary);
         settingsSnapshot = buildSettingsSnapshot();
         updateSaveButtonState();
       } catch (error) {
@@ -1151,6 +1186,7 @@
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        renderCommissionDaySummary(data.commissionDaySummary);
         const afterSnapshot = buildSettingsSnapshot();
         const changed = JSON.stringify(beforeSnapshot) !== JSON.stringify(afterSnapshot);
         settingsSnapshot = afterSnapshot;
@@ -1557,8 +1593,8 @@
           return;
         }
         createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
-        createAnalyticsTabAndPanel();
         createValidationTabAndPanel();
+        createAnalyticsTabAndPanel();
         createHelpTabAndPanel();
         wireTabSwitching();
         await loadVersion();
@@ -1570,6 +1606,7 @@
         const pickBtn = document.getElementById('pickFolderBtn');
         const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
         const addLatestCommissionBtn = document.getElementById('addLatestCommissionBtn');
+        const rebuildCommissionHistoryBtn = document.getElementById('rebuildCommissionHistoryBtn');
         const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
         const loadValidationBtn = document.getElementById('loadValidationBtn');
         const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
@@ -1580,6 +1617,7 @@
         if (pickBtn) pickBtn.addEventListener('click', pickFolder);
         if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
         if (addLatestCommissionBtn) addLatestCommissionBtn.addEventListener('click', addLatestCommission);
+        if (rebuildCommissionHistoryBtn) rebuildCommissionHistoryBtn.addEventListener('click', rebuildCommissionHistoryFromPayments);
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
         if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
