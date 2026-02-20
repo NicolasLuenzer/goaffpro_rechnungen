@@ -83,6 +83,7 @@ public class WebUiServer {
         server.createContext("/api/commissions/remove", new RemoveCommissionHandler());
         server.createContext("/api/help", new HelpHandler());
         server.createContext("/api/validation/advisors", new ValidationAdvisorsHandler());
+        server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
         server.setExecutor(null);
         server.start();
 
@@ -522,6 +523,34 @@ public class WebUiServer {
                 List<Map<String, String>> rows = fetchAdvisorValidationRows(apiKey);
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("message", rows.size() + " Beraterinnen geladen.");
+                payload.put("rows", rows);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class ValidationAdvisorTreeHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
+
+                List<Map<String, String>> rows = fetchAdvisorTreeValidationRows(apiKey);
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", rows.size() + " Knoten im Beraterinnen-Baum geladen.");
                 payload.put("rows", rows);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
@@ -1797,6 +1826,133 @@ public class WebUiServer {
         }
         rows.sort((a, b) -> Objects.toString(a.get("name"), "").compareToIgnoreCase(Objects.toString(b.get("name"), "")));
         return rows;
+    }
+
+    private static List<Map<String, String>> fetchAdvisorTreeValidationRows(String apiKey) throws Exception {
+        JsonNode treeRoot = requestJson("https://api.goaffpro.com/v1/admin/mlm/tree", apiKey);
+
+        String affiliatesUrl = "https://api.goaffpro.com/v1/admin/affiliates?fields=id,avatar,honorific,date_of_birth,gender,name,first_name,last_name,email,ref_code,company_name,ref_codes,coupon,coupons,phone,website,facebook,twitter,instagram,address_1,address_2,city,state,zip,country,phone,admin_note,extra_1,extra_2,extra_3,group_id,registration_ip,personal_message,payment_method,payment_details,commission,status,last_login,total_referral_earnings,total_network_earnings,total_amount_paid,total_amount_pending,total_other_earnings,number_of_orders,tax_identification_number,login_token,signup_page,comments,tags,approved_at,blocked_at,created_at,updated_at";
+        JsonNode affiliateRoot = requestJson(affiliatesUrl, apiKey);
+        JsonNode affiliates = affiliateRoot.get("affiliates");
+
+        Map<String, JsonNode> affiliatesById = new LinkedHashMap<>();
+        if (affiliates != null && affiliates.isArray()) {
+            for (JsonNode affiliate : affiliates) {
+                String id = asText(affiliate, "id").trim();
+                if (!id.isBlank()) affiliatesById.put(id, affiliate);
+            }
+        }
+
+        Map<String, List<String>> childrenByParent = new LinkedHashMap<>();
+        Set<String> seenIds = new LinkedHashSet<>();
+        collectTreeStructure(treeRoot, "", seenIds, childrenByParent);
+
+        List<String> roots = seenIds.stream().filter(id -> {
+            for (List<String> children : childrenByParent.values()) {
+                if (children.contains(id)) return false;
+            }
+            return true;
+        }).collect(Collectors.toCollection(ArrayList::new));
+
+        if (roots.isEmpty()) roots.addAll(seenIds);
+        sortAffiliateIdsByName(roots, affiliatesById);
+
+        List<Map<String, String>> rows = new ArrayList<>();
+        Set<String> visited = new LinkedHashSet<>();
+        for (String rootId : roots) {
+            appendTreeRows(rootId, "", 0, childrenByParent, affiliatesById, visited, rows);
+        }
+
+        for (String orphan : seenIds) {
+            if (!visited.contains(orphan)) {
+                appendTreeRows(orphan, "", 0, childrenByParent, affiliatesById, visited, rows);
+            }
+        }
+        return rows;
+    }
+
+    private static void collectTreeStructure(JsonNode node, String currentParentId, Set<String> seenIds, Map<String, List<String>> childrenByParent) {
+        if (node == null || node.isNull() || node.isMissingNode()) return;
+
+        if (node.isArray()) {
+            for (JsonNode item : node) collectTreeStructure(item, currentParentId, seenIds, childrenByParent);
+            return;
+        }
+
+        if (!node.isObject()) return;
+
+        String nodeId = extractAffiliateId(node);
+        String parentId = extractParentAffiliateId(node);
+        if (parentId.isBlank()) parentId = currentParentId;
+        String activeId = nodeId.isBlank() ? currentParentId : nodeId;
+
+        if (!nodeId.isBlank()) seenIds.add(nodeId);
+        if (!nodeId.isBlank() && !parentId.isBlank() && !Objects.equals(nodeId, parentId)) {
+            childrenByParent.computeIfAbsent(parentId, k -> new ArrayList<>());
+            if (!childrenByParent.get(parentId).contains(nodeId)) childrenByParent.get(parentId).add(nodeId);
+        }
+
+        for (String key : List.of("children", "childs", "downline", "tree", "affiliates", "members", "nodes")) {
+            JsonNode children = node.get(key);
+            if (children != null && children.isArray()) {
+                for (JsonNode child : children) collectTreeStructure(child, activeId, seenIds, childrenByParent);
+            }
+        }
+    }
+
+    private static String extractAffiliateId(JsonNode node) {
+        for (String key : List.of("id", "affiliate_id", "affiliateId", "user_id")) {
+            String value = asText(node, key).trim();
+            if (!value.isBlank()) return value;
+        }
+        return "";
+    }
+
+    private static String extractParentAffiliateId(JsonNode node) {
+        for (String key : List.of("parent_id", "parent_affiliate_id", "upline_affiliate_id", "upline_id")) {
+            String value = asText(node, key).trim();
+            if (!value.isBlank() && !"0".equals(value)) return value;
+        }
+        return "";
+    }
+
+    private static void appendTreeRows(String nodeId,
+                                       String parentId,
+                                       int level,
+                                       Map<String, List<String>> childrenByParent,
+                                       Map<String, JsonNode> affiliatesById,
+                                       Set<String> visited,
+                                       List<Map<String, String>> rows) {
+        if (nodeId == null || nodeId.isBlank() || visited.contains(nodeId)) return;
+        visited.add(nodeId);
+
+        JsonNode affiliate = affiliatesById.get(nodeId);
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put("id", nodeId);
+        row.put("parentId", parentId);
+        row.put("level", String.valueOf(level));
+        row.put("name", affiliate != null ? asText(affiliate, "name") : ("ID " + nodeId));
+        row.put("email", affiliate != null ? asText(affiliate, "email") : "");
+        row.put("status", affiliate != null ? asText(affiliate, "status") : "");
+        row.put("company", affiliate != null ? asText(affiliate, "company_name") : "");
+        List<String> children = new ArrayList<>(childrenByParent.getOrDefault(nodeId, List.of()));
+        row.put("childrenCount", String.valueOf(children.size()));
+        rows.add(row);
+
+        sortAffiliateIdsByName(children, affiliatesById);
+        for (String childId : children) {
+            appendTreeRows(childId, nodeId, level + 1, childrenByParent, affiliatesById, visited, rows);
+        }
+    }
+
+    private static void sortAffiliateIdsByName(List<String> ids, Map<String, JsonNode> affiliatesById) {
+        ids.sort((a, b) -> {
+            JsonNode affA = affiliatesById.get(a);
+            JsonNode affB = affiliatesById.get(b);
+            String nameA = affA != null ? asText(affA, "name") : ("ID " + a);
+            String nameB = affB != null ? asText(affB, "name") : ("ID " + b);
+            return nameA.compareToIgnoreCase(nameB);
+        });
     }
 
     private static boolean isValidationRowRelevant(Map<String, String> row) {
