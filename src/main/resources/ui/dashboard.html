@@ -96,6 +96,7 @@
     let advisorHoverCardEl = null;
     let validationRowsCache = [];
     let validationTreeRowsCache = [];
+    const validationTableState = { sortBy: 'id', sortDirection: 'asc' };
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -412,7 +413,7 @@
         <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
         <table>
           <thead>
-            <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>IBAN korrekt</th><th>Status</th></tr>
+            <tr><th data-validation-col="id">ID</th><th data-validation-col="name">Name</th><th data-validation-col="email">E-Mail</th><th data-validation-col="phone">Telefon</th><th data-validation-col="address">Adresse</th><th data-validation-col="country">Land</th><th data-validation-col="dateOfBirth">Geburtsdatum</th><th data-validation-col="taxNumber">Steuernummer</th><th data-validation-col="paymentMethod">Zahlmethode</th><th data-validation-col="iban">IBAN</th><th data-validation-col="ibanValid">IBAN korrekt</th><th data-validation-col="status">Status</th></tr>
           </thead>
           <tbody id="validationBody"></tbody>
         </table>
@@ -441,6 +442,21 @@
         tabs.forEach(t => t.classList.toggle('active', t === tab));
         sections.forEach(section => section.classList.toggle('active', section.id === target));
       }));
+    }
+
+    function wireValidationSorting() {
+      document.querySelectorAll('th[data-validation-col]').forEach(th => {
+        th.addEventListener('click', () => {
+          const col = th.dataset.validationCol;
+          if (validationTableState.sortBy === col) {
+            validationTableState.sortDirection = validationTableState.sortDirection === 'asc' ? 'desc' : 'asc';
+          } else {
+            validationTableState.sortBy = col;
+            validationTableState.sortDirection = 'asc';
+          }
+          renderValidationTable();
+        });
+      });
     }
 
     function renderValidationTable() {
@@ -513,8 +529,25 @@
         return true;
       });
 
-      body.innerHTML = filtered.map(r => `<tr><td>${r.id || ''}</td><td>${r.name || ''}</td><td>${r.email || ''}</td><td>${r.phone || ''}</td><td>${r.address || ''}</td><td>${r.country || ''}</td><td>${r.dateOfBirth || ''}</td><td>${r.taxNumber || ''}</td><td>${r.paymentMethod || ''}</td><td>${r.iban || ''}</td><td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td><td>${r.status || ''}</td></tr>`).join('');
-      status.textContent = `${filtered.length} von ${validationRowsCache.length} Datensätzen angezeigt.`;
+      const sorted = [...filtered].sort((a, b) => {
+        const col = validationTableState.sortBy;
+        const direction = validationTableState.sortDirection === 'asc' ? 1 : -1;
+        if (col === 'id') {
+          const numA = Number.parseInt((a.id || '').trim(), 10);
+          const numB = Number.parseInt((b.id || '').trim(), 10);
+          if (!Number.isNaN(numA) && !Number.isNaN(numB) && numA !== numB) return (numA - numB) * direction;
+        }
+        const valA = (a[col] || '').toString().trim().toLowerCase();
+        const valB = (b[col] || '').toString().trim().toLowerCase();
+        if (valA === valB) return 0;
+        return valA > valB ? direction : -direction;
+      });
+
+      body.innerHTML = sorted.map(r => `<tr><td>${r.id || ''}</td><td>${r.name || ''}</td><td>${r.email || ''}</td><td>${r.phone || ''}</td><td>${r.address || ''}</td><td>${r.country || ''}</td><td>${r.dateOfBirth || ''}</td><td>${r.taxNumber || ''}</td><td>${r.paymentMethod || ''}</td><td>${r.iban || ''}</td><td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td><td>${r.status || ''}</td></tr>`).join('');
+      document.querySelectorAll('th[data-validation-col]').forEach(th => {
+        th.classList.toggle('sort-active', th.dataset.validationCol === validationTableState.sortBy);
+      });
+      status.textContent = `${sorted.length} von ${validationRowsCache.length} Datensätzen angezeigt.`;
     }
 
     async function loadValidationData() {
@@ -743,14 +776,14 @@
         await loadInvoiceDetailsPdf(paymentId);
       }));
 
-      document.querySelectorAll('th[data-col]').forEach(th => {
+      document.querySelectorAll('#main-workspace th[data-col]').forEach(th => {
         th.classList.remove('sort-active');
         if (th.dataset.col === tableState.sortBy) th.classList.add('sort-active');
       });
     }
 
     function wireSortingAndFiltering() {
-      document.querySelectorAll('th[data-col]').forEach(th => {
+      document.querySelectorAll('#main-workspace th[data-col]').forEach(th => {
         if (th.dataset.col === 'select' || th.dataset.col === 'actions') return;
         th.addEventListener('click', () => {
           if (tableState.sortBy === th.dataset.col) tableState.sortDirection = tableState.sortDirection === 'asc' ? 'desc' : 'asc';
@@ -1365,6 +1398,7 @@
         wireFolderPickerFallback();
         wireMainSectionTabs();
         wireValidationSubtabs();
+        wireValidationSorting();
         wireSortingAndFiltering();
         wireAnalyticsDateRange();
         renderTable();
