@@ -81,6 +81,8 @@
     .email-editor-toolbar button { padding:6px 9px; font-size:12px; }
     .email-editor { min-height:260px; border:1px solid #cbd5e1; border-radius:8px; padding:10px; background:#fff; overflow:auto; }
     .email-editor:focus { outline:2px solid #93c5fd; outline-offset:0; }
+    .email-editor-source { width:100%; min-height:260px; border:1px solid #cbd5e1; border-radius:8px; padding:10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
+    .email-template-preview { width:100%; border:1px solid #dbe3ef; border-radius:8px; background:#fff; min-height:140px; padding:10px; }
 
   </style>
 </head>
@@ -115,6 +117,8 @@
     const tableInteractionState = new WeakMap();
     let tableFilterMenuEl = null;
     let defaultEmailTemplateHtml = '';
+    let emailTemplateHtmlMode = false;
+    let emailPreviewAdvisors = [];
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -292,7 +296,7 @@
                     <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> an Kontakt-E-Mail</label>
                     <label class="recipient-advisor-label"><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
                   </div>
-                  <div class="toolbar" style="align-items:flex-start;flex-direction:column;">
+                  <div class="toolbar" style="align-items:flex-start;flex-direction:column;width:100%;">
                     <label>E-Mail Vorlage (WYSIWYG):</label>
                     <div class="toolbar email-editor-toolbar">
                       <button type="button" class="secondary" data-editor-cmd="bold"><b>B</b></button>
@@ -301,10 +305,23 @@
                       <button type="button" class="secondary" data-editor-cmd="insertUnorderedList">• Liste</button>
                       <button type="button" class="secondary" data-editor-cmd="createLink">Link</button>
                       <button type="button" class="secondary" data-editor-cmd="removeFormat">Format löschen</button>
+                      <label style="display:flex;align-items:center;gap:6px;">Textfarbe <input id="emailTextColor" type="color" value="#1f2937"/></label>
+                      <button id="applyEmailTextColorBtn" type="button" class="secondary">anwenden</button>
+                      <label style="display:flex;align-items:center;gap:6px;">Highlight <input id="emailHighlightColor" type="color" value="#fff59d"/></label>
+                      <button id="applyEmailHighlightColorBtn" type="button" class="secondary">anwenden</button>
+                      <button id="toggleEmailHtmlModeBtn" type="button" class="secondary">HTML-Modus</button>
                       <button id="resetEmailTemplateBtn" type="button" class="secondary">Standardvorlage laden</button>
                     </div>
                     <div id="emailTemplateEditor" class="email-editor" contenteditable="true"></div>
+                    <textarea id="emailTemplateSource" class="email-editor-source" style="display:none"></textarea>
                     <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>.</div>
+                    <div class="toolbar" style="width:100%;margin-top:8px;">
+                      <label for="emailPreviewAdvisorSelect">Vorschau mit Beraterin:</label>
+                      <select id="emailPreviewAdvisorSelect" style="min-width:320px"></select>
+                      <button id="reloadEmailPreviewAdvisorsBtn" type="button" class="secondary">Beraterinnen neu laden</button>
+                      <button id="renderEmailPreviewBtn" type="button" class="secondary">Vorschau rendern</button>
+                    </div>
+                    <div id="emailTemplatePreview" class="email-template-preview"></div>
                   </div>
                 </div>
               </div>
@@ -1128,7 +1145,8 @@
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
         defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || data.emailTemplateHtml || '';
-        if (emailTemplateEditor) emailTemplateEditor.innerHTML = data.emailTemplateHtml || '';
+        setCurrentEmailTemplateHtml(data.emailTemplateHtml || '');
+        renderEmailTemplatePreview();
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
@@ -1168,7 +1186,7 @@
           smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
           sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true,
           emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact',
-          emailTemplateHtml: emailTemplateEditor ? emailTemplateEditor.innerHTML : ''
+          emailTemplateHtml: getCurrentEmailTemplateHtml()
         });
         input.value = data.pdfExportPath || input.value;
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
@@ -1182,7 +1200,8 @@
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
         defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || defaultEmailTemplateHtml;
-        if (emailTemplateEditor) emailTemplateEditor.innerHTML = data.emailTemplateHtml || '';
+        setCurrentEmailTemplateHtml(data.emailTemplateHtml || '');
+        renderEmailTemplatePreview();
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
@@ -1209,6 +1228,55 @@
       return !sendEmailsEnabledInput || sendEmailsEnabledInput.checked;
     }
 
+    function getCurrentEmailTemplateHtml() {
+      const editor = document.getElementById('emailTemplateEditor');
+      const source = document.getElementById('emailTemplateSource');
+      if (emailTemplateHtmlMode && source) return source.value;
+      return editor ? editor.innerHTML : '';
+    }
+
+    function setCurrentEmailTemplateHtml(html) {
+      const editor = document.getElementById('emailTemplateEditor');
+      const source = document.getElementById('emailTemplateSource');
+      if (editor) editor.innerHTML = html || '';
+      if (source) source.value = html || '';
+    }
+
+    function renderEmailTemplatePreview() {
+      const box = document.getElementById('emailTemplatePreview');
+      const select = document.getElementById('emailPreviewAdvisorSelect');
+      if (!box) return;
+      const advisorId = select ? String(select.value || '') : '';
+      const advisor = emailPreviewAdvisors.find(a => String(a.id) === advisorId) || emailPreviewAdvisors[0] || { name: 'Beraterin Beispiel' };
+      const template = getCurrentEmailTemplateHtml();
+      const now = new Date();
+      const created = now.toLocaleString('de-DE', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+      const preview = String(template || '')
+        .replaceAll('{{salutationName}}', escapeHtml(advisor.name || 'Beraterin Beispiel'))
+        .replaceAll('{{periodLabel}}', '01.01.2026 bis 31.01.2026')
+        .replaceAll('{{paymentId}}', '99999999')
+        .replaceAll('{{payout}}', '123,45 €')
+        .replaceAll('{{method}}', 'Banküberweisung')
+        .replaceAll('{{created}}', created)
+        .replaceAll('{{txCount}}', '12');
+      box.innerHTML = preview || '<em>Keine Vorlage vorhanden.</em>';
+    }
+
+    async function reloadEmailPreviewAdvisors() {
+      const select = document.getElementById('emailPreviewAdvisorSelect');
+      if (!select) return;
+      try {
+        const data = await apiGet('/api/validation/advisors');
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        emailPreviewAdvisors = rows.map(r => ({ id: r.id, name: r.name || `ID ${r.id}` })).filter(r => r.id);
+        select.innerHTML = emailPreviewAdvisors.map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)} (${escapeHtml(a.id)})</option>`).join('');
+      } catch (_) {
+        emailPreviewAdvisors = [];
+        select.innerHTML = '<option value="">keine Beraterinnen ladbar</option>';
+      }
+      renderEmailTemplatePreview();
+    }
+
     function buildSettingsSnapshot() {
       return {
         pdfExportPath: (document.getElementById('pdfExportPath')?.value || '').trim(),
@@ -1220,7 +1288,7 @@
         smtpUsername: (document.getElementById('smtpUsername')?.value || '').trim(),
         sendEmailsEnabled: !!document.getElementById('sendEmailsEnabled')?.checked,
         emailRecipientMode: getEmailRecipientMode(),
-        emailTemplateHtml: (document.getElementById('emailTemplateEditor')?.innerHTML || '').trim()
+        emailTemplateHtml: getCurrentEmailTemplateHtml().trim()
       };
     }
 
@@ -1245,7 +1313,15 @@
 
     function wireEmailTemplateEditor() {
       const editor = document.getElementById('emailTemplateEditor');
+      const source = document.getElementById('emailTemplateSource');
       const resetBtn = document.getElementById('resetEmailTemplateBtn');
+      const toggleModeBtn = document.getElementById('toggleEmailHtmlModeBtn');
+      const applyTextColorBtn = document.getElementById('applyEmailTextColorBtn');
+      const textColorInput = document.getElementById('emailTextColor');
+      const applyHighlightBtn = document.getElementById('applyEmailHighlightColorBtn');
+      const highlightColorInput = document.getElementById('emailHighlightColor');
+      const renderPreviewBtn = document.getElementById('renderEmailPreviewBtn');
+      const reloadAdvisorsBtn = document.getElementById('reloadEmailPreviewAdvisorsBtn');
       if (!editor) return;
 
       document.querySelectorAll('[data-editor-cmd]').forEach(btn => btn.addEventListener('click', () => {
@@ -1260,13 +1336,54 @@
         }
         editor.focus();
         updateSaveButtonState();
+        renderEmailTemplatePreview();
       }));
 
-      editor.addEventListener('input', updateSaveButtonState);
-      if (resetBtn) resetBtn.addEventListener('click', () => {
-        editor.innerHTML = defaultEmailTemplateHtml || '';
+      if (applyTextColorBtn) applyTextColorBtn.addEventListener('click', () => {
+        if (!textColorInput) return;
+        document.execCommand('foreColor', false, textColorInput.value || '#1f2937');
+        editor.focus();
         updateSaveButtonState();
+        renderEmailTemplatePreview();
       });
+
+      if (applyHighlightBtn) applyHighlightBtn.addEventListener('click', () => {
+        if (!highlightColorInput) return;
+        document.execCommand('hiliteColor', false, highlightColorInput.value || '#fff59d');
+        editor.focus();
+        updateSaveButtonState();
+        renderEmailTemplatePreview();
+      });
+
+      if (toggleModeBtn) toggleModeBtn.addEventListener('click', () => {
+        emailTemplateHtmlMode = !emailTemplateHtmlMode;
+        if (emailTemplateHtmlMode) {
+          if (source) source.value = editor.innerHTML;
+          editor.style.display = 'none';
+          if (source) source.style.display = 'block';
+          toggleModeBtn.textContent = 'WYSIWYG-Modus';
+        } else {
+          if (source) editor.innerHTML = source.value;
+          editor.style.display = 'block';
+          if (source) source.style.display = 'none';
+          toggleModeBtn.textContent = 'HTML-Modus';
+        }
+        updateSaveButtonState();
+        renderEmailTemplatePreview();
+      });
+
+      editor.addEventListener('input', () => { updateSaveButtonState(); renderEmailTemplatePreview(); });
+      if (source) source.addEventListener('input', () => { updateSaveButtonState(); renderEmailTemplatePreview(); });
+
+      if (resetBtn) resetBtn.addEventListener('click', () => {
+        setCurrentEmailTemplateHtml(defaultEmailTemplateHtml || '');
+        updateSaveButtonState();
+        renderEmailTemplatePreview();
+      });
+
+      if (renderPreviewBtn) renderPreviewBtn.addEventListener('click', renderEmailTemplatePreview);
+      if (reloadAdvisorsBtn) reloadAdvisorsBtn.addEventListener('click', reloadEmailPreviewAdvisors);
+      reloadEmailPreviewAdvisors();
     }
 
     async function exportSelectedInvoiceDetailsPdfs() {
