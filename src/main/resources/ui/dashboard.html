@@ -59,9 +59,28 @@
     .help-sections .help-section-body { padding:0 12px 12px; white-space:pre-wrap; }
     .save-btn-idle { background:#93c5fd !important; color:#1e3a8a !important; }
     .save-btn-dirty { background:#2563eb !important; color:#fff !important; }
-    .validation-filter-wrap { border:1px solid #dbe3ef; background:#f8fafc; border-radius:12px; padding:10px; margin:8px 0 12px; }
-    .validation-filter-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:8px 12px; }
-    .validation-filter-grid label { display:flex; align-items:center; gap:8px; font-size:13px; color:#334155; background:#fff; border:1px solid #dbe3ef; border-radius:999px; padding:6px 10px; }
+    .validation-subtabs { display:flex; gap:8px; margin-bottom:12px; }
+    .validation-subtab { border:1px solid #93c5fd; border-radius:8px; padding:8px 12px; background:#dbeafe; color:#1e3a8a; font-weight:600; cursor:pointer; }
+    .validation-subtab.active { background:#2563eb; color:#fff; border-color:#2563eb; }
+    .validation-section { display:none; }
+    .validation-section.active { display:block; }
+    .tree-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+    .table-filter-menu { position: fixed; z-index: 3000; width: 280px; max-height: 420px; overflow: auto; background:#fff; border:1px solid #cbd5e1; border-radius:10px; box-shadow:0 10px 24px rgba(15,23,42,.2); padding:10px; }
+    .table-filter-menu h4 { margin:0 0 8px; font-size:13px; color:#1e3a8a; }
+    .table-filter-actions { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+    .table-filter-actions button { padding:6px 8px; font-size:12px; background:#3b82f6; }
+    .table-filter-options { border-top:1px solid #e2e8f0; padding-top:8px; }
+    .table-filter-options label { display:flex; align-items:center; gap:8px; font-size:12px; margin:4px 0; }
+    th.filter-active { background:#dbeafe; position:relative; }
+    th.filter-active::after { content:' ⏷'; color:#1d4ed8; font-size:12px; }
+    .tree-toggle { background:#e2e8f0; color:#0f172a; border:1px solid #cbd5e1; border-radius:4px; padding:2px 6px; font-size:12px; margin-right:6px; }
+    .tree-indent { display:inline-block; }
+    .col-resizer { position:absolute; top:0; right:-2px; width:8px; height:100%; cursor:col-resize; user-select:none; }
+    .col-resizer:hover, th.resizing .col-resizer { background:rgba(37,99,235,.2); }
+    .email-editor-toolbar { gap:6px; margin-top:8px; }
+    .email-editor-toolbar button { padding:6px 9px; font-size:12px; }
+    .email-editor { min-height:260px; border:1px solid #cbd5e1; border-radius:8px; padding:10px; background:#fff; overflow:auto; }
+    .email-editor:focus { outline:2px solid #93c5fd; outline-offset:0; }
 
   </style>
 </head>
@@ -89,6 +108,13 @@
     let settingsSnapshot = null;
     let advisorHoverCardEl = null;
     let validationRowsCache = [];
+    let validationTreeRowsCache = [];
+    let validationTreeChildrenByParent = new Map();
+    let validationTreeById = new Map();
+    let validationTreeExpanded = new Set();
+    const tableInteractionState = new WeakMap();
+    let tableFilterMenuEl = null;
+    let defaultEmailTemplateHtml = '';
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -259,6 +285,20 @@
                     <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> an Kontakt-E-Mail</label>
                     <label class="recipient-advisor-label"><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
                   </div>
+                  <div class="toolbar" style="align-items:flex-start;flex-direction:column;">
+                    <label>E-Mail Vorlage (WYSIWYG):</label>
+                    <div class="toolbar email-editor-toolbar">
+                      <button type="button" class="secondary" data-editor-cmd="bold"><b>B</b></button>
+                      <button type="button" class="secondary" data-editor-cmd="italic"><i>I</i></button>
+                      <button type="button" class="secondary" data-editor-cmd="underline"><u>U</u></button>
+                      <button type="button" class="secondary" data-editor-cmd="insertUnorderedList">• Liste</button>
+                      <button type="button" class="secondary" data-editor-cmd="createLink">Link</button>
+                      <button type="button" class="secondary" data-editor-cmd="removeFormat">Format löschen</button>
+                      <button id="resetEmailTemplateBtn" type="button" class="secondary">Standardvorlage laden</button>
+                    </div>
+                    <div id="emailTemplateEditor" class="email-editor" contenteditable="true"></div>
+                    <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>.</div>
+                  </div>
                 </div>
               </div>
               <div class="toolbar"><button id="saveSettingsBtn" class="secondary">Speichern</button></div>
@@ -370,121 +410,64 @@
       panel.id = 'validation-panel';
       panel.innerHTML = `
         <h2>Validierung der Stammdaten</h2>
-        <div class="toolbar">
-          <button id="loadValidationBtn" class="secondary" type="button">Stammdaten laden / neu laden</button>
-          <label><input id="filterWithoutName" type="checkbox" /> ohne Name</label>
-          <label><input id="filterWithName" type="checkbox" /> mit Name</label>
-          <label><input id="filterWithoutEmail" type="checkbox" /> ohne E-Mail</label>
-          <label><input id="filterWithEmail" type="checkbox" /> mit E-Mail</label>
-          <label><input id="filterWithoutPhone" type="checkbox" /> ohne Telefon</label>
-          <label><input id="filterWithPhone" type="checkbox" /> mit Telefon</label>
-          <label><input id="filterWithoutAddress" type="checkbox" /> ohne Adresse</label>
-          <label><input id="filterWithAddress" type="checkbox" /> mit Adresse</label>
-          <label><input id="filterWithoutCountry" type="checkbox" /> ohne Land</label>
-          <label><input id="filterWithCountry" type="checkbox" /> mit Land</label>
-          <label><input id="filterWithoutDateOfBirth" type="checkbox" /> ohne Geburtsdatum</label>
-          <label><input id="filterWithDateOfBirth" type="checkbox" /> mit Geburtsdatum</label>
-          <label><input id="filterWithoutTaxNumber" type="checkbox" /> ohne Steuernummer</label>
-          <label><input id="filterWithTaxNumber" type="checkbox" /> mit Steuernummer</label>
-          <label><input id="filterWithoutPaymentMethod" type="checkbox" /> ohne Zahlmethode</label>
-          <label><input id="filterWithPaymentMethod" type="checkbox" /> mit Zahlmethode</label>
-          <label><input id="filterMissingIban" type="checkbox" /> ohne IBAN</label>
-          <label><input id="filterWithIban" type="checkbox" /> mit IBAN</label>
-          <label><input id="filterInvalidIban" type="checkbox" /> mit ungültiger IBAN</label>
-          <label><input id="filterValidIban" type="checkbox" /> mit gültiger IBAN</label>
-          <label><input id="filterWithoutStatus" type="checkbox" /> ohne Status</label>
-          <label><input id="filterWithStatus" type="checkbox" /> mit Status</label>
-          <label for="filterStatusSelect">Status:</label>
-          <select id="filterStatusSelect" style="min-width:180px"><option value="">alle</option></select>
+        <p class="status">Sortierung: Klick auf Spaltenkopf. Filter: Rechtsklick auf Spaltenkopf (wie Excel).</p>
+        <div class="validation-subtabs">
+          <button type="button" class="validation-subtab active" data-validation-target="validation-masterdata-section">Validierung der Stammdaten</button>
+          <button type="button" class="validation-subtab" data-validation-target="validation-tree-section">Baum der Beraterinnen</button>
         </div>
-        <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
-        <table>
-          <thead>
-            <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>IBAN korrekt</th><th>Status</th></tr>
-          </thead>
-          <tbody id="validationBody"></tbody>
-        </table>
+        <div id="validation-masterdata-section" class="validation-section active">
+          <div class="toolbar">
+            <button id="loadValidationBtn" class="secondary" type="button">Stammdaten laden / neu laden</button>
+          </div>
+          <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>IBAN korrekt</th><th>Status</th></tr>
+            </thead>
+            <tbody id="validationBody"></tbody>
+          </table>
+        </div>
+        <div id="validation-tree-section" class="validation-section">
+          <div class="toolbar">
+            <button id="loadValidationTreeBtn" class="secondary" type="button">Baum laden / neu laden</button>
+            <button id="expandAllTreeBtn" class="secondary" type="button">Alle aufklappen</button>
+            <button id="collapseAllTreeBtn" class="secondary" type="button">Alle einklappen</button>
+          </div>
+          <p id="validationTreeStatus" class="status">Noch keine Baumdaten geladen.</p>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Parent-ID</th><th>Ebene</th><th>Beraterin</th><th>E-Mail</th><th>Status</th><th>Kinder</th></tr>
+            </thead>
+            <tbody id="validationTreeBody"></tbody>
+          </table>
+        </div>
       `;
       panels.appendChild(panel);
+    }
+
+    function wireValidationSubtabs() {
+      const tabs = document.querySelectorAll('.validation-subtab');
+      const sections = document.querySelectorAll('.validation-section');
+      tabs.forEach(tab => tab.addEventListener('click', () => {
+        const target = tab.dataset.validationTarget;
+        tabs.forEach(t => t.classList.toggle('active', t === tab));
+        sections.forEach(section => section.classList.toggle('active', section.id === target));
+      }));
     }
 
     function renderValidationTable() {
       const status = document.getElementById('validationStatus');
       const body = document.getElementById('validationBody');
-      const filterWithoutName = !!document.getElementById('filterWithoutName')?.checked;
-      const filterWithName = !!document.getElementById('filterWithName')?.checked;
-      const filterWithoutEmail = !!document.getElementById('filterWithoutEmail')?.checked;
-      const filterWithEmail = !!document.getElementById('filterWithEmail')?.checked;
-      const filterWithoutPhone = !!document.getElementById('filterWithoutPhone')?.checked;
-      const filterWithPhone = !!document.getElementById('filterWithPhone')?.checked;
-      const filterWithoutAddress = !!document.getElementById('filterWithoutAddress')?.checked;
-      const filterWithAddress = !!document.getElementById('filterWithAddress')?.checked;
-      const filterWithoutCountry = !!document.getElementById('filterWithoutCountry')?.checked;
-      const filterWithCountry = !!document.getElementById('filterWithCountry')?.checked;
-      const filterWithoutDateOfBirth = !!document.getElementById('filterWithoutDateOfBirth')?.checked;
-      const filterWithDateOfBirth = !!document.getElementById('filterWithDateOfBirth')?.checked;
-      const filterWithoutTaxNumber = !!document.getElementById('filterWithoutTaxNumber')?.checked;
-      const filterWithTaxNumber = !!document.getElementById('filterWithTaxNumber')?.checked;
-      const filterWithoutPaymentMethod = !!document.getElementById('filterWithoutPaymentMethod')?.checked;
-      const filterWithPaymentMethod = !!document.getElementById('filterWithPaymentMethod')?.checked;
-      const filterMissingIban = !!document.getElementById('filterMissingIban')?.checked;
-      const filterWithIban = !!document.getElementById('filterWithIban')?.checked;
-      const filterInvalidIban = !!document.getElementById('filterInvalidIban')?.checked;
-      const filterValidIban = !!document.getElementById('filterValidIban')?.checked;
-      const filterWithoutStatus = !!document.getElementById('filterWithoutStatus')?.checked;
-      const filterWithStatus = !!document.getElementById('filterWithStatus')?.checked;
-      const statusFilter = (document.getElementById('filterStatusSelect')?.value || '').trim().toLowerCase();
       if (!status || !body) return;
-
-      const filtered = validationRowsCache.filter(r => {
-        const hasName = !!(r.name || '').trim();
-        const hasEmail = !!(r.email || '').trim();
-        const hasPhone = !!(r.phone || '').trim();
-        const hasAddress = !!(r.address || '').trim();
-        const hasCountry = !!(r.country || '').trim();
-        const hasDateOfBirth = !!(r.dateOfBirth || '').trim();
-        const hasTaxNumber = !!(r.taxNumber || '').trim();
-        const hasPaymentMethod = !!(r.paymentMethod || '').trim();
-        const missingIban = !(r.iban || '').trim();
-        const hasIban = !missingIban;
-        const invalidIban = (r.ibanValid || '').toLowerCase() !== 'ja';
-        const hasValidIban = (r.ibanValid || '').toLowerCase() === 'ja';
-        const hasStatus = !!(r.status || '').trim();
-        const statusMatch = !statusFilter || (r.status || '').trim().toLowerCase() === statusFilter;
-
-        if (filterWithoutName && hasName) return false;
-        if (filterWithName && !hasName) return false;
-        if (filterWithoutEmail && hasEmail) return false;
-        if (filterWithEmail && !hasEmail) return false;
-        if (filterWithoutPhone && hasPhone) return false;
-        if (filterWithPhone && !hasPhone) return false;
-        if (filterWithoutAddress && hasAddress) return false;
-        if (filterWithAddress && !hasAddress) return false;
-        if (filterWithoutCountry && hasCountry) return false;
-        if (filterWithCountry && !hasCountry) return false;
-        if (filterWithoutDateOfBirth && hasDateOfBirth) return false;
-        if (filterWithDateOfBirth && !hasDateOfBirth) return false;
-        if (filterWithoutTaxNumber && hasTaxNumber) return false;
-        if (filterWithTaxNumber && !hasTaxNumber) return false;
-        if (filterWithoutPaymentMethod && hasPaymentMethod) return false;
-        if (filterWithPaymentMethod && !hasPaymentMethod) return false;
-        if (filterMissingIban && !missingIban) return false;
-        if (filterWithIban && !hasIban) return false;
-        if (filterInvalidIban && !invalidIban) return false;
-        if (filterValidIban && !hasValidIban) return false;
-        if (filterWithoutStatus && hasStatus) return false;
-        if (filterWithStatus && !hasStatus) return false;
-        if (!statusMatch) return false;
-        return true;
-      });
-
-      body.innerHTML = filtered.map(r => `<tr><td>${r.id || ''}</td><td>${r.name || ''}</td><td>${r.email || ''}</td><td>${r.phone || ''}</td><td>${r.address || ''}</td><td>${r.country || ''}</td><td>${r.dateOfBirth || ''}</td><td>${r.taxNumber || ''}</td><td>${r.paymentMethod || ''}</td><td>${r.iban || ''}</td><td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td><td>${r.status || ''}</td></tr>`).join('');
-      status.textContent = `${filtered.length} von ${validationRowsCache.length} Datensätzen angezeigt.`;
+      body.innerHTML = validationRowsCache.map(r => `<tr><td>${escapeHtml(r.id || '')}</td><td>${escapeHtml(r.name || '')}</td><td>${escapeHtml(r.email || '')}</td><td>${escapeHtml(r.phone || '')}</td><td>${escapeHtml(r.address || '')}</td><td>${escapeHtml(r.country || '')}</td><td>${escapeHtml(r.dateOfBirth || '')}</td><td>${escapeHtml(r.taxNumber || '')}</td><td>${escapeHtml(r.paymentMethod || '')}</td><td>${escapeHtml(r.iban || '')}</td><td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td><td>${escapeHtml(r.status || '')}</td></tr>`).join('');
+      status.textContent = `${validationRowsCache.length} Datensätze geladen.`;
+      const table = body.closest('table');
+      ensureResizableColumns(table || document);
+      applyTableFilterAndSort(table);
     }
 
     async function loadValidationData() {
       const status = document.getElementById('validationStatus');
-      const statusSelect = document.getElementById('filterStatusSelect');
       const body = document.getElementById('validationBody');
       if (!status || !body) return;
       status.textContent = 'Lade Stammdaten...';
@@ -492,14 +475,95 @@
       try {
         const data = await apiGet('/api/validation/advisors');
         validationRowsCache = Array.isArray(data.rows) ? data.rows : [];
-        if (statusSelect) {
-          const statuses = [...new Set(validationRowsCache.map(r => (r.status || '').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'de',{sensitivity:'base'}));
-          statusSelect.innerHTML = `<option value="">alle</option>` + statuses.map(v => `<option value="${v}">${v}</option>`).join('');
-        }
         renderValidationTable();
       } catch (error) {
         status.textContent = `Fehler beim Laden der Stammdaten: ${error.message}`;
       }
+    }
+
+    function rebuildValidationTreeIndex() {
+      validationTreeById = new Map();
+      validationTreeChildrenByParent = new Map();
+      validationTreeRowsCache.forEach(row => {
+        const id = String(row.id || '').trim();
+        if (!id) return;
+        validationTreeById.set(id, row);
+        const parentId = String(row.parentId || '').trim();
+        if (!validationTreeChildrenByParent.has(parentId)) validationTreeChildrenByParent.set(parentId, []);
+        validationTreeChildrenByParent.get(parentId).push(id);
+      });
+    }
+
+    function validationTreeRootIds() {
+      const roots = [];
+      validationTreeRowsCache.forEach(row => {
+        const id = String(row.id || '').trim();
+        const parentId = String(row.parentId || '').trim();
+        if (!id) return;
+        if (!parentId || !validationTreeById.has(parentId)) roots.push(id);
+      });
+      return [...new Set(roots)];
+    }
+
+    function renderValidationTreeTable() {
+      const status = document.getElementById('validationTreeStatus');
+      const body = document.getElementById('validationTreeBody');
+      if (!status || !body) return;
+
+      const rows = [];
+      const roots = validationTreeRootIds();
+      const appendNode = (id, level) => {
+        const row = validationTreeById.get(id);
+        if (!row) return;
+        const children = validationTreeChildrenByParent.get(id) || [];
+        const isExpanded = validationTreeExpanded.has(id);
+        const indentPx = Math.max(0, level) * 18;
+        const toggleBtn = children.length ? `<button type="button" class="tree-toggle" data-node-id="${escapeHtml(id)}">${isExpanded ? '▾' : '▸'}</button>` : '<span class="tree-indent" style="width:26px"></span>';
+        rows.push(`<tr><td>${escapeHtml(row.id || '')}</td><td>${escapeHtml(row.parentId || '')}</td><td>${escapeHtml(row.level || '0')}</td><td class="tree-name"><span class="tree-indent" style="width:${indentPx}px"></span>${toggleBtn}${escapeHtml(row.name || '')}</td><td>${escapeHtml(row.email || '')}</td><td>${escapeHtml(row.status || '')}</td><td>${escapeHtml(row.childrenCount || String(children.length))}</td></tr>`);
+        if (children.length && isExpanded) children.forEach(childId => appendNode(childId, level + 1));
+      };
+      roots.forEach(id => appendNode(id, 0));
+
+      body.innerHTML = rows.join('');
+      body.querySelectorAll('.tree-toggle').forEach(btn => btn.addEventListener('click', () => {
+        const nodeId = String(btn.dataset.nodeId || '');
+        if (!nodeId) return;
+        if (validationTreeExpanded.has(nodeId)) validationTreeExpanded.delete(nodeId);
+        else validationTreeExpanded.add(nodeId);
+        renderValidationTreeTable();
+      }));
+
+      status.textContent = `${rows.length} sichtbare von ${validationTreeRowsCache.length} Knoten.`;
+      const table = body.closest('table');
+      ensureResizableColumns(table || document);
+      applyTableFilterAndSort(table);
+    }
+
+    async function loadValidationTreeData() {
+      const status = document.getElementById('validationTreeStatus');
+      const body = document.getElementById('validationTreeBody');
+      if (!status || !body) return;
+      status.textContent = 'Lade Beraterinnen-Baum...';
+      body.innerHTML = '';
+      try {
+        const data = await apiGet('/api/validation/advisors/tree');
+        validationTreeRowsCache = Array.isArray(data.rows) ? data.rows : [];
+        validationTreeExpanded = new Set();
+        rebuildValidationTreeIndex();
+        renderValidationTreeTable();
+      } catch (error) {
+        status.textContent = `Fehler beim Laden des Beraterinnen-Baums: ${error.message}`;
+      }
+    }
+
+    function expandAllValidationTree() {
+      validationTreeExpanded = new Set(Array.from(validationTreeChildrenByParent.keys()).filter(Boolean));
+      renderValidationTreeTable();
+    }
+
+    function collapseAllValidationTree() {
+      validationTreeExpanded = new Set();
+      renderValidationTreeTable();
     }
 
     function createHelpTabAndPanel() {
@@ -555,6 +619,222 @@
         status.textContent = `Dokumentation konnte nicht geladen werden: ${error.message}`;
         box.textContent = '';
       }
+    }
+
+    function getTableState(table) {
+      if (!tableInteractionState.has(table)) {
+        tableInteractionState.set(table, { sortCol: null, sortDirection: 'asc', filters: new Map() });
+      }
+      return tableInteractionState.get(table);
+    }
+
+    function cellValue(row, colIndex) {
+      const cell = row && row.cells ? row.cells[colIndex] : null;
+      return (cell?.textContent || '').trim();
+    }
+
+    function compareValues(a, b) {
+      const na = Number.parseFloat(a.replace(',', '.'));
+      const nb = Number.parseFloat(b.replace(',', '.'));
+      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+      return a.localeCompare(b, 'de', { sensitivity: 'base', numeric: true });
+    }
+
+    function updateTableHeaderStates(table) {
+      const state = getTableState(table);
+      const headers = table.querySelectorAll('thead th');
+      headers.forEach((th, idx) => {
+        th.classList.toggle('sort-active', state.sortCol === idx);
+        const filterSet = state.filters.get(idx);
+        th.classList.toggle('filter-active', !!(filterSet && filterSet.size));
+      });
+    }
+
+    function applyTableFilterAndSort(table) {
+      if (!table) return;
+      const tbody = table.tBodies && table.tBodies[0];
+      if (!tbody) return;
+      const state = getTableState(table);
+      const rows = [...tbody.rows];
+
+      rows.forEach(row => {
+        let visible = true;
+        state.filters.forEach((allowedValues, colIndex) => {
+          if (!visible || !allowedValues || !allowedValues.size) return;
+          if (!allowedValues.has(cellValue(row, colIndex))) visible = false;
+        });
+        row.style.display = visible ? '' : 'none';
+      });
+
+      if (state.sortCol !== null) {
+        const dir = state.sortDirection === 'asc' ? 1 : -1;
+        rows.sort((ra, rb) => compareValues(cellValue(ra, state.sortCol), cellValue(rb, state.sortCol)) * dir);
+        rows.forEach(row => tbody.appendChild(row));
+      }
+      updateTableHeaderStates(table);
+    }
+
+    function closeTableFilterMenu() {
+      if (tableFilterMenuEl) {
+        tableFilterMenuEl.remove();
+        tableFilterMenuEl = null;
+      }
+    }
+
+    function openTableFilterMenu(evt, th) {
+      const table = th.closest('table');
+      const tbody = table?.tBodies?.[0];
+      if (!table || !tbody) return;
+      const colIndex = th.cellIndex;
+      if (colIndex < 0) return;
+      evt.preventDefault();
+      closeTableFilterMenu();
+
+      const state = getTableState(table);
+      const rows = [...tbody.rows];
+      const rowsAfterOtherFilters = rows.filter(row => {
+        let visible = true;
+        state.filters.forEach((allowedValues, idx) => {
+          if (idx === colIndex || !allowedValues || !allowedValues.size || !visible) return;
+          if (!allowedValues.has(cellValue(row, idx))) visible = false;
+        });
+        return visible;
+      });
+      const valueCounts = new Map();
+      rowsAfterOtherFilters.forEach(row => {
+        const val = cellValue(row, colIndex);
+        valueCounts.set(val, (valueCounts.get(val) || 0) + 1);
+      });
+      const allValues = [...valueCounts.keys()].sort((a, b) => compareValues(a, b));
+      const selected = state.filters.get(colIndex) || new Set(allValues);
+
+      tableFilterMenuEl = document.createElement('div');
+      tableFilterMenuEl.className = 'table-filter-menu';
+      tableFilterMenuEl.innerHTML = `
+        <h4>Filter: ${escapeHtml((th.textContent || '').trim())}</h4>
+        <div class="table-filter-actions">
+          <button type="button" data-action="all">Alle</button>
+          <button type="button" data-action="none">Keine</button>
+          <button type="button" data-action="clear">Filter löschen</button>
+          <button type="button" data-action="apply">Anwenden</button>
+        </div>
+        <div class="table-filter-options">
+          ${allValues.map(v => `<label><input type="checkbox" value="${encodeURIComponent(v)}" ${selected.has(v) ? 'checked' : ''}/> <span>${escapeHtml(v || '(leer)')} (${valueCounts.get(v) || 0})</span></label>`).join('')}
+        </div>
+      `;
+      document.body.appendChild(tableFilterMenuEl);
+      tableFilterMenuEl.style.left = `${Math.min(window.innerWidth - 300, evt.clientX)}px`;
+      tableFilterMenuEl.style.top = `${Math.min(window.innerHeight - 440, evt.clientY)}px`;
+
+      const setAll = (checked) => tableFilterMenuEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = checked);
+
+      tableFilterMenuEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        if (action === 'all') setAll(true);
+        if (action === 'none') setAll(false);
+        if (action === 'clear') {
+          state.filters.delete(colIndex);
+          applyTableFilterAndSort(table);
+          closeTableFilterMenu();
+          return;
+        }
+        if (action === 'apply') {
+          const checked = [...tableFilterMenuEl.querySelectorAll('input[type="checkbox"]:checked')].map(cb => decodeURIComponent(cb.value));
+          if (!checked.length || checked.length === allValues.length) state.filters.delete(colIndex);
+          else state.filters.set(colIndex, new Set(checked));
+          applyTableFilterAndSort(table);
+          closeTableFilterMenu();
+        }
+      });
+    }
+
+    function prepareTableForResize(table) {
+      if (!table || table.dataset.resizePrepared === '1') return;
+      const headers = table.querySelectorAll('thead th');
+      headers.forEach(th => {
+        const w = th.getBoundingClientRect().width;
+        if (w > 0) th.style.width = `${Math.round(w)}px`;
+      });
+      table.style.tableLayout = 'fixed';
+      table.dataset.resizePrepared = '1';
+    }
+
+    function ensureResizableColumns(root = document) {
+      root.querySelectorAll('table thead th').forEach(th => {
+        if (th.querySelector('.col-resizer')) return;
+        th.style.position = th.style.position || 'relative';
+        const handle = document.createElement('span');
+        handle.className = 'col-resizer';
+        handle.title = 'Spaltenbreite ändern';
+        th.appendChild(handle);
+      });
+    }
+
+    function wireTableInteractions() {
+      let activeResize = null;
+
+      document.addEventListener('mousedown', (evt) => {
+        const handle = evt.target.closest('.col-resizer');
+        if (!handle) return;
+        const th = handle.closest('th');
+        const table = th?.closest('table');
+        if (!th || !table) return;
+        evt.preventDefault();
+        evt.stopPropagation();
+        prepareTableForResize(table);
+        th.classList.add('resizing');
+        activeResize = { th, startX: evt.clientX, startWidth: th.getBoundingClientRect().width };
+      });
+
+      document.addEventListener('mousemove', (evt) => {
+        if (!activeResize) return;
+        const delta = evt.clientX - activeResize.startX;
+        const next = Math.max(70, Math.round(activeResize.startWidth + delta));
+        activeResize.th.style.width = `${next}px`;
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (!activeResize) return;
+        activeResize.th.classList.remove('resizing');
+        activeResize = null;
+      });
+
+      document.addEventListener('click', (evt) => {
+        const th = evt.target.closest('th');
+        if (!th) {
+          if (!evt.target.closest('.table-filter-menu')) closeTableFilterMenu();
+          return;
+        }
+        if (evt.button !== 0) return;
+        const table = th.closest('table');
+        const tbody = table?.tBodies?.[0];
+        if (!table || !tbody) return;
+        if (evt.target.closest('.col-resizer')) return;
+        if (th.querySelector('input,button,select') || th.dataset.nosort === 'true') return;
+        if (th.cellIndex < 0) return;
+
+        const state = getTableState(table);
+        if (state.sortCol === th.cellIndex) state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
+        else {
+          state.sortCol = th.cellIndex;
+          state.sortDirection = 'asc';
+        }
+        applyTableFilterAndSort(table);
+      });
+
+      document.addEventListener('contextmenu', (evt) => {
+        const th = evt.target.closest('th');
+        if (!th) return;
+        if (th.dataset.nofilter === 'true' || th.querySelector('input,button,select')) return;
+        openTableFilterMenu(evt, th);
+      });
+
+      document.addEventListener('keydown', (evt) => { if (evt.key === 'Escape') closeTableFilterMenu(); });
+
+      const observer = new MutationObserver(() => ensureResizableColumns());
+      observer.observe(document.body, { childList: true, subtree: true });
     }
 
     function activateTab(targetId) {
@@ -624,15 +904,6 @@
       const needle = tableState.filter.trim().toLowerCase();
       let rows = [...tableState.rows];
       if (needle) rows = rows.filter(row => Object.values(row).join(' ').toLowerCase().includes(needle));
-      const col = tableState.sortBy;
-      const direction = tableState.sortDirection === 'asc' ? 1 : -1;
-      rows.sort((a, b) => {
-        const left = (a[col] || '').toString();
-        const right = (b[col] || '').toString();
-        const maybeNum = Number(left) - Number(right);
-        if (!Number.isNaN(maybeNum) && left !== '' && right !== '') return maybeNum * direction;
-        return left.localeCompare(right, 'de', { sensitivity: 'base' }) * direction;
-      });
       return rows;
     }
 
@@ -681,22 +952,12 @@
         await loadInvoiceDetailsPdf(paymentId);
       }));
 
-      document.querySelectorAll('th[data-col]').forEach(th => {
-        th.classList.remove('sort-active');
-        if (th.dataset.col === tableState.sortBy) th.classList.add('sort-active');
-      });
+      const mainTable = document.querySelector('#main-workspace table');
+      ensureResizableColumns(mainTable || document);
+      applyTableFilterAndSort(mainTable);
     }
 
     function wireSortingAndFiltering() {
-      document.querySelectorAll('th[data-col]').forEach(th => {
-        if (th.dataset.col === 'select' || th.dataset.col === 'actions') return;
-        th.addEventListener('click', () => {
-          if (tableState.sortBy === th.dataset.col) tableState.sortDirection = tableState.sortDirection === 'asc' ? 'desc' : 'asc';
-          else { tableState.sortBy = th.dataset.col; tableState.sortDirection = 'asc'; }
-          renderTable();
-        });
-      });
-
       const filterInput = document.getElementById('filterInput');
       if (filterInput) filterInput.addEventListener('input', e => { tableState.filter = e.target.value; renderTable(); });
 
@@ -817,6 +1078,7 @@
             const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
+      const emailTemplateEditor = document.getElementById('emailTemplateEditor');
       if (!input) return;
       try {
         const data = await apiGet('/api/settings');
@@ -831,6 +1093,8 @@
         const mode = data.emailRecipientMode || 'contact';
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
+        defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || data.emailTemplateHtml || '';
+        if (emailTemplateEditor) emailTemplateEditor.innerHTML = data.emailTemplateHtml || '';
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
@@ -853,6 +1117,7 @@
             const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
+      const emailTemplateEditor = document.getElementById('emailTemplateEditor');
       const status = document.getElementById('pollStatus');
       if (!input || !status || !select) return;
       try {
@@ -867,7 +1132,8 @@
           smtpUsername: smtpUsernameInput ? smtpUsernameInput.value : '',
           smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
           sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true,
-          emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact'
+          emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact',
+          emailTemplateHtml: emailTemplateEditor ? emailTemplateEditor.innerHTML : ''
         });
         input.value = data.pdfExportPath || input.value;
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
@@ -880,6 +1146,8 @@
         const mode = data.emailRecipientMode || 'contact';
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
+        defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || defaultEmailTemplateHtml;
+        if (emailTemplateEditor) emailTemplateEditor.innerHTML = data.emailTemplateHtml || '';
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
@@ -915,7 +1183,8 @@
         smtpPort: String((document.getElementById('smtpPort')?.value || '587')).trim(),
         smtpUsername: (document.getElementById('smtpUsername')?.value || '').trim(),
         sendEmailsEnabled: !!document.getElementById('sendEmailsEnabled')?.checked,
-        emailRecipientMode: getEmailRecipientMode()
+        emailRecipientMode: getEmailRecipientMode(),
+        emailTemplateHtml: (document.getElementById('emailTemplateEditor')?.innerHTML || '').trim()
       };
     }
 
@@ -935,6 +1204,32 @@
         if (!el) return;
         const eventName = (el.type === 'checkbox' || el.type === 'radio' || el.tagName === 'SELECT') ? 'change' : 'input';
         el.addEventListener(eventName, updateSaveButtonState);
+      });
+    }
+
+    function wireEmailTemplateEditor() {
+      const editor = document.getElementById('emailTemplateEditor');
+      const resetBtn = document.getElementById('resetEmailTemplateBtn');
+      if (!editor) return;
+
+      document.querySelectorAll('[data-editor-cmd]').forEach(btn => btn.addEventListener('click', () => {
+        const cmd = btn.dataset.editorCmd;
+        if (!cmd) return;
+        if (cmd === 'createLink') {
+          const url = window.prompt('Link-URL eingeben (https://...)', 'https://');
+          if (!url) return;
+          document.execCommand('createLink', false, url);
+        } else {
+          document.execCommand(cmd, false, null);
+        }
+        editor.focus();
+        updateSaveButtonState();
+      }));
+
+      editor.addEventListener('input', updateSaveButtonState);
+      if (resetBtn) resetBtn.addEventListener('click', () => {
+        editor.innerHTML = defaultEmailTemplateHtml || '';
+        updateSaveButtonState();
       });
     }
 
@@ -1277,6 +1572,9 @@
         const addLatestCommissionBtn = document.getElementById('addLatestCommissionBtn');
         const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
         const loadValidationBtn = document.getElementById('loadValidationBtn');
+        const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
+        const expandAllTreeBtn = document.getElementById('expandAllTreeBtn');
+        const collapseAllTreeBtn = document.getElementById('collapseAllTreeBtn');
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
         if (pickBtn) pickBtn.addEventListener('click', pickFolder);
@@ -1284,11 +1582,9 @@
         if (addLatestCommissionBtn) addLatestCommissionBtn.addEventListener('click', addLatestCommission);
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
-
-        ['filterWithoutName','filterWithName','filterWithoutEmail','filterWithEmail','filterWithoutPhone','filterWithPhone','filterWithoutAddress','filterWithAddress','filterWithoutCountry','filterWithCountry','filterWithoutDateOfBirth','filterWithDateOfBirth','filterWithoutTaxNumber','filterWithTaxNumber','filterWithoutPaymentMethod','filterWithPaymentMethod','filterMissingIban','filterWithIban','filterInvalidIban','filterValidIban','filterWithoutStatus','filterWithStatus','filterStatusSelect'].forEach(id => {
-          const el = document.getElementById(id);
-          if (el) el.addEventListener('change', renderValidationTable);
-        });
+        if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
+        if (expandAllTreeBtn) expandAllTreeBtn.addEventListener('click', expandAllValidationTree);
+        if (collapseAllTreeBtn) collapseAllTreeBtn.addEventListener('click', collapseAllValidationTree);
 
         const emailRecipientContactInput = document.getElementById('emailRecipientContact');
         const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
@@ -1300,6 +1596,10 @@
         wireSettingsDirtyTracking();
         wireFolderPickerFallback();
         wireMainSectionTabs();
+        wireValidationSubtabs();
+        wireTableInteractions();
+        ensureResizableColumns();
+        wireEmailTemplateEditor();
         wireSortingAndFiltering();
         wireAnalyticsDateRange();
         renderTable();
