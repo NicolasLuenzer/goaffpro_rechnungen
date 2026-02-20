@@ -2164,49 +2164,41 @@ public class WebUiServer {
         JsonNode transactions = payment != null ? payment.get("transactions") : null;
         if (transactions != null && transactions.isArray()) txCount = transactions.size();
 
-        String heroImage = "https://images.unsplash.com/photo-1464349153735-7db50ed83c84?auto=format&fit=crop&w=1280&q=80";
-        String logoUrl = "https://vemmina.com/cdn/shop/files/grau2.png";
-
         return """
                 <!doctype html>
                 <html lang="de">
-                <body style="margin:0;padding:0;background:#6FA3C4;font-family:Arial,sans-serif;color:#1f2937;">
-                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%%" style="background:#6FA3C4;padding:16px 0;">
+                <body style="margin:0;padding:0;background:#eef4f8;font-family:Arial,sans-serif;color:#1f2937;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%%" style="background:#eef4f8;padding:22px 0;">
                     <tr>
                       <td align="center">
-                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="650" style="max-width:650px;width:100%%;background:#6FA3C4;">
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="680" style="max-width:680px;width:100%%;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #dbe3ef;box-shadow:0 10px 24px rgba(15,23,42,0.08);">
                           <tr>
-                            <td align="center" style="background:#ffffff;padding:14px 20px;">
-                              <img src="%s" alt="VEMMiNA" style="max-height:42px;height:auto;display:block;" />
+                            <td style="padding:26px 28px;background:linear-gradient(135deg,#6FA3C4 0%%,#5c8fb1 100%%);color:#ffffff;">
+                              <p style="margin:0;font-size:13px;letter-spacing:1.2px;text-transform:uppercase;opacity:0.88;">VEMMiNA</p>
+                              <h1 style="margin:8px 0 6px 0;font-size:34px;line-height:1.2;">Provisionsinformation</h1>
+                              <p style="margin:0;font-size:16px;line-height:1.5;opacity:0.95;">Ihr aktueller Zahllauf wurde erfolgreich verarbeitet.</p>
                             </td>
                           </tr>
                           <tr>
-                            <td align="center" style="padding:20px 20px 8px 20px;color:#ffffff;">
-                              <h1 style="margin:0;font-size:46px;line-height:1.1;letter-spacing:0.5px;">VEMMiNA</h1>
-                              <h2 style="margin:8px 0 0 0;font-size:24px;font-weight:700;">Provisionsinformation</h2>
-                            </td>
-                          </tr>
-                          <tr>
-                            <td style="padding:14px 24px 0 24px;">
-                              <img src="%s" alt="VEMMiNA Information" style="width:100%%;height:auto;display:block;border:0;" />
-                            </td>
-                          </tr>
-                          <tr>
-                            <td style="background:#f4f4f4;padding:24px;">
-                              <p style="margin:0 0 14px 0;font-size:27px;line-height:1.4;color:#292827;">Hallo %s,</p>
-                              <p style="margin:0 0 16px 0;font-size:24px;line-height:1.5;color:#292827;">wir haben einen neuen Zahllauf für Sie verarbeitet. Die Auszahlung sollte in der Regel innerhalb der nächsten 2 Bankarbeitstage auf Ihrem Konto eingehen.</p>
+                            <td style="padding:28px;">
+                              <p style="margin:0 0 14px 0;font-size:24px;line-height:1.35;color:#1e293b;">Hallo %s,</p>
+                              <p style="margin:0 0 18px 0;font-size:16px;line-height:1.7;color:#334155;">wir haben einen neuen Zahllauf für Sie verarbeitet. Die Auszahlung sollte in der Regel innerhalb der nächsten 2 Bankarbeitstage auf Ihrem Konto eingehen.</p>
 
-                              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%%" style="border-collapse:collapse;background:#ffffff;border-left:6px solid #D499A2;">
-                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Zeitraum:</strong> %s</td></tr>
-                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Zahllauf-ID:</strong> %s</td></tr>
-                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Auszahlungsbetrag:</strong> %s</td></tr>
-                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Zahlungsmethode:</strong> %s</td></tr>
-                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Auszahlungsdatum (System):</strong> %s</td></tr>
-                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Anzahl Transaktionen:</strong> %s</td></tr>
+                              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%%" style="border-collapse:separate;border-spacing:0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Zeitraum</strong><br/>%s</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Zahllauf-ID</strong><br/>%s</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Auszahlungsbetrag</strong><br/><span style="font-size:20px;font-weight:700;color:#108474;">%s</span></td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Zahlungsmethode</strong><br/>%s</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Auszahlungsdatum (System)</strong><br/>%s</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;"><strong>Anzahl Transaktionen</strong><br/>%s</td></tr>
                               </table>
 
-                              <p style="margin:16px 0 0 0;font-size:21px;line-height:1.5;color:#292827;">Im Anhang finden Sie Ihren Provisionsnachweis als PDF und die zugehörige JSON-Datei.</p>
-                              <p style="margin:18px 0 0 0;font-size:21px;line-height:1.5;color:#108474;font-weight:700;">Viele Grüße<br/>Ihr VEMMiNA Team</p>
+                              <p style="margin:18px 0 0 0;font-size:15px;line-height:1.7;color:#334155;">Im Anhang finden Sie Ihren Provisionsnachweis als PDF sowie die zugehörige JSON-Datei.</p>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:20px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;">
+                              <p style="margin:0;font-size:14px;color:#64748b;">Viele Grüße<br/><strong style="color:#0f172a;">Ihr VEMMiNA Team</strong></p>
                             </td>
                           </tr>
                         </table>
@@ -2216,8 +2208,6 @@ public class WebUiServer {
                 </body>
                 </html>
                 """.formatted(
-                escapeHtmlEmail(logoUrl),
-                escapeHtmlEmail(heroImage),
                 escapeHtmlEmail(salutationName),
                 escapeHtmlEmail(periodLabel),
                 escapeHtmlEmail(paymentId),
