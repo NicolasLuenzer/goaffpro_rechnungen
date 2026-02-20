@@ -2077,8 +2077,21 @@ public class WebUiServer {
         String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + displayName;
         message.setSubject(subject, StandardCharsets.UTF_8.name());
 
+        String plainTextBody = buildInvoiceMailBody(payment, affiliate, periodLabel);
+        String htmlBody = buildInvoiceMailHtml(payment, affiliate, periodLabel);
+
+        MimeBodyPart contentPart = new MimeBodyPart();
+        MimeMultipart alternative = new MimeMultipart("alternative");
+
         MimeBodyPart textPart = new MimeBodyPart();
-        textPart.setText(buildInvoiceMailBody(payment, affiliate, periodLabel), StandardCharsets.UTF_8.name());
+        textPart.setText(plainTextBody, StandardCharsets.UTF_8.name());
+        alternative.addBodyPart(textPart);
+
+        MimeBodyPart htmlPart = new MimeBodyPart();
+        htmlPart.setContent(htmlBody, "text/html; charset=UTF-8");
+        alternative.addBodyPart(htmlPart);
+
+        contentPart.setContent(alternative);
 
         MimeBodyPart attachmentPart = new MimeBodyPart();
         FileDataSource fds = new FileDataSource(pdfPath.toFile());
@@ -2090,8 +2103,8 @@ public class WebUiServer {
         jsonAttachmentPart.setDataHandler(new DataHandler(jsonDs));
         jsonAttachmentPart.setFileName(jsonPath.getFileName().toString());
 
-        MimeMultipart multipart = new MimeMultipart();
-        multipart.addBodyPart(textPart);
+        MimeMultipart multipart = new MimeMultipart("mixed");
+        multipart.addBodyPart(contentPart);
         multipart.addBodyPart(attachmentPart);
         multipart.addBodyPart(jsonAttachmentPart);
         message.setContent(multipart);
@@ -2119,19 +2132,109 @@ public class WebUiServer {
         JsonNode transactions = payment != null ? payment.get("transactions") : null;
         if (transactions != null && transactions.isArray()) txCount = transactions.size();
 
-        return "Hallo " + salutationName + ",\n\n"
-                + "gerade hat ein neuer Zahllauf stattgefunden. Ihre Provision ist damit zur Auszahlung vorgesehen. "
-                + "Die Überweisung sollte in der Regel innerhalb der nächsten 2 Bankarbeitstage auf Ihrem Konto eingehen.\n\n"
-                + "Kurze Übersicht zu Ihrem aktuellen Zahllauf:\n"
-                + "- Zeitraum: " + periodLabel + "\n"
-                + "- Zahllauf-ID: " + paymentId + "\n"
-                + "- Auszahlungsbetrag: " + payout + "\n"
-                + "- Zahlungsmethode: " + method + "\n"
-                + "- Auszahlungsdatum (System): " + created + "\n"
-                + "- Anzahl Transaktionen: " + txCount + "\n\n"
-                + "Im Anhang finden Sie Ihren Provisionsnachweis als PDF sowie die zugehörige JSON-Datei.\n\n"
-                + "Viele Grüße\n"
-                + "S+R Linear Technology GmbH";
+        return """
+                Hallo %s,
+
+                gerade hat ein neuer Zahllauf stattgefunden. Ihre Provision ist damit zur Auszahlung vorgesehen. Die Überweisung sollte in der Regel innerhalb der nächsten 2 Bankarbeitstage auf Ihrem Konto eingehen.
+
+                Kurze Übersicht zu Ihrem aktuellen Zahllauf:
+                - Zeitraum: %s
+                - Zahllauf-ID: %s
+                - Auszahlungsbetrag: %s
+                - Zahlungsmethode: %s
+                - Auszahlungsdatum (System): %s
+                - Anzahl Transaktionen: %s
+
+                Im Anhang finden Sie Ihren Provisionsnachweis als PDF sowie die zugehörige JSON-Datei.
+
+                Viele Grüße
+                Ihr VEMMiNA Team
+                """.formatted(salutationName, periodLabel, paymentId, payout, method, created, txCount);
+    }
+
+    private static String buildInvoiceMailHtml(JsonNode payment, JsonNode affiliate, String periodLabel) {
+        String affiliateName = affiliate != null ? asText(affiliate, "name") : "";
+        String salutationName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
+        String paymentId = payment != null ? asText(payment, "id") : "-";
+        String payout = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
+        String method = payment != null ? asText(payment, "payment_method") : "-";
+        String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "-");
+
+        int txCount = 0;
+        JsonNode transactions = payment != null ? payment.get("transactions") : null;
+        if (transactions != null && transactions.isArray()) txCount = transactions.size();
+
+        String heroImage = "https://images.unsplash.com/photo-1464349153735-7db50ed83c84?auto=format&fit=crop&w=1280&q=80";
+        String logoUrl = "https://vemmina.com/cdn/shop/files/grau2.png";
+
+        return """
+                <!doctype html>
+                <html lang="de">
+                <body style="margin:0;padding:0;background:#6FA3C4;font-family:Arial,sans-serif;color:#1f2937;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%%" style="background:#6FA3C4;padding:16px 0;">
+                    <tr>
+                      <td align="center">
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="650" style="max-width:650px;width:100%%;background:#6FA3C4;">
+                          <tr>
+                            <td align="center" style="background:#ffffff;padding:14px 20px;">
+                              <img src="%s" alt="VEMMiNA" style="max-height:42px;height:auto;display:block;" />
+                            </td>
+                          </tr>
+                          <tr>
+                            <td align="center" style="padding:20px 20px 8px 20px;color:#ffffff;">
+                              <h1 style="margin:0;font-size:46px;line-height:1.1;letter-spacing:0.5px;">VEMMiNA</h1>
+                              <h2 style="margin:8px 0 0 0;font-size:24px;font-weight:700;">Provisionsinformation</h2>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:14px 24px 0 24px;">
+                              <img src="%s" alt="VEMMiNA Information" style="width:100%%;height:auto;display:block;border:0;" />
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="background:#f4f4f4;padding:24px;">
+                              <p style="margin:0 0 14px 0;font-size:27px;line-height:1.4;color:#292827;">Hallo %s,</p>
+                              <p style="margin:0 0 16px 0;font-size:24px;line-height:1.5;color:#292827;">wir haben einen neuen Zahllauf für Sie verarbeitet. Die Auszahlung sollte in der Regel innerhalb der nächsten 2 Bankarbeitstage auf Ihrem Konto eingehen.</p>
+
+                              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%%" style="border-collapse:collapse;background:#ffffff;border-left:6px solid #D499A2;">
+                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Zeitraum:</strong> %s</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Zahllauf-ID:</strong> %s</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Auszahlungsbetrag:</strong> %s</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Zahlungsmethode:</strong> %s</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Auszahlungsdatum (System):</strong> %s</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:22px;color:#202223;"><strong>Anzahl Transaktionen:</strong> %s</td></tr>
+                              </table>
+
+                              <p style="margin:16px 0 0 0;font-size:21px;line-height:1.5;color:#292827;">Im Anhang finden Sie Ihren Provisionsnachweis als PDF und die zugehörige JSON-Datei.</p>
+                              <p style="margin:18px 0 0 0;font-size:21px;line-height:1.5;color:#108474;font-weight:700;">Viele Grüße<br/>Ihr VEMMiNA Team</p>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+                </body>
+                </html>
+                """.formatted(
+                escapeHtmlEmail(logoUrl),
+                escapeHtmlEmail(heroImage),
+                escapeHtmlEmail(salutationName),
+                escapeHtmlEmail(periodLabel),
+                escapeHtmlEmail(paymentId),
+                escapeHtmlEmail(payout),
+                escapeHtmlEmail(method),
+                escapeHtmlEmail(created),
+                String.valueOf(txCount)
+        );
+    }
+
+    private static String escapeHtmlEmail(String value) {
+        String safe = value == null ? "" : value;
+        return safe.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
     }
 
     private static String euroStatic(double value) {
