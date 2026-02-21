@@ -38,6 +38,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -62,6 +63,7 @@ public class WebUiServer {
     private static final Path HELP_DOC_PATH = Paths.get("docs/HILFE.md");
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
     private static final String COMMISSION_HISTORY_DATES_KEY = "lastImportedComissionHistoryDates";
+    private static final String MAIL_LOG_KEY = "sentMailLogJson";
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
     private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
@@ -76,6 +78,7 @@ public class WebUiServer {
         server.createContext("/api/settings", new SettingsHandler());
         server.createContext("/api/provisionen-goaffpro/export-pdf", new ExportPdfHandler());
         server.createContext("/api/provisionen-goaffpro/invoice-details-pdf", new InvoiceDetailsPdfHandler());
+        server.createContext("/api/mail-log", new MailLogHandler());
         server.createContext("/api/version", new VersionHandler());
         server.createContext("/api/version/history", new VersionHistoryHandler());
         server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
@@ -941,6 +944,38 @@ public class WebUiServer {
         }
     }
 
+    private static class MailLogHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                List<Map<String, String>> entries = readMailLogEntries(config);
+                Map<String, List<Map<String, String>>> byPayment = new LinkedHashMap<>();
+                for (Map<String, String> row : entries) {
+                    String paymentId = Objects.toString(row.get("paymentId"), "").trim();
+                    if (paymentId.isBlank()) continue;
+                    byPayment.computeIfAbsent(paymentId, k -> new ArrayList<>()).add(row);
+                }
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("entries", entries);
+                payload.put("byPayment", byPayment);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
     private static class ExportPdfHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -1148,10 +1183,12 @@ public class WebUiServer {
                     sendResponse(exchange, 400, "application/json", "{\"error\":\"" + escapeJson(errorText) + "\"}");
                     return;
                 }
+                String periodLabel = buildPaymentPeriodLabel(payment);
                 if (sendEmailsEnabled) {
-                    String periodLabel = buildPaymentPeriodLabel(payment);
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
                     sendInvoiceMailWithAttachment(targetEmail, pdfPath, jsonPath, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
+                    String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + ((affiliateNameForMail == null || affiliateNameForMail.isBlank()) ? "Beraterin" : affiliateNameForMail.trim());
+                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath);
                 }
 
                 boolean opened = false;
@@ -2270,6 +2307,36 @@ public class WebUiServer {
                 """;
     }
 
+    private static List<Map<String, String>> readMailLogEntries(Properties config) {
+        String raw = Objects.toString(config.getProperty(MAIL_LOG_KEY), "").trim();
+        if (raw.isBlank()) return new ArrayList<>();
+        try {
+            List<Map<String, String>> list = OBJECT_MAPPER.readValue(raw, new TypeReference<List<Map<String, String>>>() {});
+            return list == null ? new ArrayList<>() : list;
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath) {
+        List<Map<String, String>> entries = readMailLogEntries(config);
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put("paymentId", Objects.toString(paymentId, ""));
+        row.put("recipientMode", Objects.toString(recipientMode, "contact"));
+        row.put("toEmail", Objects.toString(toEmail, ""));
+        row.put("subject", Objects.toString(subject, ""));
+        row.put("periodLabel", Objects.toString(periodLabel, ""));
+        row.put("pdfFile", pdfPath != null ? pdfPath.getFileName().toString() : "");
+        row.put("jsonFile", jsonPath != null ? jsonPath.getFileName().toString() : "");
+        row.put("sentAt", ZonedDateTime.now(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")));
+        entries.add(0, row);
+        if (entries.size() > 1000) entries = new ArrayList<>(entries.subList(0, 1000));
+        try {
+            config.setProperty(MAIL_LOG_KEY, OBJECT_MAPPER.writeValueAsString(entries));
+        } catch (Exception ignored) {
+        }
+    }
+
     private static String escapeHtmlEmail(String value) {
         String safe = value == null ? "" : value;
         return safe.replace("&", "&amp;")
@@ -2434,6 +2501,7 @@ public class WebUiServer {
         ui.setProperty("emailTemplateHtml", Objects.toString(source.getProperty("emailTemplateHtml"), ""));
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
         ui.setProperty(COMMISSION_HISTORY_DATES_KEY, Objects.toString(source.getProperty(COMMISSION_HISTORY_DATES_KEY), ""));
+        ui.setProperty(MAIL_LOG_KEY, Objects.toString(source.getProperty(MAIL_LOG_KEY), ""));
 
         try (OutputStream os = Files.newOutputStream(uiSettingsFile(directory))) {
             ui.store(os, "GoAffPro UI settings");
@@ -2486,6 +2554,8 @@ public class WebUiServer {
         if (!"advisor".equals(uiEmailRecipientMode)) uiEmailRecipientMode = "contact";
         config.setProperty("emailRecipientMode", uiEmailRecipientMode);
         config.setProperty("emailTemplateHtml", Objects.toString(uiSettings.getProperty("emailTemplateHtml"), Objects.toString(config.getProperty("emailTemplateHtml"), "")));
+
+        config.setProperty(MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(MAIL_LOG_KEY), Objects.toString(config.getProperty(MAIL_LOG_KEY), "")));
 
         ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
     }
