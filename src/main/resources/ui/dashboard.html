@@ -59,9 +59,38 @@
     .help-sections .help-section-body { padding:0 12px 12px; white-space:pre-wrap; }
     .save-btn-idle { background:#93c5fd !important; color:#1e3a8a !important; }
     .save-btn-dirty { background:#2563eb !important; color:#fff !important; }
-    .validation-filter-wrap { border:1px solid #dbe3ef; background:#f8fafc; border-radius:12px; padding:10px; margin:8px 0 12px; }
-    .validation-filter-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(220px,1fr)); gap:8px 12px; }
-    .validation-filter-grid label { display:flex; align-items:center; gap:8px; font-size:13px; color:#334155; background:#fff; border:1px solid #dbe3ef; border-radius:999px; padding:6px 10px; }
+    .validation-subtabs { display:flex; gap:8px; margin-bottom:12px; }
+    .validation-subtab { border:1px solid #93c5fd; border-radius:8px; padding:8px 12px; background:#dbeafe; color:#1e3a8a; font-weight:600; cursor:pointer; }
+    .validation-subtab.active { background:#2563eb; color:#fff; border-color:#2563eb; }
+    .validation-section { display:none; }
+    .validation-section.active { display:block; }
+    .tree-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
+    .table-filter-menu { position: fixed; z-index: 3000; width: 280px; max-height: 420px; overflow: auto; background:#fff; border:1px solid #cbd5e1; border-radius:10px; box-shadow:0 10px 24px rgba(15,23,42,.2); padding:10px; }
+    .table-filter-menu h4 { margin:0 0 8px; font-size:13px; color:#1e3a8a; }
+    .table-filter-actions { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
+    .table-filter-actions button { padding:6px 8px; font-size:12px; background:#3b82f6; }
+    .table-filter-options { border-top:1px solid #e2e8f0; padding-top:8px; }
+    .table-filter-options label { display:flex; align-items:center; gap:8px; font-size:12px; margin:4px 0; }
+    th.filter-active { background:#dbeafe; position:relative; }
+    th.filter-active::after { content:' ⏷'; color:#1d4ed8; font-size:12px; }
+    .tree-toggle { background:#e2e8f0; color:#0f172a; border:1px solid #cbd5e1; border-radius:4px; padding:2px 6px; font-size:12px; margin-right:6px; }
+    .tree-indent { display:inline-block; }
+    .col-resizer { position:absolute; top:0; right:-2px; width:8px; height:100%; cursor:col-resize; user-select:none; }
+    .col-resizer:hover, th.resizing .col-resizer { background:rgba(37,99,235,.2); }
+    .email-editor-toolbar { gap:6px; margin-top:8px; }
+    .email-editor-toolbar button { padding:6px 9px; font-size:12px; }
+    .email-editor { min-height:260px; border:1px solid #cbd5e1; border-radius:8px; padding:10px; background:#fff; overflow:auto; }
+    .email-editor:focus { outline:2px solid #93c5fd; outline-offset:0; }
+    .email-editor-source { width:100%; min-height:260px; border:1px solid #cbd5e1; border-radius:8px; padding:10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
+    .email-template-preview { width:100%; border:1px solid #dbe3ef; border-radius:8px; background:#fff; min-height:140px; padding:10px; }
+    .email-designer-tabs { display:flex; gap:8px; margin:12px 0; }
+    .email-designer-tab { border:1px solid #93c5fd; border-radius:8px; padding:8px 12px; background:#dbeafe; color:#1e3a8a; font-weight:600; cursor:pointer; }
+    .email-designer-tab.active { background:#2563eb; color:#fff; border-color:#2563eb; }
+    .email-designer-panel { display:none; }
+    .email-designer-panel.active { display:block; }
+    .empty-table-hidden { display:none; }
+    .validation-empty-cell { background:#fef2f2; }
+    .count-hover { text-decoration: underline dotted; cursor: help; }
 
   </style>
 </head>
@@ -89,6 +118,15 @@
     let settingsSnapshot = null;
     let advisorHoverCardEl = null;
     let validationRowsCache = [];
+    let validationTreeRowsCache = [];
+    let validationTreeChildrenByParent = new Map();
+    let validationTreeById = new Map();
+    let validationTreeExpanded = new Set();
+    const tableInteractionState = new WeakMap();
+    let tableFilterMenuEl = null;
+    let defaultEmailTemplateHtml = '';
+    let emailTemplateHtmlMode = false;
+    let emailPreviewAdvisors = [];
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -175,7 +213,9 @@
           <h2>${executable.displayName || executable.name}</h2>
                     <div class="section-tabs">
             <button class="section-tab active" data-section-target="main-workspace">Arbeitsbereich</button>
+            <button class="section-tab" data-section-target="main-email-designer">✉ E-Mail Designer</button>
             <button class="section-tab" data-section-target="main-settings">⚙ Einstellungen</button>
+            <button class="section-tab" data-section-action="open-help">❓ Hilfe</button>
           </div>
 
           <div id="main-workspace" class="section-panel active">
@@ -183,7 +223,7 @@
               <button id="togglePollingBtn">Polling starten</button>
               <label for="lastImportedSelect">Zahllauf:</label>
               <select id="lastImportedSelect"></select>
-              <button id="addLatestCommissionBtn" class="secondary" type="button">Neusten Zahllauf hinzufügen</button>
+              <button id="addLatestCommissionBtn" class="secondary" type="button">Neuesten Zahllauf hinzufügen</button>
               <button id="exportInvoiceDetailsBtn" class="secondary">Rechnungsdetails für selektierte Zeilen exportieren</button>
               <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
             </div>
@@ -224,6 +264,9 @@
                   </div>
                   <div class="toolbar"><label>Editierbare Zahlläufe (chronologisch):</label></div>
                   <div id="commissionHistoryEditor" class="pill-list"></div>
+                  <div class="toolbar">
+                    <button id="rebuildCommissionHistoryBtn" type="button" class="secondary">Zahlläufe aus Payments neu aufbauen</button>
+                  </div>
                 </div>
 
                 <div class="settings-group">
@@ -263,6 +306,49 @@
               </div>
               <div class="toolbar"><button id="saveSettingsBtn" class="secondary">Speichern</button></div>
               <div class="settings-hint">Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</div>
+            </div>
+          </div>
+
+          <div id="main-email-designer" class="section-panel">
+            <div class="settings">
+              <strong>E-Mail Designer</strong>
+              <div class="email-designer-tabs">
+                <button class="email-designer-tab active" data-email-designer-target="email-designer-editor">Vorlage bearbeiten</button>
+                <button class="email-designer-tab" data-email-designer-target="email-designer-preview">Vorschau</button>
+              </div>
+
+              <div id="email-designer-editor" class="email-designer-panel active">
+                <div class="toolbar" style="align-items:flex-start;flex-direction:column;width:100%;">
+                  <div class="toolbar email-editor-toolbar">
+                    <button type="button" class="secondary" data-editor-cmd="bold"><b>B</b></button>
+                    <button type="button" class="secondary" data-editor-cmd="italic"><i>I</i></button>
+                    <button type="button" class="secondary" data-editor-cmd="underline"><u>U</u></button>
+                    <button type="button" class="secondary" data-editor-cmd="insertUnorderedList">• Liste</button>
+                    <button type="button" class="secondary" data-editor-cmd="createLink">Link</button>
+                    <button type="button" class="secondary" data-editor-cmd="removeFormat">Format löschen</button>
+                    <label style="display:flex;align-items:center;gap:6px;">Textfarbe <input id="emailTextColor" type="color" value="#1f2937"/></label>
+                    <button id="applyEmailTextColorBtn" type="button" class="secondary">anwenden</button>
+                    <label style="display:flex;align-items:center;gap:6px;">Highlight <input id="emailHighlightColor" type="color" value="#fff59d"/></label>
+                    <button id="applyEmailHighlightColorBtn" type="button" class="secondary">anwenden</button>
+                    <button id="toggleEmailHtmlModeBtn" type="button" class="secondary">HTML-Modus</button>
+                    <button id="resetEmailTemplateBtn" type="button" class="secondary">Standardvorlage laden</button>
+                  </div>
+                  <div id="emailTemplateEditor" class="email-editor" contenteditable="true"></div>
+                  <textarea id="emailTemplateSource" class="email-editor-source" style="display:none"></textarea>
+                  <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>.</div>
+                </div>
+              </div>
+
+              <div id="email-designer-preview" class="email-designer-panel">
+                <div class="toolbar" style="width:100%;margin-top:8px;">
+                  <label for="emailPreviewAdvisorSelect">Vorschau mit Beraterin:</label>
+                  <select id="emailPreviewAdvisorSelect" style="min-width:320px"></select>
+                  <button id="reloadEmailPreviewAdvisorsBtn" type="button" class="secondary">Beraterinnen neu laden</button>
+                  <button id="renderEmailPreviewBtn" type="button" class="secondary">Vorschau rendern</button>
+                </div>
+                <div id="emailTemplatePreview" class="email-template-preview"></div>
+              </div>
+              <div class="toolbar"><button id="emailDesignerSaveBtn" class="secondary">E-Mail Vorlage speichern</button></div>
             </div>
           </div>
 
@@ -324,6 +410,7 @@
           <thead><tr><th>Land</th><th>Anzahl Zahlläufe</th></tr></thead>
           <tbody id="analyticsCountryBody"></tbody>
         </table>
+        <canvas id="analyticsCountryChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
 
         <div class="toolbar"><strong>Weitere API-Auswertungen</strong></div>
         <table>
@@ -370,121 +457,65 @@
       panel.id = 'validation-panel';
       panel.innerHTML = `
         <h2>Validierung der Stammdaten</h2>
-        <div class="toolbar">
-          <button id="loadValidationBtn" class="secondary" type="button">Stammdaten laden / neu laden</button>
-          <label><input id="filterWithoutName" type="checkbox" /> ohne Name</label>
-          <label><input id="filterWithName" type="checkbox" /> mit Name</label>
-          <label><input id="filterWithoutEmail" type="checkbox" /> ohne E-Mail</label>
-          <label><input id="filterWithEmail" type="checkbox" /> mit E-Mail</label>
-          <label><input id="filterWithoutPhone" type="checkbox" /> ohne Telefon</label>
-          <label><input id="filterWithPhone" type="checkbox" /> mit Telefon</label>
-          <label><input id="filterWithoutAddress" type="checkbox" /> ohne Adresse</label>
-          <label><input id="filterWithAddress" type="checkbox" /> mit Adresse</label>
-          <label><input id="filterWithoutCountry" type="checkbox" /> ohne Land</label>
-          <label><input id="filterWithCountry" type="checkbox" /> mit Land</label>
-          <label><input id="filterWithoutDateOfBirth" type="checkbox" /> ohne Geburtsdatum</label>
-          <label><input id="filterWithDateOfBirth" type="checkbox" /> mit Geburtsdatum</label>
-          <label><input id="filterWithoutTaxNumber" type="checkbox" /> ohne Steuernummer</label>
-          <label><input id="filterWithTaxNumber" type="checkbox" /> mit Steuernummer</label>
-          <label><input id="filterWithoutPaymentMethod" type="checkbox" /> ohne Zahlmethode</label>
-          <label><input id="filterWithPaymentMethod" type="checkbox" /> mit Zahlmethode</label>
-          <label><input id="filterMissingIban" type="checkbox" /> ohne IBAN</label>
-          <label><input id="filterWithIban" type="checkbox" /> mit IBAN</label>
-          <label><input id="filterInvalidIban" type="checkbox" /> mit ungültiger IBAN</label>
-          <label><input id="filterValidIban" type="checkbox" /> mit gültiger IBAN</label>
-          <label><input id="filterWithoutStatus" type="checkbox" /> ohne Status</label>
-          <label><input id="filterWithStatus" type="checkbox" /> mit Status</label>
-          <label for="filterStatusSelect">Status:</label>
-          <select id="filterStatusSelect" style="min-width:180px"><option value="">alle</option></select>
+        <p class="status">Sortierung: Klick auf Spaltenkopf. Filter: Rechtsklick auf Spaltenkopf (wie Excel).</p>
+        <div class="validation-subtabs">
+          <button type="button" class="validation-subtab active" data-validation-target="validation-masterdata-section">Validierung der Stammdaten</button>
+          <button type="button" class="validation-subtab" data-validation-target="validation-tree-section">Baum der Beraterinnen</button>
         </div>
-        <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
-        <table>
-          <thead>
-            <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>IBAN korrekt</th><th>Status</th></tr>
-          </thead>
-          <tbody id="validationBody"></tbody>
-        </table>
+        <div id="validation-masterdata-section" class="validation-section active">
+          <div class="toolbar">
+            <button id="loadValidationBtn" class="secondary" type="button">Stammdaten laden / neu laden</button>
+          </div>
+          <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>IBAN korrekt</th><th>Status</th></tr>
+            </thead>
+            <tbody id="validationBody"></tbody>
+          </table>
+        </div>
+        <div id="validation-tree-section" class="validation-section">
+          <div class="toolbar">
+            <button id="loadValidationTreeBtn" class="secondary" type="button">Baum laden / neu laden</button>
+            <button id="expandAllTreeBtn" class="secondary" type="button">Alle aufklappen</button>
+            <button id="collapseAllTreeBtn" class="secondary" type="button">Alle einklappen</button>
+          </div>
+          <p id="validationTreeStatus" class="status">Noch keine Baumdaten geladen.</p>
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Parent-ID</th><th>Ebene</th><th>Beraterin</th><th>E-Mail</th><th>Status</th><th>Kinder</th></tr>
+            </thead>
+            <tbody id="validationTreeBody"></tbody>
+          </table>
+        </div>
       `;
       panels.appendChild(panel);
+    }
+
+    function wireValidationSubtabs() {
+      const tabs = document.querySelectorAll('.validation-subtab');
+      const sections = document.querySelectorAll('.validation-section');
+      tabs.forEach(tab => tab.addEventListener('click', () => {
+        const target = tab.dataset.validationTarget;
+        tabs.forEach(t => t.classList.toggle('active', t === tab));
+        sections.forEach(section => section.classList.toggle('active', section.id === target));
+      }));
     }
 
     function renderValidationTable() {
       const status = document.getElementById('validationStatus');
       const body = document.getElementById('validationBody');
-      const filterWithoutName = !!document.getElementById('filterWithoutName')?.checked;
-      const filterWithName = !!document.getElementById('filterWithName')?.checked;
-      const filterWithoutEmail = !!document.getElementById('filterWithoutEmail')?.checked;
-      const filterWithEmail = !!document.getElementById('filterWithEmail')?.checked;
-      const filterWithoutPhone = !!document.getElementById('filterWithoutPhone')?.checked;
-      const filterWithPhone = !!document.getElementById('filterWithPhone')?.checked;
-      const filterWithoutAddress = !!document.getElementById('filterWithoutAddress')?.checked;
-      const filterWithAddress = !!document.getElementById('filterWithAddress')?.checked;
-      const filterWithoutCountry = !!document.getElementById('filterWithoutCountry')?.checked;
-      const filterWithCountry = !!document.getElementById('filterWithCountry')?.checked;
-      const filterWithoutDateOfBirth = !!document.getElementById('filterWithoutDateOfBirth')?.checked;
-      const filterWithDateOfBirth = !!document.getElementById('filterWithDateOfBirth')?.checked;
-      const filterWithoutTaxNumber = !!document.getElementById('filterWithoutTaxNumber')?.checked;
-      const filterWithTaxNumber = !!document.getElementById('filterWithTaxNumber')?.checked;
-      const filterWithoutPaymentMethod = !!document.getElementById('filterWithoutPaymentMethod')?.checked;
-      const filterWithPaymentMethod = !!document.getElementById('filterWithPaymentMethod')?.checked;
-      const filterMissingIban = !!document.getElementById('filterMissingIban')?.checked;
-      const filterWithIban = !!document.getElementById('filterWithIban')?.checked;
-      const filterInvalidIban = !!document.getElementById('filterInvalidIban')?.checked;
-      const filterValidIban = !!document.getElementById('filterValidIban')?.checked;
-      const filterWithoutStatus = !!document.getElementById('filterWithoutStatus')?.checked;
-      const filterWithStatus = !!document.getElementById('filterWithStatus')?.checked;
-      const statusFilter = (document.getElementById('filterStatusSelect')?.value || '').trim().toLowerCase();
       if (!status || !body) return;
-
-      const filtered = validationRowsCache.filter(r => {
-        const hasName = !!(r.name || '').trim();
-        const hasEmail = !!(r.email || '').trim();
-        const hasPhone = !!(r.phone || '').trim();
-        const hasAddress = !!(r.address || '').trim();
-        const hasCountry = !!(r.country || '').trim();
-        const hasDateOfBirth = !!(r.dateOfBirth || '').trim();
-        const hasTaxNumber = !!(r.taxNumber || '').trim();
-        const hasPaymentMethod = !!(r.paymentMethod || '').trim();
-        const missingIban = !(r.iban || '').trim();
-        const hasIban = !missingIban;
-        const invalidIban = (r.ibanValid || '').toLowerCase() !== 'ja';
-        const hasValidIban = (r.ibanValid || '').toLowerCase() === 'ja';
-        const hasStatus = !!(r.status || '').trim();
-        const statusMatch = !statusFilter || (r.status || '').trim().toLowerCase() === statusFilter;
-
-        if (filterWithoutName && hasName) return false;
-        if (filterWithName && !hasName) return false;
-        if (filterWithoutEmail && hasEmail) return false;
-        if (filterWithEmail && !hasEmail) return false;
-        if (filterWithoutPhone && hasPhone) return false;
-        if (filterWithPhone && !hasPhone) return false;
-        if (filterWithoutAddress && hasAddress) return false;
-        if (filterWithAddress && !hasAddress) return false;
-        if (filterWithoutCountry && hasCountry) return false;
-        if (filterWithCountry && !hasCountry) return false;
-        if (filterWithoutDateOfBirth && hasDateOfBirth) return false;
-        if (filterWithDateOfBirth && !hasDateOfBirth) return false;
-        if (filterWithoutTaxNumber && hasTaxNumber) return false;
-        if (filterWithTaxNumber && !hasTaxNumber) return false;
-        if (filterWithoutPaymentMethod && hasPaymentMethod) return false;
-        if (filterWithPaymentMethod && !hasPaymentMethod) return false;
-        if (filterMissingIban && !missingIban) return false;
-        if (filterWithIban && !hasIban) return false;
-        if (filterInvalidIban && !invalidIban) return false;
-        if (filterValidIban && !hasValidIban) return false;
-        if (filterWithoutStatus && hasStatus) return false;
-        if (filterWithStatus && !hasStatus) return false;
-        if (!statusMatch) return false;
-        return true;
-      });
-
-      body.innerHTML = filtered.map(r => `<tr><td>${r.id || ''}</td><td>${r.name || ''}</td><td>${r.email || ''}</td><td>${r.phone || ''}</td><td>${r.address || ''}</td><td>${r.country || ''}</td><td>${r.dateOfBirth || ''}</td><td>${r.taxNumber || ''}</td><td>${r.paymentMethod || ''}</td><td>${r.iban || ''}</td><td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td><td>${r.status || ''}</td></tr>`).join('');
-      status.textContent = `${filtered.length} von ${validationRowsCache.length} Datensätzen angezeigt.`;
+      body.innerHTML = validationRowsCache.map(r => `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderValidationCell(r.taxNumber)}${renderValidationCell(r.paymentMethod)}${renderValidationCell(r.iban)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderValidationCell(r.status)}</tr>`).join('');
+      status.textContent = `${validationRowsCache.length} Datensätze geladen.`;
+      const table = body.closest('table');
+      ensureResizableColumns(table || document);
+      applyTableFilterAndSort(table);
+      updateEmptyTablesVisibility(document);
     }
 
     async function loadValidationData() {
       const status = document.getElementById('validationStatus');
-      const statusSelect = document.getElementById('filterStatusSelect');
       const body = document.getElementById('validationBody');
       if (!status || !body) return;
       status.textContent = 'Lade Stammdaten...';
@@ -492,14 +523,96 @@
       try {
         const data = await apiGet('/api/validation/advisors');
         validationRowsCache = Array.isArray(data.rows) ? data.rows : [];
-        if (statusSelect) {
-          const statuses = [...new Set(validationRowsCache.map(r => (r.status || '').trim()).filter(Boolean))].sort((a,b)=>a.localeCompare(b,'de',{sensitivity:'base'}));
-          statusSelect.innerHTML = `<option value="">alle</option>` + statuses.map(v => `<option value="${v}">${v}</option>`).join('');
-        }
         renderValidationTable();
       } catch (error) {
         status.textContent = `Fehler beim Laden der Stammdaten: ${error.message}`;
       }
+    }
+
+    function rebuildValidationTreeIndex() {
+      validationTreeById = new Map();
+      validationTreeChildrenByParent = new Map();
+      validationTreeRowsCache.forEach(row => {
+        const id = String(row.id || '').trim();
+        if (!id) return;
+        validationTreeById.set(id, row);
+        const parentId = String(row.parentId || '').trim();
+        if (!validationTreeChildrenByParent.has(parentId)) validationTreeChildrenByParent.set(parentId, []);
+        validationTreeChildrenByParent.get(parentId).push(id);
+      });
+    }
+
+    function validationTreeRootIds() {
+      const roots = [];
+      validationTreeRowsCache.forEach(row => {
+        const id = String(row.id || '').trim();
+        const parentId = String(row.parentId || '').trim();
+        if (!id) return;
+        if (!parentId || !validationTreeById.has(parentId)) roots.push(id);
+      });
+      return [...new Set(roots)];
+    }
+
+    function renderValidationTreeTable() {
+      const status = document.getElementById('validationTreeStatus');
+      const body = document.getElementById('validationTreeBody');
+      if (!status || !body) return;
+
+      const rows = [];
+      const roots = validationTreeRootIds();
+      const appendNode = (id, level) => {
+        const row = validationTreeById.get(id);
+        if (!row) return;
+        const children = validationTreeChildrenByParent.get(id) || [];
+        const isExpanded = validationTreeExpanded.has(id);
+        const indentPx = Math.max(0, level) * 18;
+        const toggleBtn = children.length ? `<button type="button" class="tree-toggle" data-node-id="${escapeHtml(id)}">${isExpanded ? '▾' : '▸'}</button>` : '<span class="tree-indent" style="width:26px"></span>';
+        rows.push(`<tr><td>${escapeHtml(row.id || '')}</td><td>${escapeHtml(row.parentId || '')}</td><td>${escapeHtml(row.level || '0')}</td><td class="tree-name"><span class="tree-indent" style="width:${indentPx}px"></span>${toggleBtn}${escapeHtml(row.name || '')}</td><td>${escapeHtml(row.email || '')}</td><td>${escapeHtml(row.status || '')}</td><td>${escapeHtml(row.childrenCount || String(children.length))}</td></tr>`);
+        if (children.length && isExpanded) children.forEach(childId => appendNode(childId, level + 1));
+      };
+      roots.forEach(id => appendNode(id, 0));
+
+      body.innerHTML = rows.join('');
+      body.querySelectorAll('.tree-toggle').forEach(btn => btn.addEventListener('click', () => {
+        const nodeId = String(btn.dataset.nodeId || '');
+        if (!nodeId) return;
+        if (validationTreeExpanded.has(nodeId)) validationTreeExpanded.delete(nodeId);
+        else validationTreeExpanded.add(nodeId);
+        renderValidationTreeTable();
+      }));
+
+      status.textContent = `${rows.length} sichtbare von ${validationTreeRowsCache.length} Knoten.`;
+      const table = body.closest('table');
+      ensureResizableColumns(table || document);
+      applyTableFilterAndSort(table);
+      updateEmptyTablesVisibility(document);
+    }
+
+    async function loadValidationTreeData() {
+      const status = document.getElementById('validationTreeStatus');
+      const body = document.getElementById('validationTreeBody');
+      if (!status || !body) return;
+      status.textContent = 'Lade Beraterinnen-Baum...';
+      body.innerHTML = '';
+      try {
+        const data = await apiGet('/api/validation/advisors/tree');
+        validationTreeRowsCache = Array.isArray(data.rows) ? data.rows : [];
+        validationTreeExpanded = new Set();
+        rebuildValidationTreeIndex();
+        renderValidationTreeTable();
+      } catch (error) {
+        status.textContent = `Fehler beim Laden des Beraterinnen-Baums: ${error.message}`;
+      }
+    }
+
+    function expandAllValidationTree() {
+      validationTreeExpanded = new Set(Array.from(validationTreeChildrenByParent.keys()).filter(Boolean));
+      renderValidationTreeTable();
+    }
+
+    function collapseAllValidationTree() {
+      validationTreeExpanded = new Set();
+      renderValidationTreeTable();
     }
 
     function createHelpTabAndPanel() {
@@ -557,6 +670,222 @@
       }
     }
 
+    function getTableState(table) {
+      if (!tableInteractionState.has(table)) {
+        tableInteractionState.set(table, { sortCol: null, sortDirection: 'asc', filters: new Map() });
+      }
+      return tableInteractionState.get(table);
+    }
+
+    function cellValue(row, colIndex) {
+      const cell = row && row.cells ? row.cells[colIndex] : null;
+      return (cell?.textContent || '').trim();
+    }
+
+    function compareValues(a, b) {
+      const na = Number.parseFloat(a.replace(',', '.'));
+      const nb = Number.parseFloat(b.replace(',', '.'));
+      if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+      return a.localeCompare(b, 'de', { sensitivity: 'base', numeric: true });
+    }
+
+    function updateTableHeaderStates(table) {
+      const state = getTableState(table);
+      const headers = table.querySelectorAll('thead th');
+      headers.forEach((th, idx) => {
+        th.classList.toggle('sort-active', state.sortCol === idx);
+        const filterSet = state.filters.get(idx);
+        th.classList.toggle('filter-active', !!(filterSet && filterSet.size));
+      });
+    }
+
+    function applyTableFilterAndSort(table) {
+      if (!table) return;
+      const tbody = table.tBodies && table.tBodies[0];
+      if (!tbody) return;
+      const state = getTableState(table);
+      const rows = [...tbody.rows];
+
+      rows.forEach(row => {
+        let visible = true;
+        state.filters.forEach((allowedValues, colIndex) => {
+          if (!visible || !allowedValues || !allowedValues.size) return;
+          if (!allowedValues.has(cellValue(row, colIndex))) visible = false;
+        });
+        row.style.display = visible ? '' : 'none';
+      });
+
+      if (state.sortCol !== null) {
+        const dir = state.sortDirection === 'asc' ? 1 : -1;
+        rows.sort((ra, rb) => compareValues(cellValue(ra, state.sortCol), cellValue(rb, state.sortCol)) * dir);
+        rows.forEach(row => tbody.appendChild(row));
+      }
+      updateTableHeaderStates(table);
+    }
+
+    function closeTableFilterMenu() {
+      if (tableFilterMenuEl) {
+        tableFilterMenuEl.remove();
+        tableFilterMenuEl = null;
+      }
+    }
+
+    function openTableFilterMenu(evt, th) {
+      const table = th.closest('table');
+      const tbody = table?.tBodies?.[0];
+      if (!table || !tbody) return;
+      const colIndex = th.cellIndex;
+      if (colIndex < 0) return;
+      evt.preventDefault();
+      closeTableFilterMenu();
+
+      const state = getTableState(table);
+      const rows = [...tbody.rows];
+      const rowsAfterOtherFilters = rows.filter(row => {
+        let visible = true;
+        state.filters.forEach((allowedValues, idx) => {
+          if (idx === colIndex || !allowedValues || !allowedValues.size || !visible) return;
+          if (!allowedValues.has(cellValue(row, idx))) visible = false;
+        });
+        return visible;
+      });
+      const valueCounts = new Map();
+      rowsAfterOtherFilters.forEach(row => {
+        const val = cellValue(row, colIndex);
+        valueCounts.set(val, (valueCounts.get(val) || 0) + 1);
+      });
+      const allValues = [...valueCounts.keys()].sort((a, b) => compareValues(a, b));
+      const selected = state.filters.get(colIndex) || new Set(allValues);
+
+      tableFilterMenuEl = document.createElement('div');
+      tableFilterMenuEl.className = 'table-filter-menu';
+      tableFilterMenuEl.innerHTML = `
+        <h4>Filter: ${escapeHtml((th.textContent || '').trim())}</h4>
+        <div class="table-filter-actions">
+          <button type="button" data-action="all">Alle</button>
+          <button type="button" data-action="none">Keine</button>
+          <button type="button" data-action="clear">Filter löschen</button>
+          <button type="button" data-action="apply">Anwenden</button>
+        </div>
+        <div class="table-filter-options">
+          ${allValues.map(v => `<label><input type="checkbox" value="${encodeURIComponent(v)}" ${selected.has(v) ? 'checked' : ''}/> <span>${escapeHtml(v || '(leer)')} (${valueCounts.get(v) || 0})</span></label>`).join('')}
+        </div>
+      `;
+      document.body.appendChild(tableFilterMenuEl);
+      tableFilterMenuEl.style.left = `${Math.min(window.innerWidth - 300, evt.clientX)}px`;
+      tableFilterMenuEl.style.top = `${Math.min(window.innerHeight - 440, evt.clientY)}px`;
+
+      const setAll = (checked) => tableFilterMenuEl.querySelectorAll('input[type="checkbox"]').forEach(cb => cb.checked = checked);
+
+      tableFilterMenuEl.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        const action = btn.dataset.action;
+        if (action === 'all') setAll(true);
+        if (action === 'none') setAll(false);
+        if (action === 'clear') {
+          state.filters.delete(colIndex);
+          applyTableFilterAndSort(table);
+          closeTableFilterMenu();
+          return;
+        }
+        if (action === 'apply') {
+          const checked = [...tableFilterMenuEl.querySelectorAll('input[type="checkbox"]:checked')].map(cb => decodeURIComponent(cb.value));
+          if (!checked.length || checked.length === allValues.length) state.filters.delete(colIndex);
+          else state.filters.set(colIndex, new Set(checked));
+          applyTableFilterAndSort(table);
+          closeTableFilterMenu();
+        }
+      });
+    }
+
+    function prepareTableForResize(table) {
+      if (!table || table.dataset.resizePrepared === '1') return;
+      const headers = table.querySelectorAll('thead th');
+      headers.forEach(th => {
+        const w = th.getBoundingClientRect().width;
+        if (w > 0) th.style.width = `${Math.round(w)}px`;
+      });
+      table.style.tableLayout = 'fixed';
+      table.dataset.resizePrepared = '1';
+    }
+
+    function ensureResizableColumns(root = document) {
+      root.querySelectorAll('table thead th').forEach(th => {
+        if (th.querySelector('.col-resizer')) return;
+        th.style.position = th.style.position || 'relative';
+        const handle = document.createElement('span');
+        handle.className = 'col-resizer';
+        handle.title = 'Spaltenbreite ändern';
+        th.appendChild(handle);
+      });
+    }
+
+    function wireTableInteractions() {
+      let activeResize = null;
+
+      document.addEventListener('mousedown', (evt) => {
+        const handle = evt.target.closest('.col-resizer');
+        if (!handle) return;
+        const th = handle.closest('th');
+        const table = th?.closest('table');
+        if (!th || !table) return;
+        evt.preventDefault();
+        evt.stopPropagation();
+        prepareTableForResize(table);
+        th.classList.add('resizing');
+        activeResize = { th, startX: evt.clientX, startWidth: th.getBoundingClientRect().width };
+      });
+
+      document.addEventListener('mousemove', (evt) => {
+        if (!activeResize) return;
+        const delta = evt.clientX - activeResize.startX;
+        const next = Math.max(70, Math.round(activeResize.startWidth + delta));
+        activeResize.th.style.width = `${next}px`;
+      });
+
+      document.addEventListener('mouseup', () => {
+        if (!activeResize) return;
+        activeResize.th.classList.remove('resizing');
+        activeResize = null;
+      });
+
+      document.addEventListener('click', (evt) => {
+        const th = evt.target.closest('th');
+        if (!th) {
+          if (!evt.target.closest('.table-filter-menu')) closeTableFilterMenu();
+          return;
+        }
+        if (evt.button !== 0) return;
+        const table = th.closest('table');
+        const tbody = table?.tBodies?.[0];
+        if (!table || !tbody) return;
+        if (evt.target.closest('.col-resizer')) return;
+        if (th.querySelector('input,button,select') || th.dataset.nosort === 'true') return;
+        if (th.cellIndex < 0) return;
+
+        const state = getTableState(table);
+        if (state.sortCol === th.cellIndex) state.sortDirection = state.sortDirection === 'asc' ? 'desc' : 'asc';
+        else {
+          state.sortCol = th.cellIndex;
+          state.sortDirection = 'asc';
+        }
+        applyTableFilterAndSort(table);
+      });
+
+      document.addEventListener('contextmenu', (evt) => {
+        const th = evt.target.closest('th');
+        if (!th) return;
+        if (th.dataset.nofilter === 'true' || th.querySelector('input,button,select')) return;
+        openTableFilterMenu(evt, th);
+      });
+
+      document.addEventListener('keydown', (evt) => { if (evt.key === 'Escape') closeTableFilterMenu(); });
+
+      const observer = new MutationObserver(() => ensureResizableColumns());
+      observer.observe(document.body, { childList: true, subtree: true });
+    }
+
     function activateTab(targetId) {
       document.querySelectorAll('.tab').forEach(tab => tab.classList.toggle('active', tab.dataset.target === targetId));
       document.querySelectorAll('.panel').forEach(panel => panel.classList.toggle('active', panel.id === targetId));
@@ -566,9 +895,23 @@
 
     function wireMainSectionTabs() {
       document.querySelectorAll('.section-tab').forEach(tab => tab.addEventListener('click', () => {
+        const action = tab.dataset.sectionAction;
+        if (action === 'open-help') {
+          activateTab('help-panel');
+          return;
+        }
         const target = tab.dataset.sectionTarget;
+        if (!target) return;
         document.querySelectorAll('.section-tab').forEach(t => t.classList.toggle('active', t === tab));
         document.querySelectorAll('.section-panel').forEach(panel => panel.classList.toggle('active', panel.id === target));
+      }));
+    }
+
+    function wireEmailDesignerTabs() {
+      document.querySelectorAll('.email-designer-tab').forEach(tab => tab.addEventListener('click', () => {
+        const target = tab.dataset.emailDesignerTarget;
+        document.querySelectorAll('.email-designer-tab').forEach(t => t.classList.toggle('active', t === tab));
+        document.querySelectorAll('.email-designer-panel').forEach(panel => panel.classList.toggle('active', panel.id === target));
       }));
     }
     function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}`; }
@@ -624,15 +967,6 @@
       const needle = tableState.filter.trim().toLowerCase();
       let rows = [...tableState.rows];
       if (needle) rows = rows.filter(row => Object.values(row).join(' ').toLowerCase().includes(needle));
-      const col = tableState.sortBy;
-      const direction = tableState.sortDirection === 'asc' ? 1 : -1;
-      rows.sort((a, b) => {
-        const left = (a[col] || '').toString();
-        const right = (b[col] || '').toString();
-        const maybeNum = Number(left) - Number(right);
-        if (!Number.isNaN(maybeNum) && left !== '' && right !== '') return maybeNum * direction;
-        return left.localeCompare(right, 'de', { sensitivity: 'base' }) * direction;
-      });
       return rows;
     }
 
@@ -681,22 +1015,13 @@
         await loadInvoiceDetailsPdf(paymentId);
       }));
 
-      document.querySelectorAll('th[data-col]').forEach(th => {
-        th.classList.remove('sort-active');
-        if (th.dataset.col === tableState.sortBy) th.classList.add('sort-active');
-      });
+      const mainTable = document.querySelector('#main-workspace table');
+      ensureResizableColumns(mainTable || document);
+      applyTableFilterAndSort(mainTable);
+      updateEmptyTablesVisibility(document);
     }
 
     function wireSortingAndFiltering() {
-      document.querySelectorAll('th[data-col]').forEach(th => {
-        if (th.dataset.col === 'select' || th.dataset.col === 'actions') return;
-        th.addEventListener('click', () => {
-          if (tableState.sortBy === th.dataset.col) tableState.sortDirection = tableState.sortDirection === 'asc' ? 'desc' : 'asc';
-          else { tableState.sortBy = th.dataset.col; tableState.sortDirection = 'asc'; }
-          renderTable();
-        });
-      });
-
       const filterInput = document.getElementById('filterInput');
       if (filterInput) filterInput.addEventListener('input', e => { tableState.filter = e.target.value; renderTable(); });
 
@@ -799,12 +1124,29 @@
       }
     }
 
+    async function rebuildCommissionHistoryFromPayments() {
+      const status = document.getElementById('pollStatus');
+      try {
+        if (status) status.textContent = 'Baue Zahllauf-Liste aus Payments neu auf...';
+        const data = await apiPost('/api/commissions/rebuild-from-payments', {});
+        updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
+        renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
+        settingsSnapshot = buildSettingsSnapshot();
+        updateSaveButtonState();
+        if (status) status.textContent = data.message || 'Zahlläufe neu aufgebaut.';
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Neuaufbau der Zahlläufe: ${error.message}`;
+      }
+    }
+
     function setPollingButtonState(isRunning) {
       const btn = document.getElementById('togglePollingBtn');
       if (!btn) return;
       btn.textContent = isRunning ? 'Polling stoppen' : 'Polling starten';
       btn.classList.toggle('danger', isRunning);
     }
+
+
 
     async function loadSettings() {
       const input = document.getElementById('pdfExportPath');
@@ -817,6 +1159,7 @@
             const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
+      const emailTemplateEditor = document.getElementById('emailTemplateEditor');
       if (!input) return;
       try {
         const data = await apiGet('/api/settings');
@@ -831,6 +1174,9 @@
         const mode = data.emailRecipientMode || 'contact';
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
+        defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || data.emailTemplateHtml || '';
+        setCurrentEmailTemplateHtml(data.emailTemplateHtml || '');
+        renderEmailTemplatePreview();
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
@@ -853,6 +1199,7 @@
             const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
+      const emailTemplateEditor = document.getElementById('emailTemplateEditor');
       const status = document.getElementById('pollStatus');
       if (!input || !status || !select) return;
       try {
@@ -867,7 +1214,8 @@
           smtpUsername: smtpUsernameInput ? smtpUsernameInput.value : '',
           smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
           sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true,
-          emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact'
+          emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact',
+          emailTemplateHtml: getCurrentEmailTemplateHtml()
         });
         input.value = data.pdfExportPath || input.value;
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
@@ -880,6 +1228,9 @@
         const mode = data.emailRecipientMode || 'contact';
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
+        defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || defaultEmailTemplateHtml;
+        setCurrentEmailTemplateHtml(data.emailTemplateHtml || '');
+        renderEmailTemplatePreview();
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
@@ -905,6 +1256,55 @@
       return !sendEmailsEnabledInput || sendEmailsEnabledInput.checked;
     }
 
+    function getCurrentEmailTemplateHtml() {
+      const editor = document.getElementById('emailTemplateEditor');
+      const source = document.getElementById('emailTemplateSource');
+      if (emailTemplateHtmlMode && source) return source.value;
+      return editor ? editor.innerHTML : '';
+    }
+
+    function setCurrentEmailTemplateHtml(html) {
+      const editor = document.getElementById('emailTemplateEditor');
+      const source = document.getElementById('emailTemplateSource');
+      if (editor) editor.innerHTML = html || '';
+      if (source) source.value = html || '';
+    }
+
+    function renderEmailTemplatePreview() {
+      const box = document.getElementById('emailTemplatePreview');
+      const select = document.getElementById('emailPreviewAdvisorSelect');
+      if (!box) return;
+      const advisorId = select ? String(select.value || '') : '';
+      const advisor = emailPreviewAdvisors.find(a => String(a.id) === advisorId) || emailPreviewAdvisors[0] || { name: 'Beraterin Beispiel' };
+      const template = getCurrentEmailTemplateHtml();
+      const now = new Date();
+      const created = now.toLocaleString('de-DE', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+      const preview = String(template || '')
+        .replaceAll('{{salutationName}}', escapeHtml(advisor.name || 'Beraterin Beispiel'))
+        .replaceAll('{{periodLabel}}', '01.01.2026 bis 31.01.2026')
+        .replaceAll('{{paymentId}}', '99999999')
+        .replaceAll('{{payout}}', '123,45 €')
+        .replaceAll('{{method}}', 'Banküberweisung')
+        .replaceAll('{{created}}', created)
+        .replaceAll('{{txCount}}', '12');
+      box.innerHTML = preview || '<em>Keine Vorlage vorhanden.</em>';
+    }
+
+    async function reloadEmailPreviewAdvisors() {
+      const select = document.getElementById('emailPreviewAdvisorSelect');
+      if (!select) return;
+      try {
+        const data = await apiGet('/api/validation/advisors');
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        emailPreviewAdvisors = rows.map(r => ({ id: r.id, name: r.name || `ID ${r.id}` })).filter(r => r.id);
+        select.innerHTML = emailPreviewAdvisors.map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)} (${escapeHtml(a.id)})</option>`).join('');
+      } catch (_) {
+        emailPreviewAdvisors = [];
+        select.innerHTML = '<option value="">keine Beraterinnen ladbar</option>';
+      }
+      renderEmailTemplatePreview();
+    }
+
     function buildSettingsSnapshot() {
       return {
         pdfExportPath: (document.getElementById('pdfExportPath')?.value || '').trim(),
@@ -915,7 +1315,8 @@
         smtpPort: String((document.getElementById('smtpPort')?.value || '587')).trim(),
         smtpUsername: (document.getElementById('smtpUsername')?.value || '').trim(),
         sendEmailsEnabled: !!document.getElementById('sendEmailsEnabled')?.checked,
-        emailRecipientMode: getEmailRecipientMode()
+        emailRecipientMode: getEmailRecipientMode(),
+        emailTemplateHtml: getCurrentEmailTemplateHtml().trim()
       };
     }
 
@@ -936,6 +1337,81 @@
         const eventName = (el.type === 'checkbox' || el.type === 'radio' || el.tagName === 'SELECT') ? 'change' : 'input';
         el.addEventListener(eventName, updateSaveButtonState);
       });
+    }
+
+    function wireEmailTemplateEditor() {
+      const editor = document.getElementById('emailTemplateEditor');
+      const source = document.getElementById('emailTemplateSource');
+      const resetBtn = document.getElementById('resetEmailTemplateBtn');
+      const toggleModeBtn = document.getElementById('toggleEmailHtmlModeBtn');
+      const applyTextColorBtn = document.getElementById('applyEmailTextColorBtn');
+      const textColorInput = document.getElementById('emailTextColor');
+      const applyHighlightBtn = document.getElementById('applyEmailHighlightColorBtn');
+      const highlightColorInput = document.getElementById('emailHighlightColor');
+      const renderPreviewBtn = document.getElementById('renderEmailPreviewBtn');
+      const reloadAdvisorsBtn = document.getElementById('reloadEmailPreviewAdvisorsBtn');
+      if (!editor) return;
+
+      document.querySelectorAll('[data-editor-cmd]').forEach(btn => btn.addEventListener('click', () => {
+        const cmd = btn.dataset.editorCmd;
+        if (!cmd) return;
+        if (cmd === 'createLink') {
+          const url = window.prompt('Link-URL eingeben (https://...)', 'https://');
+          if (!url) return;
+          document.execCommand('createLink', false, url);
+        } else {
+          document.execCommand(cmd, false, null);
+        }
+        editor.focus();
+        updateSaveButtonState();
+        renderEmailTemplatePreview();
+      }));
+
+      if (applyTextColorBtn) applyTextColorBtn.addEventListener('click', () => {
+        if (!textColorInput) return;
+        document.execCommand('foreColor', false, textColorInput.value || '#1f2937');
+        editor.focus();
+        updateSaveButtonState();
+        renderEmailTemplatePreview();
+      });
+
+      if (applyHighlightBtn) applyHighlightBtn.addEventListener('click', () => {
+        if (!highlightColorInput) return;
+        document.execCommand('hiliteColor', false, highlightColorInput.value || '#fff59d');
+        editor.focus();
+        updateSaveButtonState();
+        renderEmailTemplatePreview();
+      });
+
+      if (toggleModeBtn) toggleModeBtn.addEventListener('click', () => {
+        emailTemplateHtmlMode = !emailTemplateHtmlMode;
+        if (emailTemplateHtmlMode) {
+          if (source) source.value = editor.innerHTML;
+          editor.style.display = 'none';
+          if (source) source.style.display = 'block';
+          toggleModeBtn.textContent = 'WYSIWYG-Modus';
+        } else {
+          if (source) editor.innerHTML = source.value;
+          editor.style.display = 'block';
+          if (source) source.style.display = 'none';
+          toggleModeBtn.textContent = 'HTML-Modus';
+        }
+        updateSaveButtonState();
+        renderEmailTemplatePreview();
+      });
+
+      editor.addEventListener('input', () => { updateSaveButtonState(); renderEmailTemplatePreview(); });
+      if (source) source.addEventListener('input', () => { updateSaveButtonState(); renderEmailTemplatePreview(); });
+
+      if (resetBtn) resetBtn.addEventListener('click', () => {
+        setCurrentEmailTemplateHtml(defaultEmailTemplateHtml || '');
+        updateSaveButtonState();
+        renderEmailTemplatePreview();
+      });
+
+      if (renderPreviewBtn) renderPreviewBtn.addEventListener('click', renderEmailTemplatePreview);
+      if (reloadAdvisorsBtn) reloadAdvisorsBtn.addEventListener('click', reloadEmailPreviewAdvisors);
+      reloadEmailPreviewAdvisors();
     }
 
     async function exportSelectedInvoiceDetailsPdfs() {
@@ -1020,6 +1496,25 @@
       }
     }
 
+    function updateEmptyTablesVisibility(root = document) {
+      root.querySelectorAll('table').forEach(table => {
+        const tbody = table.tBodies && table.tBodies[0];
+        if (!tbody) return;
+        const hasRows = tbody.rows.length > 0;
+        table.classList.toggle('empty-table-hidden', !hasRows);
+      });
+    }
+
+    function countHoverHtml(value, tooltip) {
+      return `<span class="count-hover" title="${escapeHtml(tooltip)}">${escapeHtml(String(value ?? 0))}</span>`;
+    }
+
+    function renderValidationCell(value) {
+      const text = escapeHtml(value || '');
+      const emptyClass = String(value || '').trim() === '' ? ' class="validation-empty-cell"' : '';
+      return `<td${emptyClass}>${text}</td>`;
+    }
+
     function drawBarChart(canvasId, labels, values, barColor) {
       const canvas = document.getElementById(canvasId);
       if (!canvas) return;
@@ -1090,36 +1585,44 @@
         ['Reward-Betrag gesamt', formatEuroAmount(summary.rewardAmountTotal || 0)],
         ['Traffic-Quellen (Top)', summary.trafficSources || 0]
       ];
-      summaryBody.innerHTML = summaryRows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+      summaryBody.innerHTML = summaryRows.map(r => { const numeric = Number(String(r[1]).replace(/[^0-9,.-]/g, '').replace(',', '.')); const val = Number.isFinite(numeric) ? countHoverHtml(r[1], `${r[0]}: ${r[1]}`) : escapeHtml(String(r[1])); return `<tr><td>${r[0]}</td><td>${val}</td></tr>`; }).join('');
 
       const advisors = Array.isArray(data.advisorRows) ? data.advisorRows : [];
       advisorBody.innerHTML = advisors.map(r =>
-        `<tr><td>${r.advisorName || ''}</td><td>${r.affiliateId || ''}</td><td>${r.country || ''}</td><td>${r.paymentCount || 0}</td><td>${r.totalTransactions || 0}</td><td>${formatEuroAmount(r.selfCommission || 0)}</td><td>${formatEuroAmount(r.teamCommission || 0)}</td><td>${formatEuroAmount(r.totalAmount || 0)}</td></tr>`
+        `<tr><td>${r.advisorName || ''}</td><td>${r.affiliateId || ''}</td><td>${r.country || ''}</td><td>${countHoverHtml(r.paymentCount || 0, `Beraterin ${r.advisorName || ''} (${r.affiliateId || '-'}) hat ${r.paymentCount || 0} Zahlläufe`)}</td><td>${countHoverHtml(r.totalTransactions || 0, `Beraterin ${r.advisorName || ''} hat ${r.totalTransactions || 0} Transaktionen`)}</td><td>${formatEuroAmount(r.selfCommission || 0)}</td><td>${formatEuroAmount(r.teamCommission || 0)}</td><td>${formatEuroAmount(r.totalAmount || 0)}</td></tr>`
       ).join('');
 
       const leaders = Array.isArray(data.leaderRows) ? data.leaderRows : [];
       leaderBody.innerHTML = leaders.map(r =>
-        `<tr><td>${r.leaderName || ''}</td><td>${r.leaderId || ''}</td><td>${r.advisorCount || 0}</td><td>${r.paymentCount || 0}</td><td>${formatEuroAmount(r.teamTotalAmount || 0)}</td><td>${formatEuroAmount(r.teamSelfCommission || 0)}</td><td>${formatEuroAmount(r.teamTeamCommission || 0)}</td></tr>`
+        `<tr><td>${r.leaderName || ''}</td><td>${r.leaderId || ''}</td><td>${countHoverHtml(r.advisorCount || 0, `Führungskraft ${r.leaderName || ''} hat ${r.advisorCount || 0} Beraterinnen im Team`)}</td><td>${countHoverHtml(r.paymentCount || 0, `Team von ${r.leaderName || ''} hat ${r.paymentCount || 0} Zahlläufe`)}</td><td>${formatEuroAmount(r.teamTotalAmount || 0)}</td><td>${formatEuroAmount(r.teamSelfCommission || 0)}</td><td>${formatEuroAmount(r.teamTeamCommission || 0)}</td></tr>`
       ).join('');
 
       const countries = Array.isArray(data.countryRows) ? data.countryRows : [];
-      countryBody.innerHTML = countries.map(r => `<tr><td>${r.country || ''}</td><td>${r.payments || 0}</td></tr>`).join('');
+      countryBody.innerHTML = countries.map(r => {
+        const topAdvisors = advisors.filter(a => (a.country || '') === (r.country || '')).sort((a,b) => (b.paymentCount || 0) - (a.paymentCount || 0)).slice(0, 5);
+        const tip = topAdvisors.length > 0
+          ? `Top Beraterinnen in ${r.country || ''}: ` + topAdvisors.map(a => `${a.advisorName || a.affiliateId}: ${a.paymentCount || 0}`).join(', ')
+          : `Keine Beraterinnen-Details für ${r.country || ''}`;
+        return `<tr><td>${r.country || ''}</td><td>${countHoverHtml(r.payments || 0, tip)}</td></tr>`;
+      }).join('');
 
       const pending = Array.isArray(data.pendingRows) ? data.pendingRows : [];
       pendingBody.innerHTML = pending.map(r => `<tr><td>${r.name || ''}</td><td>${r.affiliateId || ''}</td><td>${formatEuroAmount(r.due || 0)}</td><td>${formatEuroAmount(r.total || 0)}</td><td>${formatEuroAmount(r.paidOut || 0)}</td></tr>`).join('');
 
       const traffic = Array.isArray(data.trafficSourceRows) ? data.trafficSourceRows : [];
-      trafficBody.innerHTML = traffic.map(r => `<tr><td>${r.source || ''}</td><td>${r.visits || 0}</td><td>${r.pageViews || 0}</td></tr>`).join('');
+      trafficBody.innerHTML = traffic.map(r => `<tr><td>${r.source || ''}</td><td>${countHoverHtml(r.visits || 0, `Quelle ${r.source || ''}: ${r.visits || 0} Besuche`)}</td><td>${countHoverHtml(r.pageViews || 0, `Quelle ${r.source || ''}: ${r.pageViews || 0} Seitenaufrufe`)}</td></tr>`).join('');
 
       const orderStatuses = Array.isArray(data.orderStatusRows) ? data.orderStatusRows : [];
-      orderStatusBody.innerHTML = orderStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${r.count || 0}</td></tr>`).join('');
+      orderStatusBody.innerHTML = orderStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${countHoverHtml(r.count || 0, `Bestellstatus ${r.status || ''}: ${r.count || 0}`)}</td></tr>`).join('');
 
       const rewardStatuses = Array.isArray(data.rewardStatusRows) ? data.rewardStatusRows : [];
-      rewardStatusBody.innerHTML = rewardStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${r.count || 0}</td><td>${formatEuroAmount(r.amount || 0)}</td></tr>`).join('');
+      rewardStatusBody.innerHTML = rewardStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${countHoverHtml(r.count || 0, `Reward-Status ${r.status || ''}: ${r.count || 0}`)}</td><td>${formatEuroAmount(r.amount || 0)}</td></tr>`).join('');
 
       const chart = data.chartData || {};
       drawBarChart('analyticsAmountChart', chart.labels || [], chart.amountSeries || [], '#2563eb');
       drawBarChart('analyticsTxChart', chart.labels || [], chart.txSeries || [], '#10b981');
+      drawBarChart('analyticsCountryChart', countries.map(r => r.country || 'Unbekannt'), countries.map(r => Number(r.payments || 0)), '#7c3aed');
+      updateEmptyTablesVisibility(document);
     }
 
     function wireAnalyticsDateRange() {
@@ -1262,9 +1765,11 @@
           return;
         }
         createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
-        createAnalyticsTabAndPanel();
         createValidationTabAndPanel();
+        createAnalyticsTabAndPanel();
         createHelpTabAndPanel();
+        const helpTab = document.querySelector('.tab[data-target="help-panel"]');
+        if (helpTab) helpTab.style.marginLeft = 'auto';
         wireTabSwitching();
         await loadVersion();
         await loadHelpDocumentation();
@@ -1272,23 +1777,28 @@
 
         const pollingBtn = document.getElementById('togglePollingBtn');
         const saveBtn = document.getElementById('saveSettingsBtn');
+        const emailDesignerSaveBtn = document.getElementById('emailDesignerSaveBtn');
         const pickBtn = document.getElementById('pickFolderBtn');
         const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
         const addLatestCommissionBtn = document.getElementById('addLatestCommissionBtn');
+        const rebuildCommissionHistoryBtn = document.getElementById('rebuildCommissionHistoryBtn');
         const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
         const loadValidationBtn = document.getElementById('loadValidationBtn');
+        const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
+        const expandAllTreeBtn = document.getElementById('expandAllTreeBtn');
+        const collapseAllTreeBtn = document.getElementById('collapseAllTreeBtn');
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
+        if (emailDesignerSaveBtn) emailDesignerSaveBtn.addEventListener('click', saveSettings);
         if (pickBtn) pickBtn.addEventListener('click', pickFolder);
         if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
         if (addLatestCommissionBtn) addLatestCommissionBtn.addEventListener('click', addLatestCommission);
+        if (rebuildCommissionHistoryBtn) rebuildCommissionHistoryBtn.addEventListener('click', rebuildCommissionHistoryFromPayments);
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
-
-        ['filterWithoutName','filterWithName','filterWithoutEmail','filterWithEmail','filterWithoutPhone','filterWithPhone','filterWithoutAddress','filterWithAddress','filterWithoutCountry','filterWithCountry','filterWithoutDateOfBirth','filterWithDateOfBirth','filterWithoutTaxNumber','filterWithTaxNumber','filterWithoutPaymentMethod','filterWithPaymentMethod','filterMissingIban','filterWithIban','filterInvalidIban','filterValidIban','filterWithoutStatus','filterWithStatus','filterStatusSelect'].forEach(id => {
-          const el = document.getElementById(id);
-          if (el) el.addEventListener('change', renderValidationTable);
-        });
+        if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
+        if (expandAllTreeBtn) expandAllTreeBtn.addEventListener('click', expandAllValidationTree);
+        if (collapseAllTreeBtn) collapseAllTreeBtn.addEventListener('click', collapseAllValidationTree);
 
         const emailRecipientContactInput = document.getElementById('emailRecipientContact');
         const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
@@ -1300,11 +1810,17 @@
         wireSettingsDirtyTracking();
         wireFolderPickerFallback();
         wireMainSectionTabs();
+        wireEmailDesignerTabs();
+        wireValidationSubtabs();
+        wireTableInteractions();
+        ensureResizableColumns();
+        wireEmailTemplateEditor();
         wireSortingAndFiltering();
         wireAnalyticsDateRange();
         renderTable();
         setPollingButtonState(false);
         await loadSettings();
+        updateEmptyTablesVisibility(document);
       } catch (error) {
         document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;
       }
