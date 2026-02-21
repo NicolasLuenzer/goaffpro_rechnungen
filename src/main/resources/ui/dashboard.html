@@ -88,6 +88,9 @@
     .email-designer-tab.active { background:#2563eb; color:#fff; border-color:#2563eb; }
     .email-designer-panel { display:none; }
     .email-designer-panel.active { display:block; }
+    .empty-table-hidden { display:none; }
+    .validation-empty-cell { background:#fef2f2; }
+    .count-hover { text-decoration: underline dotted; cursor: help; }
 
   </style>
 </head>
@@ -210,8 +213,9 @@
           <h2>${executable.displayName || executable.name}</h2>
                     <div class="section-tabs">
             <button class="section-tab active" data-section-target="main-workspace">Arbeitsbereich</button>
-            <button class="section-tab" data-section-target="main-settings">⚙ Einstellungen</button>
             <button class="section-tab" data-section-target="main-email-designer">✉ E-Mail Designer</button>
+            <button class="section-tab" data-section-target="main-settings">⚙ Einstellungen</button>
+            <button class="section-tab" data-section-action="open-help">❓ Hilfe</button>
           </div>
 
           <div id="main-workspace" class="section-panel active">
@@ -406,6 +410,7 @@
           <thead><tr><th>Land</th><th>Anzahl Zahlläufe</th></tr></thead>
           <tbody id="analyticsCountryBody"></tbody>
         </table>
+        <canvas id="analyticsCountryChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
 
         <div class="toolbar"><strong>Weitere API-Auswertungen</strong></div>
         <table>
@@ -501,11 +506,12 @@
       const status = document.getElementById('validationStatus');
       const body = document.getElementById('validationBody');
       if (!status || !body) return;
-      body.innerHTML = validationRowsCache.map(r => `<tr><td>${escapeHtml(r.id || '')}</td><td>${escapeHtml(r.name || '')}</td><td>${escapeHtml(r.email || '')}</td><td>${escapeHtml(r.phone || '')}</td><td>${escapeHtml(r.address || '')}</td><td>${escapeHtml(r.country || '')}</td><td>${escapeHtml(r.dateOfBirth || '')}</td><td>${escapeHtml(r.taxNumber || '')}</td><td>${escapeHtml(r.paymentMethod || '')}</td><td>${escapeHtml(r.iban || '')}</td><td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td><td>${escapeHtml(r.status || '')}</td></tr>`).join('');
+      body.innerHTML = validationRowsCache.map(r => `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderValidationCell(r.taxNumber)}${renderValidationCell(r.paymentMethod)}${renderValidationCell(r.iban)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderValidationCell(r.status)}</tr>`).join('');
       status.textContent = `${validationRowsCache.length} Datensätze geladen.`;
       const table = body.closest('table');
       ensureResizableColumns(table || document);
       applyTableFilterAndSort(table);
+      updateEmptyTablesVisibility(document);
     }
 
     async function loadValidationData() {
@@ -579,6 +585,7 @@
       const table = body.closest('table');
       ensureResizableColumns(table || document);
       applyTableFilterAndSort(table);
+      updateEmptyTablesVisibility(document);
     }
 
     async function loadValidationTreeData() {
@@ -888,7 +895,13 @@
 
     function wireMainSectionTabs() {
       document.querySelectorAll('.section-tab').forEach(tab => tab.addEventListener('click', () => {
+        const action = tab.dataset.sectionAction;
+        if (action === 'open-help') {
+          activateTab('help-panel');
+          return;
+        }
         const target = tab.dataset.sectionTarget;
+        if (!target) return;
         document.querySelectorAll('.section-tab').forEach(t => t.classList.toggle('active', t === tab));
         document.querySelectorAll('.section-panel').forEach(panel => panel.classList.toggle('active', panel.id === target));
       }));
@@ -1005,6 +1018,7 @@
       const mainTable = document.querySelector('#main-workspace table');
       ensureResizableColumns(mainTable || document);
       applyTableFilterAndSort(mainTable);
+      updateEmptyTablesVisibility(document);
     }
 
     function wireSortingAndFiltering() {
@@ -1482,6 +1496,25 @@
       }
     }
 
+    function updateEmptyTablesVisibility(root = document) {
+      root.querySelectorAll('table').forEach(table => {
+        const tbody = table.tBodies && table.tBodies[0];
+        if (!tbody) return;
+        const hasRows = tbody.rows.length > 0;
+        table.classList.toggle('empty-table-hidden', !hasRows);
+      });
+    }
+
+    function countHoverHtml(value, tooltip) {
+      return `<span class="count-hover" title="${escapeHtml(tooltip)}">${escapeHtml(String(value ?? 0))}</span>`;
+    }
+
+    function renderValidationCell(value) {
+      const text = escapeHtml(value || '');
+      const emptyClass = String(value || '').trim() === '' ? ' class="validation-empty-cell"' : '';
+      return `<td${emptyClass}>${text}</td>`;
+    }
+
     function drawBarChart(canvasId, labels, values, barColor) {
       const canvas = document.getElementById(canvasId);
       if (!canvas) return;
@@ -1552,36 +1585,44 @@
         ['Reward-Betrag gesamt', formatEuroAmount(summary.rewardAmountTotal || 0)],
         ['Traffic-Quellen (Top)', summary.trafficSources || 0]
       ];
-      summaryBody.innerHTML = summaryRows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+      summaryBody.innerHTML = summaryRows.map(r => { const numeric = Number(String(r[1]).replace(/[^0-9,.-]/g, '').replace(',', '.')); const val = Number.isFinite(numeric) ? countHoverHtml(r[1], `${r[0]}: ${r[1]}`) : escapeHtml(String(r[1])); return `<tr><td>${r[0]}</td><td>${val}</td></tr>`; }).join('');
 
       const advisors = Array.isArray(data.advisorRows) ? data.advisorRows : [];
       advisorBody.innerHTML = advisors.map(r =>
-        `<tr><td>${r.advisorName || ''}</td><td>${r.affiliateId || ''}</td><td>${r.country || ''}</td><td>${r.paymentCount || 0}</td><td>${r.totalTransactions || 0}</td><td>${formatEuroAmount(r.selfCommission || 0)}</td><td>${formatEuroAmount(r.teamCommission || 0)}</td><td>${formatEuroAmount(r.totalAmount || 0)}</td></tr>`
+        `<tr><td>${r.advisorName || ''}</td><td>${r.affiliateId || ''}</td><td>${r.country || ''}</td><td>${countHoverHtml(r.paymentCount || 0, `Beraterin ${r.advisorName || ''} (${r.affiliateId || '-'}) hat ${r.paymentCount || 0} Zahlläufe`)}</td><td>${countHoverHtml(r.totalTransactions || 0, `Beraterin ${r.advisorName || ''} hat ${r.totalTransactions || 0} Transaktionen`)}</td><td>${formatEuroAmount(r.selfCommission || 0)}</td><td>${formatEuroAmount(r.teamCommission || 0)}</td><td>${formatEuroAmount(r.totalAmount || 0)}</td></tr>`
       ).join('');
 
       const leaders = Array.isArray(data.leaderRows) ? data.leaderRows : [];
       leaderBody.innerHTML = leaders.map(r =>
-        `<tr><td>${r.leaderName || ''}</td><td>${r.leaderId || ''}</td><td>${r.advisorCount || 0}</td><td>${r.paymentCount || 0}</td><td>${formatEuroAmount(r.teamTotalAmount || 0)}</td><td>${formatEuroAmount(r.teamSelfCommission || 0)}</td><td>${formatEuroAmount(r.teamTeamCommission || 0)}</td></tr>`
+        `<tr><td>${r.leaderName || ''}</td><td>${r.leaderId || ''}</td><td>${countHoverHtml(r.advisorCount || 0, `Führungskraft ${r.leaderName || ''} hat ${r.advisorCount || 0} Beraterinnen im Team`)}</td><td>${countHoverHtml(r.paymentCount || 0, `Team von ${r.leaderName || ''} hat ${r.paymentCount || 0} Zahlläufe`)}</td><td>${formatEuroAmount(r.teamTotalAmount || 0)}</td><td>${formatEuroAmount(r.teamSelfCommission || 0)}</td><td>${formatEuroAmount(r.teamTeamCommission || 0)}</td></tr>`
       ).join('');
 
       const countries = Array.isArray(data.countryRows) ? data.countryRows : [];
-      countryBody.innerHTML = countries.map(r => `<tr><td>${r.country || ''}</td><td>${r.payments || 0}</td></tr>`).join('');
+      countryBody.innerHTML = countries.map(r => {
+        const topAdvisors = advisors.filter(a => (a.country || '') === (r.country || '')).sort((a,b) => (b.paymentCount || 0) - (a.paymentCount || 0)).slice(0, 5);
+        const tip = topAdvisors.length > 0
+          ? `Top Beraterinnen in ${r.country || ''}: ` + topAdvisors.map(a => `${a.advisorName || a.affiliateId}: ${a.paymentCount || 0}`).join(', ')
+          : `Keine Beraterinnen-Details für ${r.country || ''}`;
+        return `<tr><td>${r.country || ''}</td><td>${countHoverHtml(r.payments || 0, tip)}</td></tr>`;
+      }).join('');
 
       const pending = Array.isArray(data.pendingRows) ? data.pendingRows : [];
       pendingBody.innerHTML = pending.map(r => `<tr><td>${r.name || ''}</td><td>${r.affiliateId || ''}</td><td>${formatEuroAmount(r.due || 0)}</td><td>${formatEuroAmount(r.total || 0)}</td><td>${formatEuroAmount(r.paidOut || 0)}</td></tr>`).join('');
 
       const traffic = Array.isArray(data.trafficSourceRows) ? data.trafficSourceRows : [];
-      trafficBody.innerHTML = traffic.map(r => `<tr><td>${r.source || ''}</td><td>${r.visits || 0}</td><td>${r.pageViews || 0}</td></tr>`).join('');
+      trafficBody.innerHTML = traffic.map(r => `<tr><td>${r.source || ''}</td><td>${countHoverHtml(r.visits || 0, `Quelle ${r.source || ''}: ${r.visits || 0} Besuche`)}</td><td>${countHoverHtml(r.pageViews || 0, `Quelle ${r.source || ''}: ${r.pageViews || 0} Seitenaufrufe`)}</td></tr>`).join('');
 
       const orderStatuses = Array.isArray(data.orderStatusRows) ? data.orderStatusRows : [];
-      orderStatusBody.innerHTML = orderStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${r.count || 0}</td></tr>`).join('');
+      orderStatusBody.innerHTML = orderStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${countHoverHtml(r.count || 0, `Bestellstatus ${r.status || ''}: ${r.count || 0}`)}</td></tr>`).join('');
 
       const rewardStatuses = Array.isArray(data.rewardStatusRows) ? data.rewardStatusRows : [];
-      rewardStatusBody.innerHTML = rewardStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${r.count || 0}</td><td>${formatEuroAmount(r.amount || 0)}</td></tr>`).join('');
+      rewardStatusBody.innerHTML = rewardStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${countHoverHtml(r.count || 0, `Reward-Status ${r.status || ''}: ${r.count || 0}`)}</td><td>${formatEuroAmount(r.amount || 0)}</td></tr>`).join('');
 
       const chart = data.chartData || {};
       drawBarChart('analyticsAmountChart', chart.labels || [], chart.amountSeries || [], '#2563eb');
       drawBarChart('analyticsTxChart', chart.labels || [], chart.txSeries || [], '#10b981');
+      drawBarChart('analyticsCountryChart', countries.map(r => r.country || 'Unbekannt'), countries.map(r => Number(r.payments || 0)), '#7c3aed');
+      updateEmptyTablesVisibility(document);
     }
 
     function wireAnalyticsDateRange() {
@@ -1727,6 +1768,8 @@
         createValidationTabAndPanel();
         createAnalyticsTabAndPanel();
         createHelpTabAndPanel();
+        const helpTab = document.querySelector('.tab[data-target="help-panel"]');
+        if (helpTab) helpTab.style.marginLeft = 'auto';
         wireTabSwitching();
         await loadVersion();
         await loadHelpDocumentation();
@@ -1777,6 +1820,7 @@
         renderTable();
         setPollingButtonState(false);
         await loadSettings();
+        updateEmptyTablesVisibility(document);
       } catch (error) {
         document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;
       }
