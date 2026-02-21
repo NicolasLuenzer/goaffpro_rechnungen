@@ -83,6 +83,11 @@
     .email-editor:focus { outline:2px solid #93c5fd; outline-offset:0; }
     .email-editor-source { width:100%; min-height:260px; border:1px solid #cbd5e1; border-radius:8px; padding:10px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size:12px; }
     .email-template-preview { width:100%; border:1px solid #dbe3ef; border-radius:8px; background:#fff; min-height:140px; padding:10px; }
+    .email-designer-tabs { display:flex; gap:8px; margin:12px 0; }
+    .email-designer-tab { border:1px solid #93c5fd; border-radius:8px; padding:8px 12px; background:#dbeafe; color:#1e3a8a; font-weight:600; cursor:pointer; }
+    .email-designer-tab.active { background:#2563eb; color:#fff; border-color:#2563eb; }
+    .email-designer-panel { display:none; }
+    .email-designer-panel.active { display:block; }
 
   </style>
 </head>
@@ -206,6 +211,7 @@
                     <div class="section-tabs">
             <button class="section-tab active" data-section-target="main-workspace">Arbeitsbereich</button>
             <button class="section-tab" data-section-target="main-settings">⚙ Einstellungen</button>
+            <button class="section-tab" data-section-target="main-email-designer">✉ E-Mail Designer</button>
           </div>
 
           <div id="main-workspace" class="section-panel active">
@@ -257,10 +263,6 @@
                   <div class="toolbar">
                     <button id="rebuildCommissionHistoryBtn" type="button" class="secondary">Zahlläufe aus Payments neu aufbauen</button>
                   </div>
-                  <table>
-                    <thead><tr><th>Tag</th><th>Anzahl Zahlläufe</th></tr></thead>
-                    <tbody id="commissionDaySummaryBody"></tbody>
-                  </table>
                 </div>
 
                 <div class="settings-group">
@@ -296,37 +298,53 @@
                     <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> an Kontakt-E-Mail</label>
                     <label class="recipient-advisor-label"><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
                   </div>
-                  <div class="toolbar" style="align-items:flex-start;flex-direction:column;width:100%;">
-                    <label>E-Mail Vorlage (WYSIWYG):</label>
-                    <div class="toolbar email-editor-toolbar">
-                      <button type="button" class="secondary" data-editor-cmd="bold"><b>B</b></button>
-                      <button type="button" class="secondary" data-editor-cmd="italic"><i>I</i></button>
-                      <button type="button" class="secondary" data-editor-cmd="underline"><u>U</u></button>
-                      <button type="button" class="secondary" data-editor-cmd="insertUnorderedList">• Liste</button>
-                      <button type="button" class="secondary" data-editor-cmd="createLink">Link</button>
-                      <button type="button" class="secondary" data-editor-cmd="removeFormat">Format löschen</button>
-                      <label style="display:flex;align-items:center;gap:6px;">Textfarbe <input id="emailTextColor" type="color" value="#1f2937"/></label>
-                      <button id="applyEmailTextColorBtn" type="button" class="secondary">anwenden</button>
-                      <label style="display:flex;align-items:center;gap:6px;">Highlight <input id="emailHighlightColor" type="color" value="#fff59d"/></label>
-                      <button id="applyEmailHighlightColorBtn" type="button" class="secondary">anwenden</button>
-                      <button id="toggleEmailHtmlModeBtn" type="button" class="secondary">HTML-Modus</button>
-                      <button id="resetEmailTemplateBtn" type="button" class="secondary">Standardvorlage laden</button>
-                    </div>
-                    <div id="emailTemplateEditor" class="email-editor" contenteditable="true"></div>
-                    <textarea id="emailTemplateSource" class="email-editor-source" style="display:none"></textarea>
-                    <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>.</div>
-                    <div class="toolbar" style="width:100%;margin-top:8px;">
-                      <label for="emailPreviewAdvisorSelect">Vorschau mit Beraterin:</label>
-                      <select id="emailPreviewAdvisorSelect" style="min-width:320px"></select>
-                      <button id="reloadEmailPreviewAdvisorsBtn" type="button" class="secondary">Beraterinnen neu laden</button>
-                      <button id="renderEmailPreviewBtn" type="button" class="secondary">Vorschau rendern</button>
-                    </div>
-                    <div id="emailTemplatePreview" class="email-template-preview"></div>
-                  </div>
                 </div>
               </div>
               <div class="toolbar"><button id="saveSettingsBtn" class="secondary">Speichern</button></div>
               <div class="settings-hint">Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</div>
+            </div>
+          </div>
+
+          <div id="main-email-designer" class="section-panel">
+            <div class="settings">
+              <strong>E-Mail Designer</strong>
+              <div class="email-designer-tabs">
+                <button class="email-designer-tab active" data-email-designer-target="email-designer-editor">Vorlage bearbeiten</button>
+                <button class="email-designer-tab" data-email-designer-target="email-designer-preview">Vorschau</button>
+              </div>
+
+              <div id="email-designer-editor" class="email-designer-panel active">
+                <div class="toolbar" style="align-items:flex-start;flex-direction:column;width:100%;">
+                  <div class="toolbar email-editor-toolbar">
+                    <button type="button" class="secondary" data-editor-cmd="bold"><b>B</b></button>
+                    <button type="button" class="secondary" data-editor-cmd="italic"><i>I</i></button>
+                    <button type="button" class="secondary" data-editor-cmd="underline"><u>U</u></button>
+                    <button type="button" class="secondary" data-editor-cmd="insertUnorderedList">• Liste</button>
+                    <button type="button" class="secondary" data-editor-cmd="createLink">Link</button>
+                    <button type="button" class="secondary" data-editor-cmd="removeFormat">Format löschen</button>
+                    <label style="display:flex;align-items:center;gap:6px;">Textfarbe <input id="emailTextColor" type="color" value="#1f2937"/></label>
+                    <button id="applyEmailTextColorBtn" type="button" class="secondary">anwenden</button>
+                    <label style="display:flex;align-items:center;gap:6px;">Highlight <input id="emailHighlightColor" type="color" value="#fff59d"/></label>
+                    <button id="applyEmailHighlightColorBtn" type="button" class="secondary">anwenden</button>
+                    <button id="toggleEmailHtmlModeBtn" type="button" class="secondary">HTML-Modus</button>
+                    <button id="resetEmailTemplateBtn" type="button" class="secondary">Standardvorlage laden</button>
+                  </div>
+                  <div id="emailTemplateEditor" class="email-editor" contenteditable="true"></div>
+                  <textarea id="emailTemplateSource" class="email-editor-source" style="display:none"></textarea>
+                  <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>.</div>
+                </div>
+              </div>
+
+              <div id="email-designer-preview" class="email-designer-panel">
+                <div class="toolbar" style="width:100%;margin-top:8px;">
+                  <label for="emailPreviewAdvisorSelect">Vorschau mit Beraterin:</label>
+                  <select id="emailPreviewAdvisorSelect" style="min-width:320px"></select>
+                  <button id="reloadEmailPreviewAdvisorsBtn" type="button" class="secondary">Beraterinnen neu laden</button>
+                  <button id="renderEmailPreviewBtn" type="button" class="secondary">Vorschau rendern</button>
+                </div>
+                <div id="emailTemplatePreview" class="email-template-preview"></div>
+              </div>
+              <div class="toolbar"><button id="emailDesignerSaveBtn" class="secondary">E-Mail Vorlage speichern</button></div>
             </div>
           </div>
 
@@ -875,6 +893,14 @@
         document.querySelectorAll('.section-panel').forEach(panel => panel.classList.toggle('active', panel.id === target));
       }));
     }
+
+    function wireEmailDesignerTabs() {
+      document.querySelectorAll('.email-designer-tab').forEach(tab => tab.addEventListener('click', () => {
+        const target = tab.dataset.emailDesignerTarget;
+        document.querySelectorAll('.email-designer-tab').forEach(t => t.classList.toggle('active', t === tab));
+        document.querySelectorAll('.email-designer-panel').forEach(panel => panel.classList.toggle('active', panel.id === target));
+      }));
+    }
     function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}`; }
 
 
@@ -1000,7 +1026,6 @@
         const data = await apiPost('/api/commissions/remove', { commission });
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
-        renderCommissionDaySummary(data.commissionDaySummary);
         settingsSnapshot = buildSettingsSnapshot();
         updateSaveButtonState();
         if (status) status.textContent = data.message || 'Zahllauf entfernt.';
@@ -1092,7 +1117,6 @@
         const data = await apiPost('/api/commissions/rebuild-from-payments', {});
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
-        renderCommissionDaySummary(data.commissionDaySummary);
         settingsSnapshot = buildSettingsSnapshot();
         updateSaveButtonState();
         if (status) status.textContent = data.message || 'Zahlläufe neu aufgebaut.';
@@ -1110,14 +1134,6 @@
 
 
 
-    function renderCommissionDaySummary(rows) {
-      const body = document.getElementById('commissionDaySummaryBody');
-      if (!body) return;
-      const list = Array.isArray(rows) ? rows : [];
-      body.innerHTML = list.map(r => `<tr><td>${escapeHtml(r.date || '')}</td><td>${escapeHtml(String(r.count ?? ''))}</td></tr>`).join('');
-      applyTableFilterAndSort(body.closest('table'));
-      ensureResizableColumns(body.closest('table') || document);
-    }
     async function loadSettings() {
       const input = document.getElementById('pdfExportPath');
       const goaffproAPIKeyInput = document.getElementById('goaffproAPIKey');
@@ -1150,7 +1166,6 @@
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
-        renderCommissionDaySummary(data.commissionDaySummary);
         settingsSnapshot = buildSettingsSnapshot();
         updateSaveButtonState();
       } catch (error) {
@@ -1205,7 +1220,6 @@
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
-        renderCommissionDaySummary(data.commissionDaySummary);
         const afterSnapshot = buildSettingsSnapshot();
         const changed = JSON.stringify(beforeSnapshot) !== JSON.stringify(afterSnapshot);
         settingsSnapshot = afterSnapshot;
@@ -1720,6 +1734,7 @@
 
         const pollingBtn = document.getElementById('togglePollingBtn');
         const saveBtn = document.getElementById('saveSettingsBtn');
+        const emailDesignerSaveBtn = document.getElementById('emailDesignerSaveBtn');
         const pickBtn = document.getElementById('pickFolderBtn');
         const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
         const addLatestCommissionBtn = document.getElementById('addLatestCommissionBtn');
@@ -1731,6 +1746,7 @@
         const collapseAllTreeBtn = document.getElementById('collapseAllTreeBtn');
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
+        if (emailDesignerSaveBtn) emailDesignerSaveBtn.addEventListener('click', saveSettings);
         if (pickBtn) pickBtn.addEventListener('click', pickFolder);
         if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
         if (addLatestCommissionBtn) addLatestCommissionBtn.addEventListener('click', addLatestCommission);
@@ -1751,6 +1767,7 @@
         wireSettingsDirtyTracking();
         wireFolderPickerFallback();
         wireMainSectionTabs();
+        wireEmailDesignerTabs();
         wireValidationSubtabs();
         wireTableInteractions();
         ensureResizableColumns();
