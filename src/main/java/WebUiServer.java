@@ -2604,7 +2604,19 @@ public class WebUiServer {
         }
         if (rows.isEmpty()) throw new IOException("Keine gültigen Payment-IDs gefunden.");
 
-        rows.sort((a, b) -> {
+        Map<String, Map<String, String>> highestPaymentByDay = new LinkedHashMap<>();
+        for (Map<String, String> row : rows) {
+            String dayKey = Objects.toString(row.get("date"), "").trim();
+            if (dayKey.isBlank()) dayKey = "ohne Datum";
+
+            Map<String, String> existing = highestPaymentByDay.get(dayKey);
+            if (existing == null || compareAsNumericString(row.get("id"), existing.get("id")) > 0) {
+                highestPaymentByDay.put(dayKey, row);
+            }
+        }
+
+        List<Map<String, String>> reducedRows = new ArrayList<>(highestPaymentByDay.values());
+        reducedRows.sort((a, b) -> {
             String da = Objects.toString(a.get("date"), "");
             String db = Objects.toString(b.get("date"), "");
             LocalDate lda = parseGermanDate(da);
@@ -2616,7 +2628,7 @@ public class WebUiServer {
         List<String> history = new ArrayList<>();
         Map<String, String> dates = new LinkedHashMap<>();
         String latestId = "";
-        for (Map<String, String> row : rows) {
+        for (Map<String, String> row : reducedRows) {
             String id = row.get("id");
             if (!history.contains(id)) history.add(id);
             String date = Objects.toString(row.get("date"), "");
