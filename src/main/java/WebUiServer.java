@@ -79,6 +79,7 @@ public class WebUiServer {
         server.createContext("/api/provisionen-goaffpro/export-pdf", new ExportPdfHandler());
         server.createContext("/api/provisionen-goaffpro/invoice-details-pdf", new InvoiceDetailsPdfHandler());
         server.createContext("/api/mail-log", new MailLogHandler());
+        server.createContext("/api/mail-log/download", new MailLogDownloadHandler());
         server.createContext("/api/version", new VersionHandler());
         server.createContext("/api/version/history", new VersionHistoryHandler());
         server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
@@ -303,6 +304,7 @@ public class WebUiServer {
                 String smtpHost = Objects.toString(config.getProperty("smtpHost"), "").trim();
                 String smtpPort = Objects.toString(config.getProperty("smtpPort"), "587").trim();
                 String smtpUsername = Objects.toString(config.getProperty("smtpUsername"), "").trim();
+                String emailBcc = Objects.toString(config.getProperty("emailBcc"), "").trim();
                 boolean smtpTls = Boolean.parseBoolean(Objects.toString(config.getProperty("smtpTls"), "false"));
                 boolean hasSmtpPassword = !Objects.toString(config.getProperty("smtpPassword"), "").trim().isBlank();
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
@@ -320,6 +322,7 @@ public class WebUiServer {
                 payload.put("smtpHost", smtpHost);
                 payload.put("smtpPort", smtpPort);
                 payload.put("smtpUsername", smtpUsername);
+                payload.put("emailBcc", emailBcc);
                 payload.put("smtpTls", smtpTls);
                 payload.put("hasSmtpPassword", hasSmtpPassword);
                 payload.put("sendEmailsEnabled", sendEmailsEnabled);
@@ -343,6 +346,7 @@ public class WebUiServer {
                     String smtpHost = asText(body, "smtpHost").trim();
                     String smtpPort = asText(body, "smtpPort").trim();
                     String smtpUsername = asText(body, "smtpUsername").trim();
+                    String emailBcc = asText(body, "emailBcc").trim();
                     String smtpPassword = asText(body, "smtpPassword").trim();
                     boolean smtpTls = body.has("smtpTls") && body.get("smtpTls").asBoolean(false);
                     boolean sendEmailsEnabled = !body.has("sendEmailsEnabled") || body.get("sendEmailsEnabled").asBoolean(true);
@@ -366,6 +370,7 @@ public class WebUiServer {
                     config.setProperty("smtpHost", smtpHost);
                     config.setProperty("smtpPort", smtpPort.isBlank() ? "587" : smtpPort);
                     config.setProperty("smtpUsername", smtpUsername);
+                    config.setProperty("emailBcc", emailBcc);
                     config.setProperty("smtpTls", String.valueOf(smtpTls));
                     if (!smtpPassword.isBlank()) {
                         config.setProperty("smtpPassword", smtpPassword);
@@ -386,6 +391,7 @@ public class WebUiServer {
                     payload.put("smtpHost", Objects.toString(config.getProperty("smtpHost"), ""));
                     payload.put("smtpPort", Objects.toString(config.getProperty("smtpPort"), "587"));
                     payload.put("smtpUsername", Objects.toString(config.getProperty("smtpUsername"), ""));
+                    payload.put("emailBcc", Objects.toString(config.getProperty("emailBcc"), ""));
                     payload.put("smtpTls", Boolean.parseBoolean(Objects.toString(config.getProperty("smtpTls"), "false")));
                     payload.put("hasSmtpPassword", !Objects.toString(config.getProperty("smtpPassword"), "").trim().isBlank());
                     payload.put("sendEmailsEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true")));
@@ -976,6 +982,41 @@ public class WebUiServer {
         }
     }
 
+    private static class MailLogDownloadHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Map<String, String> query = parseQueryParams(exchange.getRequestURI());
+                String filePath = Objects.toString(query.get("path"), "").trim();
+                if (filePath.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"path fehlt\"}");
+                    return;
+                }
+                Path p = Paths.get(filePath).toAbsolutePath().normalize();
+                if (!Files.exists(p) || !Files.isRegularFile(p)) {
+                    sendResponse(exchange, 404, "application/json", "{\"error\":\"Datei nicht gefunden\"}");
+                    return;
+                }
+                byte[] bytes = Files.readAllBytes(p);
+                exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
+                exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
+                exchange.getResponseHeaders().add("Content-Disposition", "attachment; filename=\"" + p.getFileName().toString().replace("\"", "") + "\"");
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (OutputStream os = exchange.getResponseBody()) { os.write(bytes); }
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
     private static class ExportPdfHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -1186,7 +1227,7 @@ public class WebUiServer {
                 String periodLabel = buildPaymentPeriodLabel(payment);
                 if (sendEmailsEnabled) {
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(targetEmail, pdfPath, jsonPath, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
+                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
                     String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + ((affiliateNameForMail == null || affiliateNameForMail.isBlank()) ? "Beraterin" : affiliateNameForMail.trim());
                     appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath);
                 }
@@ -2141,7 +2182,7 @@ public class WebUiServer {
         Files.writeString(jsonPath, pretty, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, Path pdfPath, Path jsonPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -2154,6 +2195,9 @@ public class WebUiServer {
         MimeMessage message = new MimeMessage(session);
         message.setFrom(new InternetAddress(smtpConfig.username));
         message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail, false));
+        if (bccEmail != null && !bccEmail.isBlank()) {
+            message.setRecipients(Message.RecipientType.BCC, InternetAddress.parse(bccEmail, false));
+        }
 
         String displayName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
         String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + displayName;
@@ -2328,6 +2372,8 @@ public class WebUiServer {
         row.put("periodLabel", Objects.toString(periodLabel, ""));
         row.put("pdfFile", pdfPath != null ? pdfPath.getFileName().toString() : "");
         row.put("jsonFile", jsonPath != null ? jsonPath.getFileName().toString() : "");
+        row.put("pdfPath", pdfPath != null ? pdfPath.toAbsolutePath().toString() : "");
+        row.put("jsonPath", jsonPath != null ? jsonPath.toAbsolutePath().toString() : "");
         row.put("sentAt", ZonedDateTime.now(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")));
         entries.add(0, row);
         if (entries.size() > 1000) entries = new ArrayList<>(entries.subList(0, 1000));
@@ -2348,6 +2394,24 @@ public class WebUiServer {
 
     private static String euroStatic(double value) {
         return String.format(java.util.Locale.GERMANY, "%.2f €", value);
+    }
+
+    private static Map<String, String> parseQueryParams(URI uri) {
+        Map<String, String> query = new LinkedHashMap<>();
+        if (uri == null || uri.getRawQuery() == null || uri.getRawQuery().isBlank()) return query;
+        for (String part : uri.getRawQuery().split("&")) {
+            if (part == null || part.isBlank()) continue;
+            int i = part.indexOf('=');
+            String k = i >= 0 ? part.substring(0, i) : part;
+            String v = i >= 0 ? part.substring(i + 1) : "";
+            try {
+                k = java.net.URLDecoder.decode(k, StandardCharsets.UTF_8);
+                v = java.net.URLDecoder.decode(v, StandardCharsets.UTF_8);
+            } catch (Exception ignored) {
+            }
+            query.put(k, v);
+        }
+        return query;
     }
 
     private static double parseDoubleSafeStatic(String raw) {
@@ -2494,6 +2558,7 @@ public class WebUiServer {
         ui.setProperty("smtpHost", Objects.toString(source.getProperty("smtpHost"), ""));
         ui.setProperty("smtpPort", Objects.toString(source.getProperty("smtpPort"), "587"));
         ui.setProperty("smtpUsername", Objects.toString(source.getProperty("smtpUsername"), ""));
+        ui.setProperty("emailBcc", Objects.toString(source.getProperty("emailBcc"), ""));
         ui.setProperty("smtpPassword", Objects.toString(source.getProperty("smtpPassword"), ""));
         ui.setProperty("smtpTls", Objects.toString(source.getProperty("smtpTls"), "false"));
         ui.setProperty("sendEmailsEnabled", Objects.toString(source.getProperty("sendEmailsEnabled"), "true"));
@@ -2544,6 +2609,7 @@ public class WebUiServer {
         config.setProperty("smtpHost", Objects.toString(uiSettings.getProperty("smtpHost"), Objects.toString(config.getProperty("smtpHost"), "")).trim());
         config.setProperty("smtpPort", Objects.toString(uiSettings.getProperty("smtpPort"), Objects.toString(config.getProperty("smtpPort"), "587")).trim());
         config.setProperty("smtpUsername", Objects.toString(uiSettings.getProperty("smtpUsername"), Objects.toString(config.getProperty("smtpUsername"), "")).trim());
+        config.setProperty("emailBcc", Objects.toString(uiSettings.getProperty("emailBcc"), Objects.toString(config.getProperty("emailBcc"), "")).trim());
         String uiSmtpPassword = Objects.toString(uiSettings.getProperty("smtpPassword"), "").trim();
         if (!uiSmtpPassword.isEmpty() || config.containsKey("smtpPassword")) {
             config.setProperty("smtpPassword", uiSmtpPassword);

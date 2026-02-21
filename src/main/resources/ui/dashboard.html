@@ -238,6 +238,10 @@
               <input id="filterInput" type="text" placeholder="Filtern nach Name, Land, Steuernummer, Belegdatum..." />
             </div>
             <div id="advisorMailWarning" class="warning-banner" style="display:none">⚠️ Versandmodus aktiv: Rechnungsdetails werden an die Beraterinnen-E-Mail gesendet.</div>
+            <div class="toolbar">
+              <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> Versand: an Kontakt-E-Mail</label>
+              <label class="recipient-advisor-label"><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> Versand: an Beraterinnen-E-Mail</label>
+            </div>
             <p id="pollStatus" class="status">Noch nicht gestartet.</p>
             <div id="exportedFiles" class="files"></div>
 
@@ -310,8 +314,10 @@
                   </div>
                   <div class="toolbar">
                     <label><input id="sendEmailsEnabled" type="checkbox" checked /> E-Mails versenden</label>
-                    <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> an Kontakt-E-Mail</label>
-                    <label class="recipient-advisor-label"><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> an Beraterinnen-E-Mail</label>
+                  </div>
+                  <div class="toolbar">
+                    <label for="emailBcc">BCC (optional):</label>
+                    <input id="emailBcc" type="email" placeholder="z. B. controlling@vemmina.com" />
                   </div>
                 </div>
               </div>
@@ -995,7 +1001,7 @@
       const root = document.getElementById('mailLogModalRoot');
       if (!root) return;
       const rows = mailLogByPayment.get(String(paymentId || '')) || [];
-      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Versandhistorie Payment ${escapeHtml(paymentId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Betreff</th><th>Inhalt</th></tr></thead><tbody>${rows.map(r => `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${escapeHtml(r.subject || '')}</td><td>${escapeHtml((r.pdfFile || '-') + ' | ' + (r.jsonFile || '-'))}</td></tr>`).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
+      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Versandhistorie Payment ${escapeHtml(paymentId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Betreff</th><th>Anhänge</th></tr></thead><tbody>${rows.map(r => { const pdfLink = r.pdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.pdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.pdfFile || 'PDF')}</a>` : escapeHtml(r.pdfFile || '-'); const jsonLink = r.jsonPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.jsonPath)}" target="_blank" rel="noopener">${escapeHtml(r.jsonFile || 'JSON')}</a>` : escapeHtml(r.jsonFile || '-'); return `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${escapeHtml(r.subject || '')}</td><td>${pdfLink} | ${jsonLink}</td></tr>`; }).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
       const close = () => { root.innerHTML = ''; };
       document.getElementById('closeMailLogModalBtn')?.addEventListener('click', close);
       root.querySelector('.mail-log-modal')?.addEventListener('click', (evt) => { if (evt.target.classList.contains('mail-log-modal')) close(); });
@@ -1190,6 +1196,7 @@
       const smtpPortInput = document.getElementById('smtpPort');
       const smtpUsernameInput = document.getElementById('smtpUsername');
       const smtpPasswordInput = document.getElementById('smtpPassword');
+      const emailBccInput = document.getElementById('emailBcc');
             const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
@@ -1203,6 +1210,7 @@
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || '';
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || '587';
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || '';
+        if (emailBccInput) emailBccInput.value = data.emailBcc || '';
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         const mode = data.emailRecipientMode || 'contact';
@@ -1230,6 +1238,7 @@
       const smtpPortInput = document.getElementById('smtpPort');
       const smtpUsernameInput = document.getElementById('smtpUsername');
       const smtpPasswordInput = document.getElementById('smtpPassword');
+      const emailBccInput = document.getElementById('emailBcc');
             const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
@@ -1246,6 +1255,7 @@
           smtpHost: smtpHostInput ? smtpHostInput.value : '',
           smtpPort: smtpPortInput ? smtpPortInput.value : '587',
           smtpUsername: smtpUsernameInput ? smtpUsernameInput.value : '',
+          emailBcc: emailBccInput ? emailBccInput.value : '',
           smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
           sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true,
           emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact',
@@ -1257,6 +1267,7 @@
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || smtpHostInput.value;
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || smtpPortInput.value || '587';
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || smtpUsernameInput.value;
+        if (emailBccInput) emailBccInput.value = data.emailBcc || emailBccInput.value;
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         const mode = data.emailRecipientMode || 'contact';
@@ -1348,6 +1359,7 @@
         smtpHost: (document.getElementById('smtpHost')?.value || '').trim(),
         smtpPort: String((document.getElementById('smtpPort')?.value || '587')).trim(),
         smtpUsername: (document.getElementById('smtpUsername')?.value || '').trim(),
+        emailBcc: (document.getElementById('emailBcc')?.value || '').trim(),
         sendEmailsEnabled: !!document.getElementById('sendEmailsEnabled')?.checked,
         emailRecipientMode: getEmailRecipientMode(),
         emailTemplateHtml: getCurrentEmailTemplateHtml().trim()
@@ -1364,7 +1376,7 @@
     }
 
     function wireSettingsDirtyTracking() {
-      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor'];
+      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor'];
       ids.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
