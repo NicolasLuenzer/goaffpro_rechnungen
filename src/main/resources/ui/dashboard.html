@@ -136,6 +136,7 @@
     let tableFilterMenuEl = null;
     let defaultEmailTemplateHtml = '';
     let defaultValidationReminderTemplateHtml = '';
+    let defaultEInvoicePdfTemplateHtml = '';
     let activeEmailTemplateType = 'invoice';
     let emailTemplateHtmlMode = false;
     let emailPreviewAdvisors = [];
@@ -331,28 +332,28 @@
                   <div class="toolbar">
                     <label><input id="eInvoiceEnabled" type="checkbox" checked /> E-Rechnung je Zahllauf erzeugen</label>
                   </div>
-                  <div class="toolbar"><strong>Verkäuferdaten</strong></div>
+                  <div class="toolbar"><strong>Rechnungsempfänger (unsere Firma)</strong></div>
                   <div class="toolbar">
-                    <label for="eInvoiceSellerName">Name:</label>
-                    <input id="eInvoiceSellerName" type="text" placeholder="VEMMiNA GmbH" />
+                    <label for="eInvoiceBuyerName">Name:</label>
+                    <input id="eInvoiceBuyerName" type="text" placeholder="S+R linear technology gmbh" />
                   </div>
                   <div class="toolbar">
-                    <label for="eInvoiceSellerStreet">Straße:</label>
-                    <input id="eInvoiceSellerStreet" type="text" placeholder="Musterstraße 1" />
-                    <label for="eInvoiceSellerZip">PLZ:</label>
-                    <input id="eInvoiceSellerZip" type="text" style="max-width:140px" />
-                    <label for="eInvoiceSellerCity">Ort:</label>
-                    <input id="eInvoiceSellerCity" type="text" style="max-width:200px" />
+                    <label for="eInvoiceBuyerStreet">Straße:</label>
+                    <input id="eInvoiceBuyerStreet" type="text" placeholder="Musterstraße 1" />
+                    <label for="eInvoiceBuyerZip">PLZ:</label>
+                    <input id="eInvoiceBuyerZip" type="text" style="max-width:140px" />
+                    <label for="eInvoiceBuyerCity">Ort:</label>
+                    <input id="eInvoiceBuyerCity" type="text" style="max-width:200px" />
                   </div>
                   <div class="toolbar">
-                    <label for="eInvoiceSellerCountry">Land (ISO):</label>
-                    <input id="eInvoiceSellerCountry" type="text" placeholder="DE" style="max-width:120px" />
-                    <label for="eInvoiceSellerVatId">USt-IdNr:</label>
-                    <input id="eInvoiceSellerVatId" type="text" />
-                    <label for="eInvoiceSellerTaxNumber">Steuernummer:</label>
-                    <input id="eInvoiceSellerTaxNumber" type="text" />
+                    <label for="eInvoiceBuyerCountry">Land (ISO):</label>
+                    <input id="eInvoiceBuyerCountry" type="text" placeholder="DE" style="max-width:120px" />
+                    <label for="eInvoiceBuyerVatId">USt-IdNr:</label>
+                    <input id="eInvoiceBuyerVatId" type="text" />
+                    <label for="eInvoiceBuyerTaxNumber">Steuernummer:</label>
+                    <input id="eInvoiceBuyerTaxNumber" type="text" />
                   </div>
-                  <div class="toolbar"><strong>Zahlungsdaten</strong></div>
+                  <div class="toolbar"><strong>Zahlungsdaten der Beraterin (optional überschreibbar)</strong></div>
                   <div class="toolbar">
                     <label for="eInvoiceBankIban">IBAN:</label>
                     <input id="eInvoiceBankIban" type="text" />
@@ -377,7 +378,7 @@
           <div id="main-email-designer" class="section-panel">
             <div class="settings">
               <strong>E-Mail Designer</strong>
-              <div class="toolbar"><label for="emailTemplateTypeSelect">Vorlage:</label><select id="emailTemplateTypeSelect" style="min-width:280px"><option value="invoice">Rechnungsservice (Provisionsmail)</option><option value="validationReminder">Stammdaten-Erinnerung</option></select></div>
+              <div class="toolbar"><label for="emailTemplateTypeSelect">Vorlage:</label><select id="emailTemplateTypeSelect" style="min-width:280px"><option value="invoice">Rechnungsservice (Provisionsmail)</option><option value="validationReminder">Stammdaten-Erinnerung</option><option value="eInvoicePdf">E-Rechnung PDF-Ansicht</option></select></div>
               <div class="email-designer-layout">
                 <div>
                   <div class="toolbar email-editor-toolbar">
@@ -396,7 +397,7 @@
                   </div>
                   <div id="emailTemplateEditor" class="email-editor" contenteditable="true"></div>
                   <textarea id="emailTemplateSource" class="email-editor-source" style="display:none"></textarea>
-                  <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>.</div>
+                  <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>, <code>{{missingFields}}</code>, <code>{{advisorName}}</code>, <code>{{advisorAddress}}</code>, <code>{{advisorTaxNumber}}</code>, <code>{{buyerCompanyName}}</code>, <code>{{amount}}</code>, <code>{{currency}}</code>.</div>
                 </div>
                 <div>
                   <div class="toolbar" style="width:100%;margin-top:0;">
@@ -1155,7 +1156,7 @@
       const root = document.getElementById('mailLogModalRoot');
       if (!root) return;
       const rows = mailLogByPayment.get(String(paymentId || '')) || [];
-      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Versandhistorie Payment ${escapeHtml(paymentId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Betreff</th><th>Anhänge</th></tr></thead><tbody>${rows.map(r => { const pdfLink = r.pdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.pdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.pdfFile || 'PDF')}</a>` : escapeHtml(r.pdfFile || '-'); const jsonLink = r.jsonPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.jsonPath)}" target="_blank" rel="noopener">${escapeHtml(r.jsonFile || 'JSON')}</a>` : escapeHtml(r.jsonFile || '-'); const zugferdLink = r.zugferdPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.zugferdPath)}" target="_blank" rel="noopener">${escapeHtml(r.zugferdFile || 'ZUGFeRD')}</a>` : escapeHtml(r.zugferdFile || '-'); return `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${escapeHtml(r.subject || '')}</td><td>${pdfLink} | ${jsonLink} | ${zugferdLink}</td></tr>`; }).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
+      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Versandhistorie Payment ${escapeHtml(paymentId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Betreff</th><th>Anhänge</th></tr></thead><tbody>${rows.map(r => { const pdfLink = r.pdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.pdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.pdfFile || 'PDF')}</a>` : escapeHtml(r.pdfFile || '-'); const jsonLink = r.jsonPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.jsonPath)}" target="_blank" rel="noopener">${escapeHtml(r.jsonFile || 'JSON')}</a>` : escapeHtml(r.jsonFile || '-'); const zugferdLink = r.zugferdPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.zugferdPath)}" target="_blank" rel="noopener">${escapeHtml(r.zugferdFile || 'ZUGFeRD')}</a>` : escapeHtml(r.zugferdFile || '-'); const einvPdfLink = r.eInvoiceViewPdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.eInvoiceViewPdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.eInvoiceViewPdfFile || 'E-Rechnung-PDF')}</a>` : escapeHtml(r.eInvoiceViewPdfFile || '-'); return `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${escapeHtml(r.subject || '')}</td><td>${pdfLink} | ${jsonLink} | ${zugferdLink} | ${einvPdfLink}</td></tr>`; }).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
       const close = () => { root.innerHTML = ''; };
       document.getElementById('closeMailLogModalBtn')?.addEventListener('click', close);
       root.querySelector('.mail-log-modal')?.addEventListener('click', (evt) => { if (evt.target.classList.contains('mail-log-modal')) close(); });
@@ -1376,13 +1377,13 @@
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || '';
         if (emailBccInput) emailBccInput.value = data.emailBcc || '';
         if (document.getElementById('eInvoiceEnabled')) document.getElementById('eInvoiceEnabled').checked = data.eInvoiceEnabled !== false;
-        if (document.getElementById('eInvoiceSellerName')) document.getElementById('eInvoiceSellerName').value = data.eInvoiceSellerName || '';
-        if (document.getElementById('eInvoiceSellerStreet')) document.getElementById('eInvoiceSellerStreet').value = data.eInvoiceSellerStreet || '';
-        if (document.getElementById('eInvoiceSellerZip')) document.getElementById('eInvoiceSellerZip').value = data.eInvoiceSellerZip || '';
-        if (document.getElementById('eInvoiceSellerCity')) document.getElementById('eInvoiceSellerCity').value = data.eInvoiceSellerCity || '';
-        if (document.getElementById('eInvoiceSellerCountry')) document.getElementById('eInvoiceSellerCountry').value = data.eInvoiceSellerCountry || 'DE';
-        if (document.getElementById('eInvoiceSellerVatId')) document.getElementById('eInvoiceSellerVatId').value = data.eInvoiceSellerVatId || '';
-        if (document.getElementById('eInvoiceSellerTaxNumber')) document.getElementById('eInvoiceSellerTaxNumber').value = data.eInvoiceSellerTaxNumber || '';
+        if (document.getElementById('eInvoiceBuyerName')) document.getElementById('eInvoiceBuyerName').value = data.eInvoiceBuyerName || '';
+        if (document.getElementById('eInvoiceBuyerStreet')) document.getElementById('eInvoiceBuyerStreet').value = data.eInvoiceBuyerStreet || '';
+        if (document.getElementById('eInvoiceBuyerZip')) document.getElementById('eInvoiceBuyerZip').value = data.eInvoiceBuyerZip || '';
+        if (document.getElementById('eInvoiceBuyerCity')) document.getElementById('eInvoiceBuyerCity').value = data.eInvoiceBuyerCity || '';
+        if (document.getElementById('eInvoiceBuyerCountry')) document.getElementById('eInvoiceBuyerCountry').value = data.eInvoiceBuyerCountry || 'DE';
+        if (document.getElementById('eInvoiceBuyerVatId')) document.getElementById('eInvoiceBuyerVatId').value = data.eInvoiceBuyerVatId || '';
+        if (document.getElementById('eInvoiceBuyerTaxNumber')) document.getElementById('eInvoiceBuyerTaxNumber').value = data.eInvoiceBuyerTaxNumber || '';
         if (document.getElementById('eInvoiceBankIban')) document.getElementById('eInvoiceBankIban').value = data.eInvoiceBankIban || '';
         if (document.getElementById('eInvoiceBankBic')) document.getElementById('eInvoiceBankBic').value = data.eInvoiceBankBic || '';
         if (document.getElementById('eInvoiceBankAccountHolder')) document.getElementById('eInvoiceBankAccountHolder').value = data.eInvoiceBankAccountHolder || '';
@@ -1394,10 +1395,12 @@
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
         defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || data.emailTemplateHtml || '';
         defaultValidationReminderTemplateHtml = data.validationReminderTemplateHtmlDefault || data.validationReminderTemplateHtml || '';
+        defaultEInvoicePdfTemplateHtml = data.eInvoicePdfTemplateHtmlDefault || data.eInvoicePdfTemplateHtml || '';
         const editorEl = document.getElementById('emailTemplateEditor');
         if (editorEl) {
           editorEl.dataset.emailTemplateHtml = data.emailTemplateHtml || '';
           editorEl.dataset.validationReminderTemplateHtml = data.validationReminderTemplateHtml || '';
+          editorEl.dataset.eInvoicePdfTemplateHtml = data.eInvoicePdfTemplateHtml || '';
         }
         setCurrentEmailTemplateHtml((editorEl && editorEl.dataset[getActiveTemplateKey()]) || data.emailTemplateHtml || '');
         renderEmailTemplatePreview();
@@ -1443,14 +1446,15 @@
           emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact',
           emailTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtml || getCurrentEmailTemplateHtml(),
           validationReminderTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '',
+          eInvoicePdfTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.eInvoicePdfTemplateHtml || '',
           eInvoiceEnabled: !!document.getElementById('eInvoiceEnabled')?.checked,
-          eInvoiceSellerName: document.getElementById('eInvoiceSellerName')?.value || '',
-          eInvoiceSellerStreet: document.getElementById('eInvoiceSellerStreet')?.value || '',
-          eInvoiceSellerZip: document.getElementById('eInvoiceSellerZip')?.value || '',
-          eInvoiceSellerCity: document.getElementById('eInvoiceSellerCity')?.value || '',
-          eInvoiceSellerCountry: document.getElementById('eInvoiceSellerCountry')?.value || 'DE',
-          eInvoiceSellerVatId: document.getElementById('eInvoiceSellerVatId')?.value || '',
-          eInvoiceSellerTaxNumber: document.getElementById('eInvoiceSellerTaxNumber')?.value || '',
+          eInvoiceBuyerName: document.getElementById('eInvoiceBuyerName')?.value || '',
+          eInvoiceBuyerStreet: document.getElementById('eInvoiceBuyerStreet')?.value || '',
+          eInvoiceBuyerZip: document.getElementById('eInvoiceBuyerZip')?.value || '',
+          eInvoiceBuyerCity: document.getElementById('eInvoiceBuyerCity')?.value || '',
+          eInvoiceBuyerCountry: document.getElementById('eInvoiceBuyerCountry')?.value || 'DE',
+          eInvoiceBuyerVatId: document.getElementById('eInvoiceBuyerVatId')?.value || '',
+          eInvoiceBuyerTaxNumber: document.getElementById('eInvoiceBuyerTaxNumber')?.value || '',
           eInvoiceBankIban: document.getElementById('eInvoiceBankIban')?.value || '',
           eInvoiceBankBic: document.getElementById('eInvoiceBankBic')?.value || '',
           eInvoiceBankAccountHolder: document.getElementById('eInvoiceBankAccountHolder')?.value || '',
@@ -1464,13 +1468,13 @@
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || smtpUsernameInput.value;
         if (emailBccInput) emailBccInput.value = data.emailBcc || emailBccInput.value;
         if (document.getElementById('eInvoiceEnabled')) document.getElementById('eInvoiceEnabled').checked = data.eInvoiceEnabled !== false;
-        if (document.getElementById('eInvoiceSellerName')) document.getElementById('eInvoiceSellerName').value = data.eInvoiceSellerName || '';
-        if (document.getElementById('eInvoiceSellerStreet')) document.getElementById('eInvoiceSellerStreet').value = data.eInvoiceSellerStreet || '';
-        if (document.getElementById('eInvoiceSellerZip')) document.getElementById('eInvoiceSellerZip').value = data.eInvoiceSellerZip || '';
-        if (document.getElementById('eInvoiceSellerCity')) document.getElementById('eInvoiceSellerCity').value = data.eInvoiceSellerCity || '';
-        if (document.getElementById('eInvoiceSellerCountry')) document.getElementById('eInvoiceSellerCountry').value = data.eInvoiceSellerCountry || 'DE';
-        if (document.getElementById('eInvoiceSellerVatId')) document.getElementById('eInvoiceSellerVatId').value = data.eInvoiceSellerVatId || '';
-        if (document.getElementById('eInvoiceSellerTaxNumber')) document.getElementById('eInvoiceSellerTaxNumber').value = data.eInvoiceSellerTaxNumber || '';
+        if (document.getElementById('eInvoiceBuyerName')) document.getElementById('eInvoiceBuyerName').value = data.eInvoiceBuyerName || '';
+        if (document.getElementById('eInvoiceBuyerStreet')) document.getElementById('eInvoiceBuyerStreet').value = data.eInvoiceBuyerStreet || '';
+        if (document.getElementById('eInvoiceBuyerZip')) document.getElementById('eInvoiceBuyerZip').value = data.eInvoiceBuyerZip || '';
+        if (document.getElementById('eInvoiceBuyerCity')) document.getElementById('eInvoiceBuyerCity').value = data.eInvoiceBuyerCity || '';
+        if (document.getElementById('eInvoiceBuyerCountry')) document.getElementById('eInvoiceBuyerCountry').value = data.eInvoiceBuyerCountry || 'DE';
+        if (document.getElementById('eInvoiceBuyerVatId')) document.getElementById('eInvoiceBuyerVatId').value = data.eInvoiceBuyerVatId || '';
+        if (document.getElementById('eInvoiceBuyerTaxNumber')) document.getElementById('eInvoiceBuyerTaxNumber').value = data.eInvoiceBuyerTaxNumber || '';
         if (document.getElementById('eInvoiceBankIban')) document.getElementById('eInvoiceBankIban').value = data.eInvoiceBankIban || '';
         if (document.getElementById('eInvoiceBankBic')) document.getElementById('eInvoiceBankBic').value = data.eInvoiceBankBic || '';
         if (document.getElementById('eInvoiceBankAccountHolder')) document.getElementById('eInvoiceBankAccountHolder').value = data.eInvoiceBankAccountHolder || '';
@@ -1482,10 +1486,12 @@
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
         defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || defaultEmailTemplateHtml;
         defaultValidationReminderTemplateHtml = data.validationReminderTemplateHtmlDefault || defaultValidationReminderTemplateHtml;
+        defaultEInvoicePdfTemplateHtml = data.eInvoicePdfTemplateHtmlDefault || defaultEInvoicePdfTemplateHtml;
         const editorEl2 = document.getElementById('emailTemplateEditor');
         if (editorEl2) {
           editorEl2.dataset.emailTemplateHtml = data.emailTemplateHtml || '';
           editorEl2.dataset.validationReminderTemplateHtml = data.validationReminderTemplateHtml || '';
+          editorEl2.dataset.eInvoicePdfTemplateHtml = data.eInvoicePdfTemplateHtml || '';
         }
         setCurrentEmailTemplateHtml((editorEl2 && editorEl2.dataset[getActiveTemplateKey()]) || data.emailTemplateHtml || '');
         renderEmailTemplatePreview();
@@ -1545,7 +1551,13 @@
         .replaceAll('{{method}}', 'Banküberweisung')
         .replaceAll('{{created}}', created)
         .replaceAll('{{txCount}}', '12')
-        .replaceAll('{{missingFields}}', escapeHtml(collectMissingValidationFields(advisor).join('\n') || 'Keine fehlenden Felder'));
+        .replaceAll('{{missingFields}}', escapeHtml(collectMissingValidationFields(advisor).join('\n') || 'Keine fehlenden Felder'))
+        .replaceAll('{{advisorName}}', escapeHtml(advisor.name || 'Beraterin Beispiel'))
+        .replaceAll('{{advisorAddress}}', escapeHtml(advisor.address || 'Musterstraße 1, 12345 Musterstadt'))
+        .replaceAll('{{advisorTaxNumber}}', escapeHtml(advisor.taxNumber || '-'))
+        .replaceAll('{{buyerCompanyName}}', escapeHtml(document.getElementById('eInvoiceBuyerName')?.value || 'S+R linear technology gmbh'))
+        .replaceAll('{{amount}}', '123,45 €')
+        .replaceAll('{{currency}}', 'EUR');
       box.innerHTML = preview || '<em>Keine Vorlage vorhanden.</em>';
     }
 
@@ -1566,7 +1578,9 @@
 
 
     function getActiveTemplateKey() {
-      return activeEmailTemplateType === 'validationReminder' ? 'validationReminderTemplateHtml' : 'emailTemplateHtml';
+      if (activeEmailTemplateType === 'validationReminder') return 'validationReminderTemplateHtml';
+      if (activeEmailTemplateType === 'eInvoicePdf') return 'eInvoicePdfTemplateHtml';
+      return 'emailTemplateHtml';
     }
 
     function collectMissingValidationFields(row) {
@@ -1624,14 +1638,15 @@
         emailRecipientMode: getEmailRecipientMode(),
         emailTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtml || '').trim(),
         validationReminderTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '').trim(),
+        eInvoicePdfTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.eInvoicePdfTemplateHtml || '').trim(),
         eInvoiceEnabled: !!document.getElementById('eInvoiceEnabled')?.checked,
-        eInvoiceSellerName: (document.getElementById('eInvoiceSellerName')?.value || '').trim(),
-        eInvoiceSellerStreet: (document.getElementById('eInvoiceSellerStreet')?.value || '').trim(),
-        eInvoiceSellerZip: (document.getElementById('eInvoiceSellerZip')?.value || '').trim(),
-        eInvoiceSellerCity: (document.getElementById('eInvoiceSellerCity')?.value || '').trim(),
-        eInvoiceSellerCountry: (document.getElementById('eInvoiceSellerCountry')?.value || '').trim(),
-        eInvoiceSellerVatId: (document.getElementById('eInvoiceSellerVatId')?.value || '').trim(),
-        eInvoiceSellerTaxNumber: (document.getElementById('eInvoiceSellerTaxNumber')?.value || '').trim(),
+        eInvoiceBuyerName: (document.getElementById('eInvoiceBuyerName')?.value || '').trim(),
+        eInvoiceBuyerStreet: (document.getElementById('eInvoiceBuyerStreet')?.value || '').trim(),
+        eInvoiceBuyerZip: (document.getElementById('eInvoiceBuyerZip')?.value || '').trim(),
+        eInvoiceBuyerCity: (document.getElementById('eInvoiceBuyerCity')?.value || '').trim(),
+        eInvoiceBuyerCountry: (document.getElementById('eInvoiceBuyerCountry')?.value || '').trim(),
+        eInvoiceBuyerVatId: (document.getElementById('eInvoiceBuyerVatId')?.value || '').trim(),
+        eInvoiceBuyerTaxNumber: (document.getElementById('eInvoiceBuyerTaxNumber')?.value || '').trim(),
         eInvoiceBankIban: (document.getElementById('eInvoiceBankIban')?.value || '').trim(),
         eInvoiceBankBic: (document.getElementById('eInvoiceBankBic')?.value || '').trim(),
         eInvoiceBankAccountHolder: (document.getElementById('eInvoiceBankAccountHolder')?.value || '').trim(),
@@ -1649,7 +1664,7 @@
     }
 
     function wireSettingsDirtyTracking() {
-      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','eInvoiceSellerName','eInvoiceSellerStreet','eInvoiceSellerZip','eInvoiceSellerCity','eInvoiceSellerCountry','eInvoiceSellerVatId','eInvoiceSellerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
+      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
       ids.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -1728,7 +1743,7 @@
       if (source) source.addEventListener('input', () => { persistCurrentTemplate(); updateSaveButtonState(); renderEmailTemplatePreview(); });
 
       if (resetBtn) resetBtn.addEventListener('click', () => {
-        const html = activeEmailTemplateType === 'validationReminder' ? (defaultValidationReminderTemplateHtml || '') : (defaultEmailTemplateHtml || '');
+        const html = activeEmailTemplateType === 'validationReminder' ? (defaultValidationReminderTemplateHtml || '') : (activeEmailTemplateType === 'eInvoicePdf' ? (defaultEInvoicePdfTemplateHtml || '') : (defaultEmailTemplateHtml || ''));
         setCurrentEmailTemplateHtml(html);
         if (editor) editor.dataset[getActiveTemplateKey()] = html;
         updateSaveButtonState();
@@ -1736,7 +1751,7 @@
       });
 
       if (templateTypeSelect) templateTypeSelect.addEventListener('change', () => {
-        activeEmailTemplateType = templateTypeSelect.value === 'validationReminder' ? 'validationReminder' : 'invoice';
+        activeEmailTemplateType = templateTypeSelect.value === 'validationReminder' ? 'validationReminder' : (templateTypeSelect.value === 'eInvoicePdf' ? 'eInvoicePdf' : 'invoice');
         setCurrentEmailTemplateHtml((editor && editor.dataset[getActiveTemplateKey()]) || '');
         renderEmailTemplatePreview();
         updateSaveButtonState();
@@ -1781,6 +1796,7 @@
           if (data.file) createdFiles.push(data.file);
           if (data.jsonFile) createdFiles.push(data.jsonFile);
           if (data.zugferdFile) createdFiles.push(data.zugferdFile);
+          if (data.eInvoiceViewPdfFile) createdFiles.push(data.eInvoiceViewPdfFile);
         } catch (error) {
           failed.push({ paymentId, message: error.message });
         }
@@ -1825,7 +1841,7 @@
         renderTable();
         status.textContent = data.opened
           ? `Rechnungsdetails inkl. ZUGFeRD erstellt und geöffnet: ${data.file}`
-          : `Rechnungsdetails inkl. ZUGFeRD erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.zugferdFile ? ' | ' + data.zugferdFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
+          : `Rechnungsdetails inkl. ZUGFeRD erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.zugferdFile ? ' | ' + data.zugferdFile : ''}${data.eInvoiceViewPdfFile ? ' | ' + data.eInvoiceViewPdfFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
       } catch (error) {
         status.textContent = `Fehler bei Rechnungsdetails: ${error.message}`;
       }
