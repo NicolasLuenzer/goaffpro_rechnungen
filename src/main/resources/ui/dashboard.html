@@ -140,6 +140,7 @@
     let emailTemplateHtmlMode = false;
     let emailPreviewAdvisors = [];
     let mailLogByPayment = new Map();
+    let analyticsLastPayload = null;
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -322,6 +323,50 @@
                     <input id="emailBcc" type="email" placeholder="z. B. controlling@vemmina.com" />
                   </div>
                 </div>
+
+
+                <div class="settings-group">
+                  <h3>E-Rechnung (ZUGFeRD)</h3>
+                  <div class="toolbar">
+                    <label><input id="eInvoiceEnabled" type="checkbox" checked /> E-Rechnung je Zahllauf erzeugen</label>
+                  </div>
+                  <div class="toolbar"><strong>Verkäuferdaten</strong></div>
+                  <div class="toolbar">
+                    <label for="eInvoiceSellerName">Name:</label>
+                    <input id="eInvoiceSellerName" type="text" placeholder="VEMMiNA GmbH" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="eInvoiceSellerStreet">Straße:</label>
+                    <input id="eInvoiceSellerStreet" type="text" placeholder="Musterstraße 1" />
+                    <label for="eInvoiceSellerZip">PLZ:</label>
+                    <input id="eInvoiceSellerZip" type="text" style="max-width:140px" />
+                    <label for="eInvoiceSellerCity">Ort:</label>
+                    <input id="eInvoiceSellerCity" type="text" style="max-width:200px" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="eInvoiceSellerCountry">Land (ISO):</label>
+                    <input id="eInvoiceSellerCountry" type="text" placeholder="DE" style="max-width:120px" />
+                    <label for="eInvoiceSellerVatId">USt-IdNr:</label>
+                    <input id="eInvoiceSellerVatId" type="text" />
+                    <label for="eInvoiceSellerTaxNumber">Steuernummer:</label>
+                    <input id="eInvoiceSellerTaxNumber" type="text" />
+                  </div>
+                  <div class="toolbar"><strong>Zahlungsdaten</strong></div>
+                  <div class="toolbar">
+                    <label for="eInvoiceBankIban">IBAN:</label>
+                    <input id="eInvoiceBankIban" type="text" />
+                    <label for="eInvoiceBankBic">BIC:</label>
+                    <input id="eInvoiceBankBic" type="text" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="eInvoiceBankAccountHolder">Kontoinhaber:</label>
+                    <input id="eInvoiceBankAccountHolder" type="text" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="eInvoicePaymentTerms">Zahlungsbedingungen:</label>
+                    <input id="eInvoicePaymentTerms" type="text" placeholder="Zahlbar sofort ohne Abzug" />
+                  </div>
+                </div>
               </div>
               <div class="toolbar"><button id="saveSettingsBtn" class="secondary">Speichern</button></div>
               <div class="settings-hint">Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</div>
@@ -411,59 +456,47 @@
         <p id="analyticsStatus" class="status">Noch keine Auswertung geladen.</p>
         <p class="status">Bitte Zeitraum bewusst wählen: je weiter zurück, desto länger dauern API-Abfragen.</p>
 
-        <div class="toolbar"><strong>Management-KPIs (30 Auswertungen)</strong></div>
-        <div id="analyticsKpiGrid" class="kpi-grid"></div>
+        <div class="validation-subtabs">
+          <button type="button" class="validation-subtab active" data-analytics-target="analytics-overview-section">Gesamt-Auswertung</button>
+          <button type="button" class="validation-subtab" data-analytics-target="analytics-advisor360-section">Beraterinnenebene (360°)</button>
+        </div>
 
-        <div class="toolbar"><strong>Zusammenfassung</strong></div>
-        <table>
-          <thead><tr><th>Kennzahl</th><th>Wert</th></tr></thead>
-          <tbody id="analyticsSummaryBody"></tbody>
-        </table>
+        <div id="analytics-overview-section" class="validation-section active">
+          <div class="toolbar"><strong>Management-KPIs (30 Auswertungen)</strong></div>
+          <div id="analyticsKpiGrid" class="kpi-grid"></div>
+          <div class="toolbar"><strong>Zusammenfassung</strong></div>
+          <table><thead><tr><th>Kennzahl</th><th>Wert</th></tr></thead><tbody id="analyticsSummaryBody"></tbody></table>
+          <div class="toolbar"><strong>Vergleich Beraterinnen</strong></div>
+          <table><thead><tr><th>Beraterin</th><th>Affiliate-ID</th><th>Land</th><th>Zahlläufe</th><th>Transaktionen</th><th>Eigenprovision</th><th>Teamprovision</th><th>Gesamtbetrag</th></tr></thead><tbody id="analyticsAdvisorBody"></tbody></table>
+          <div class="toolbar"><strong>Führungskräfte-Auswertung (unterstellte Beraterinnen)</strong></div>
+          <table><thead><tr><th>Führungskraft</th><th>ID</th><th>Beraterinnen im Team</th><th>Zahlläufe</th><th>Teambetrag</th><th>Eigenprovision Team</th><th>Teamprovision Team</th></tr></thead><tbody id="analyticsLeaderBody"></tbody></table>
+          <div class="toolbar"><strong>Zahlläufe nach Land</strong></div>
+          <table><thead><tr><th>Land</th><th>Anzahl Zahlläufe</th></tr></thead><tbody id="analyticsCountryBody"></tbody></table>
+          <canvas id="analyticsCountryChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
+          <div class="toolbar"><strong>Weitere API-Auswertungen</strong></div>
+          <table><thead><tr><th>Offene Auszahlungen (Top)</th><th>Affiliate-ID</th><th>Offen</th><th>Gesamt</th><th>Bereits ausgezahlt</th></tr></thead><tbody id="analyticsPendingBody"></tbody></table>
+          <table><thead><tr><th>Traffic-Quelle</th><th>Besuche</th><th>Page-Views</th></tr></thead><tbody id="analyticsTrafficBody"></tbody></table>
+          <table><thead><tr><th>Order-Status</th><th>Anzahl</th></tr></thead><tbody id="analyticsOrderStatusBody"></tbody></table>
+          <table><thead><tr><th>Reward-Status</th><th>Anzahl</th><th>Reward-Betrag</th></tr></thead><tbody id="analyticsRewardStatusBody"></tbody></table>
+          <div class="toolbar"><strong>Grafiken</strong></div>
+          <canvas id="analyticsAmountChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
+          <div style="height:8px"></div>
+          <canvas id="analyticsTxChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
+        </div>
 
-        <div class="toolbar"><strong>Vergleich Beraterinnen</strong></div>
-        <table>
-          <thead><tr><th>Beraterin</th><th>Affiliate-ID</th><th>Land</th><th>Zahlläufe</th><th>Transaktionen</th><th>Eigenprovision</th><th>Teamprovision</th><th>Gesamtbetrag</th></tr></thead>
-          <tbody id="analyticsAdvisorBody"></tbody>
-        </table>
-
-        <div class="toolbar"><strong>Führungskräfte-Auswertung (unterstellte Beraterinnen)</strong></div>
-        <table>
-          <thead><tr><th>Führungskraft</th><th>ID</th><th>Beraterinnen im Team</th><th>Zahlläufe</th><th>Teambetrag</th><th>Eigenprovision Team</th><th>Teamprovision Team</th></tr></thead>
-          <tbody id="analyticsLeaderBody"></tbody>
-        </table>
-
-        <div class="toolbar"><strong>Zahlläufe nach Land</strong></div>
-        <table>
-          <thead><tr><th>Land</th><th>Anzahl Zahlläufe</th></tr></thead>
-          <tbody id="analyticsCountryBody"></tbody>
-        </table>
-        <canvas id="analyticsCountryChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
-
-        <div class="toolbar"><strong>Weitere API-Auswertungen</strong></div>
-        <table>
-          <thead><tr><th>Offene Auszahlungen (Top)</th><th>Affiliate-ID</th><th>Offen</th><th>Gesamt</th><th>Bereits ausgezahlt</th></tr></thead>
-          <tbody id="analyticsPendingBody"></tbody>
-        </table>
-
-        <table>
-          <thead><tr><th>Traffic-Quelle</th><th>Besuche</th><th>Page-Views</th></tr></thead>
-          <tbody id="analyticsTrafficBody"></tbody>
-        </table>
-
-        <table>
-          <thead><tr><th>Order-Status</th><th>Anzahl</th></tr></thead>
-          <tbody id="analyticsOrderStatusBody"></tbody>
-        </table>
-
-        <table>
-          <thead><tr><th>Reward-Status</th><th>Anzahl</th><th>Reward-Betrag</th></tr></thead>
-          <tbody id="analyticsRewardStatusBody"></tbody>
-        </table>
-
-        <div class="toolbar"><strong>Grafiken</strong></div>
-        <canvas id="analyticsAmountChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
-        <div style="height:8px"></div>
-        <canvas id="analyticsTxChart" width="1200" height="280" style="width:100%;max-width:1200px;border:1px solid #e5e7eb;border-radius:8px;background:#fff"></canvas>
+        <div id="analytics-advisor360-section" class="validation-section">
+          <div class="toolbar">
+            <label for="analyticsAdvisorSelect">Beraterin:</label>
+            <select id="analyticsAdvisorSelect" style="min-width:360px"></select>
+            <button id="fetchAdvisor360Btn" class="secondary" type="button">360° laden</button>
+          </div>
+          <p id="analyticsAdvisorStatus" class="status">Noch keine Beraterin ausgewählt.</p>
+          <div id="analyticsAdvisorSummaryCards" class="kpi-grid"></div>
+          <div class="toolbar"><strong>Auszahlungen</strong></div>
+          <table><thead><tr><th>Payment-ID</th><th>Datum</th><th>Betrag</th><th>Methode</th><th>Zeitraum</th><th>Transaktionen</th></tr></thead><tbody id="analyticsAdvisorPayoutBody"></tbody></table>
+          <div class="toolbar"><strong>Verkaufte Artikel (direkt + indirekt)</strong></div>
+          <table><thead><tr><th>Artikel</th><th>Menge</th><th>Umsatz (geschätzt)</th></tr></thead><tbody id="analyticsAdvisorProductBody"></tbody></table>
+        </div>
       `;
       panels.appendChild(panel);
     }
@@ -520,13 +553,83 @@
     }
 
     function wireValidationSubtabs() {
-      const tabs = document.querySelectorAll('.validation-subtab');
-      const sections = document.querySelectorAll('.validation-section');
+      const tabs = document.querySelectorAll('[data-validation-target]');
+      const sections = document.querySelectorAll('#validation-panel .validation-section');
       tabs.forEach(tab => tab.addEventListener('click', () => {
         const target = tab.dataset.validationTarget;
         tabs.forEach(t => t.classList.toggle('active', t === tab));
         sections.forEach(section => section.classList.toggle('active', section.id === target));
       }));
+    }
+
+    function wireAnalyticsSubtabs() {
+      const tabs = document.querySelectorAll('[data-analytics-target]');
+      const sections = ['analytics-overview-section', 'analytics-advisor360-section'].map(id => document.getElementById(id)).filter(Boolean);
+      tabs.forEach(tab => tab.addEventListener('click', () => {
+        const target = tab.dataset.analyticsTarget;
+        tabs.forEach(t => t.classList.toggle('active', t === tab));
+        sections.forEach(section => section.classList.toggle('active', section.id === target));
+      }));
+    }
+
+    function syncAdvisor360SelectFromAnalytics(advisors) {
+      const select = document.getElementById('analyticsAdvisorSelect');
+      if (!select) return;
+      const rows = Array.isArray(advisors) ? advisors : [];
+      select.innerHTML = rows.map(r => `<option value="${escapeHtml(r.affiliateId || '')}">${escapeHtml(r.advisorName || r.affiliateId || '')} (${escapeHtml(r.affiliateId || '-')})</option>`).join('');
+      if (!rows.length) select.innerHTML = '<option value="">Keine Beraterinnen verfügbar</option>';
+    }
+
+    function renderAdvisor360(data) {
+      const status = document.getElementById('analyticsAdvisorStatus');
+      const cards = document.getElementById('analyticsAdvisorSummaryCards');
+      const payoutBody = document.getElementById('analyticsAdvisorPayoutBody');
+      const productBody = document.getElementById('analyticsAdvisorProductBody');
+      if (!status || !cards || !payoutBody || !productBody) return;
+      const summary = data.summary || {};
+      cards.innerHTML = [
+        ['Beraterin', summary.advisorName || '-'],
+        ['Auszahlungen', summary.payoutCount || 0],
+        ['Auszahlungssumme', formatEuroAmount(summary.payoutSum || 0)],
+        ['Direkte Verkäufe', summary.directSalesCount || 0],
+        ['Indirekte Verkäufe', summary.indirectSalesCount || 0],
+        ['Verkaufte Einheiten', summary.soldUnits || 0],
+        ['Direkte Provision', formatEuroAmount(summary.directCommission || 0)],
+        ['Indirekte Provision', formatEuroAmount(summary.indirectCommission || 0)],
+      ].map(([k,v]) => `<div class="kpi-card"><div class="kpi-label">${escapeHtml(String(k))}</div><div class="kpi-value">${escapeHtml(String(v))}</div></div>`).join('');
+
+      const payouts = Array.isArray(data.payoutRows) ? data.payoutRows : [];
+      payoutBody.innerHTML = payouts.map(r => `<tr><td>${escapeHtml(r.paymentId || '')}</td><td>${escapeHtml(r.created || '')}</td><td>${formatEuroAmount(r.amount || 0)}</td><td>${escapeHtml(r.method || '')}</td><td>${escapeHtml(r.periodLabel || '')}</td><td>${escapeHtml(String(r.txCount || 0))}</td></tr>`).join('');
+      const products = Array.isArray(data.productRows) ? data.productRows : [];
+      productBody.innerHTML = products.map(r => `<tr><td>${escapeHtml(r.productName || '')}</td><td>${escapeHtml(String(r.quantity || 0))}</td><td>${formatEuroAmount(r.salesValue || 0)}</td></tr>`).join('');
+      status.textContent = `360°-Sicht geladen für ${summary.advisorName || summary.advisorId || '-'}.`;
+      updateEmptyTablesVisibility(document);
+    }
+
+    async function fetchAdvisor360() {
+      const select = document.getElementById('analyticsAdvisorSelect');
+      const status = document.getElementById('analyticsAdvisorStatus');
+      const sinceSelect = document.getElementById('analyticsSinceSelect');
+      const fromDateInput = document.getElementById('analyticsFromDate');
+      const toDateInput = document.getElementById('analyticsToDate');
+      if (!select || !status) return;
+      const advisorId = String(select.value || '').trim();
+      if (!advisorId) {
+        status.textContent = 'Bitte Beraterin auswählen.';
+        return;
+      }
+      try {
+        status.textContent = 'Lade 360°-Sicht...';
+        const data = await apiPost('/api/analytics/advisor-detail', {
+          advisorId,
+          sinceId: sinceSelect ? (sinceSelect.value || '0') : '0',
+          fromDate: fromDateInput ? fromDateInput.value : '',
+          toDate: toDateInput ? toDateInput.value : ''
+        });
+        renderAdvisor360(data);
+      } catch (error) {
+        status.textContent = `Fehler bei Beraterinnen-360°: ${error.message}`;
+      }
     }
 
     function renderValidationTable() {
@@ -1010,7 +1113,7 @@
       const root = document.getElementById('mailLogModalRoot');
       if (!root) return;
       const rows = mailLogByPayment.get(String(paymentId || '')) || [];
-      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Versandhistorie Payment ${escapeHtml(paymentId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Betreff</th><th>Anhänge</th></tr></thead><tbody>${rows.map(r => { const pdfLink = r.pdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.pdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.pdfFile || 'PDF')}</a>` : escapeHtml(r.pdfFile || '-'); const jsonLink = r.jsonPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.jsonPath)}" target="_blank" rel="noopener">${escapeHtml(r.jsonFile || 'JSON')}</a>` : escapeHtml(r.jsonFile || '-'); return `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${escapeHtml(r.subject || '')}</td><td>${pdfLink} | ${jsonLink}</td></tr>`; }).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
+      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Versandhistorie Payment ${escapeHtml(paymentId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Betreff</th><th>Anhänge</th></tr></thead><tbody>${rows.map(r => { const pdfLink = r.pdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.pdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.pdfFile || 'PDF')}</a>` : escapeHtml(r.pdfFile || '-'); const jsonLink = r.jsonPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.jsonPath)}" target="_blank" rel="noopener">${escapeHtml(r.jsonFile || 'JSON')}</a>` : escapeHtml(r.jsonFile || '-'); const zugferdLink = r.zugferdPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.zugferdPath)}" target="_blank" rel="noopener">${escapeHtml(r.zugferdFile || 'ZUGFeRD')}</a>` : escapeHtml(r.zugferdFile || '-'); return `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${escapeHtml(r.subject || '')}</td><td>${pdfLink} | ${jsonLink} | ${zugferdLink}</td></tr>`; }).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
       const close = () => { root.innerHTML = ''; };
       document.getElementById('closeMailLogModalBtn')?.addEventListener('click', close);
       root.querySelector('.mail-log-modal')?.addEventListener('click', (evt) => { if (evt.target.classList.contains('mail-log-modal')) close(); });
@@ -1220,6 +1323,18 @@
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || '587';
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || '';
         if (emailBccInput) emailBccInput.value = data.emailBcc || '';
+        if (document.getElementById('eInvoiceEnabled')) document.getElementById('eInvoiceEnabled').checked = data.eInvoiceEnabled !== false;
+        if (document.getElementById('eInvoiceSellerName')) document.getElementById('eInvoiceSellerName').value = data.eInvoiceSellerName || '';
+        if (document.getElementById('eInvoiceSellerStreet')) document.getElementById('eInvoiceSellerStreet').value = data.eInvoiceSellerStreet || '';
+        if (document.getElementById('eInvoiceSellerZip')) document.getElementById('eInvoiceSellerZip').value = data.eInvoiceSellerZip || '';
+        if (document.getElementById('eInvoiceSellerCity')) document.getElementById('eInvoiceSellerCity').value = data.eInvoiceSellerCity || '';
+        if (document.getElementById('eInvoiceSellerCountry')) document.getElementById('eInvoiceSellerCountry').value = data.eInvoiceSellerCountry || 'DE';
+        if (document.getElementById('eInvoiceSellerVatId')) document.getElementById('eInvoiceSellerVatId').value = data.eInvoiceSellerVatId || '';
+        if (document.getElementById('eInvoiceSellerTaxNumber')) document.getElementById('eInvoiceSellerTaxNumber').value = data.eInvoiceSellerTaxNumber || '';
+        if (document.getElementById('eInvoiceBankIban')) document.getElementById('eInvoiceBankIban').value = data.eInvoiceBankIban || '';
+        if (document.getElementById('eInvoiceBankBic')) document.getElementById('eInvoiceBankBic').value = data.eInvoiceBankBic || '';
+        if (document.getElementById('eInvoiceBankAccountHolder')) document.getElementById('eInvoiceBankAccountHolder').value = data.eInvoiceBankAccountHolder || '';
+        if (document.getElementById('eInvoicePaymentTerms')) document.getElementById('eInvoicePaymentTerms').value = data.eInvoicePaymentTerms || '';
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         const mode = data.emailRecipientMode || 'contact';
@@ -1275,7 +1390,19 @@
           sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true,
           emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact',
           emailTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtml || getCurrentEmailTemplateHtml(),
-          validationReminderTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || ''
+          validationReminderTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '',
+          eInvoiceEnabled: !!document.getElementById('eInvoiceEnabled')?.checked,
+          eInvoiceSellerName: document.getElementById('eInvoiceSellerName')?.value || '',
+          eInvoiceSellerStreet: document.getElementById('eInvoiceSellerStreet')?.value || '',
+          eInvoiceSellerZip: document.getElementById('eInvoiceSellerZip')?.value || '',
+          eInvoiceSellerCity: document.getElementById('eInvoiceSellerCity')?.value || '',
+          eInvoiceSellerCountry: document.getElementById('eInvoiceSellerCountry')?.value || 'DE',
+          eInvoiceSellerVatId: document.getElementById('eInvoiceSellerVatId')?.value || '',
+          eInvoiceSellerTaxNumber: document.getElementById('eInvoiceSellerTaxNumber')?.value || '',
+          eInvoiceBankIban: document.getElementById('eInvoiceBankIban')?.value || '',
+          eInvoiceBankBic: document.getElementById('eInvoiceBankBic')?.value || '',
+          eInvoiceBankAccountHolder: document.getElementById('eInvoiceBankAccountHolder')?.value || '',
+          eInvoicePaymentTerms: document.getElementById('eInvoicePaymentTerms')?.value || ''
         });
         input.value = data.pdfExportPath || input.value;
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
@@ -1284,6 +1411,18 @@
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || smtpPortInput.value || '587';
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || smtpUsernameInput.value;
         if (emailBccInput) emailBccInput.value = data.emailBcc || emailBccInput.value;
+        if (document.getElementById('eInvoiceEnabled')) document.getElementById('eInvoiceEnabled').checked = data.eInvoiceEnabled !== false;
+        if (document.getElementById('eInvoiceSellerName')) document.getElementById('eInvoiceSellerName').value = data.eInvoiceSellerName || '';
+        if (document.getElementById('eInvoiceSellerStreet')) document.getElementById('eInvoiceSellerStreet').value = data.eInvoiceSellerStreet || '';
+        if (document.getElementById('eInvoiceSellerZip')) document.getElementById('eInvoiceSellerZip').value = data.eInvoiceSellerZip || '';
+        if (document.getElementById('eInvoiceSellerCity')) document.getElementById('eInvoiceSellerCity').value = data.eInvoiceSellerCity || '';
+        if (document.getElementById('eInvoiceSellerCountry')) document.getElementById('eInvoiceSellerCountry').value = data.eInvoiceSellerCountry || 'DE';
+        if (document.getElementById('eInvoiceSellerVatId')) document.getElementById('eInvoiceSellerVatId').value = data.eInvoiceSellerVatId || '';
+        if (document.getElementById('eInvoiceSellerTaxNumber')) document.getElementById('eInvoiceSellerTaxNumber').value = data.eInvoiceSellerTaxNumber || '';
+        if (document.getElementById('eInvoiceBankIban')) document.getElementById('eInvoiceBankIban').value = data.eInvoiceBankIban || '';
+        if (document.getElementById('eInvoiceBankBic')) document.getElementById('eInvoiceBankBic').value = data.eInvoiceBankBic || '';
+        if (document.getElementById('eInvoiceBankAccountHolder')) document.getElementById('eInvoiceBankAccountHolder').value = data.eInvoiceBankAccountHolder || '';
+        if (document.getElementById('eInvoicePaymentTerms')) document.getElementById('eInvoicePaymentTerms').value = data.eInvoicePaymentTerms || '';
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         const mode = data.emailRecipientMode || 'contact';
@@ -1430,7 +1569,19 @@
         sendEmailsEnabled: !!document.getElementById('sendEmailsEnabled')?.checked,
         emailRecipientMode: getEmailRecipientMode(),
         emailTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtml || '').trim(),
-        validationReminderTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '').trim()
+        validationReminderTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '').trim(),
+        eInvoiceEnabled: !!document.getElementById('eInvoiceEnabled')?.checked,
+        eInvoiceSellerName: (document.getElementById('eInvoiceSellerName')?.value || '').trim(),
+        eInvoiceSellerStreet: (document.getElementById('eInvoiceSellerStreet')?.value || '').trim(),
+        eInvoiceSellerZip: (document.getElementById('eInvoiceSellerZip')?.value || '').trim(),
+        eInvoiceSellerCity: (document.getElementById('eInvoiceSellerCity')?.value || '').trim(),
+        eInvoiceSellerCountry: (document.getElementById('eInvoiceSellerCountry')?.value || '').trim(),
+        eInvoiceSellerVatId: (document.getElementById('eInvoiceSellerVatId')?.value || '').trim(),
+        eInvoiceSellerTaxNumber: (document.getElementById('eInvoiceSellerTaxNumber')?.value || '').trim(),
+        eInvoiceBankIban: (document.getElementById('eInvoiceBankIban')?.value || '').trim(),
+        eInvoiceBankBic: (document.getElementById('eInvoiceBankBic')?.value || '').trim(),
+        eInvoiceBankAccountHolder: (document.getElementById('eInvoiceBankAccountHolder')?.value || '').trim(),
+        eInvoicePaymentTerms: (document.getElementById('eInvoicePaymentTerms')?.value || '').trim()
       };
     }
 
@@ -1444,7 +1595,7 @@
     }
 
     function wireSettingsDirtyTracking() {
-      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor'];
+      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','eInvoiceSellerName','eInvoiceSellerStreet','eInvoiceSellerZip','eInvoiceSellerCity','eInvoiceSellerCountry','eInvoiceSellerVatId','eInvoiceSellerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
       ids.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -1575,6 +1726,7 @@
           if (input && data.pdfExportPath) input.value = data.pdfExportPath;
           if (data.file) createdFiles.push(data.file);
           if (data.jsonFile) createdFiles.push(data.jsonFile);
+          if (data.zugferdFile) createdFiles.push(data.zugferdFile);
         } catch (error) {
           failed.push({ paymentId, message: error.message });
         }
@@ -1582,7 +1734,7 @@
 
       if (filesBox) {
         const okHtml = createdFiles.length > 0
-          ? `<strong>Exportierte Rechnungsdetails-PDFs:</strong><br>${createdFiles.map(f => `<code>${f}</code>`).join('<br>')}`
+          ? `<strong>Exportierte Dateien (PDF, JSON, ZUGFeRD):</strong><br>${createdFiles.map(f => `<code>${f}</code>`).join('<br>')}`
           : '<strong>Keine Rechnungsdetails-PDF erstellt.</strong>';
         const failHtml = failed.length > 0
           ? `<br><br><strong>Fehler:</strong><br>${failed.map(f => `<code>${f.paymentId}</code>: ${f.message}`).join('<br>')}`
@@ -1618,8 +1770,8 @@
         await loadMailLog();
         renderTable();
         status.textContent = data.opened
-          ? `Rechnungsdetails & JSON erstellt und geöffnet: ${data.file}`
-          : `Rechnungsdetails & JSON erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
+          ? `Rechnungsdetails inkl. ZUGFeRD erstellt und geöffnet: ${data.file}`
+          : `Rechnungsdetails inkl. ZUGFeRD erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.zugferdFile ? ' | ' + data.zugferdFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
       } catch (error) {
         status.textContent = `Fehler bei Rechnungsdetails: ${error.message}`;
       }
@@ -1691,6 +1843,7 @@
     }
 
     function renderAnalytics(data) {
+      analyticsLastPayload = data || null;
       const summaryBody = document.getElementById('analyticsSummaryBody');
       const advisorBody = document.getElementById('analyticsAdvisorBody');
       const leaderBody = document.getElementById('analyticsLeaderBody');
@@ -1799,6 +1952,7 @@
       drawBarChart('analyticsAmountChart', chart.labels || [], chart.amountSeries || [], '#2563eb');
       drawBarChart('analyticsTxChart', chart.labels || [], chart.txSeries || [], '#10b981');
       drawBarChart('analyticsCountryChart', countries.map(r => r.country || 'Unbekannt'), countries.map(r => Number(r.payments || 0)), '#7c3aed');
+      syncAdvisor360SelectFromAnalytics(advisors);
       updateEmptyTablesVisibility(document);
     }
 
@@ -1870,6 +2024,8 @@
         renderAnalytics(data);
         const count = (data.summary && data.summary.paymentsCount) || 0;
         status.textContent = `Auswertung geladen (${count} Zahlläufe).`;
+        const advisorStatus = document.getElementById('analyticsAdvisorStatus');
+        if (advisorStatus) advisorStatus.textContent = 'Bitte Beraterin auswählen und 360° laden.';
       } catch (error) {
         status.textContent = `Fehler beim Laden der Auswertung: ${error.message}`;
       }
@@ -1984,6 +2140,7 @@
         const addLatestCommissionBtn = document.getElementById('addLatestCommissionBtn');
         const rebuildCommissionHistoryBtn = document.getElementById('rebuildCommissionHistoryBtn');
         const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
+        const fetchAdvisor360Btn = document.getElementById('fetchAdvisor360Btn');
         const loadValidationBtn = document.getElementById('loadValidationBtn');
         const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
         const expandAllTreeBtn = document.getElementById('expandAllTreeBtn');
@@ -1996,6 +2153,7 @@
         if (addLatestCommissionBtn) addLatestCommissionBtn.addEventListener('click', addLatestCommission);
         if (rebuildCommissionHistoryBtn) rebuildCommissionHistoryBtn.addEventListener('click', rebuildCommissionHistoryFromPayments);
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
+        if (fetchAdvisor360Btn) fetchAdvisor360Btn.addEventListener('click', fetchAdvisor360);
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
         if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
         if (expandAllTreeBtn) expandAllTreeBtn.addEventListener('click', expandAllValidationTree);
@@ -2012,6 +2170,7 @@
         wireFolderPickerFallback();
         wireMainSectionTabs();
         wireValidationSubtabs();
+        wireAnalyticsSubtabs();
         wireTableInteractions();
         ensureResizableColumns();
         wireEmailTemplateEditor();
