@@ -246,6 +246,7 @@
             <div class="toolbar">
               <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> Versand: an Kontakt-E-Mail</label>
               <label class="recipient-advisor-label"><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> Versand: an Beraterinnen-E-Mail</label>
+              <label title="Wenn deaktiviert, werden nur Rechnungsdetails-PDF + JSON erzeugt/versendet."><input id="includeEInvoiceArtifacts" type="checkbox" checked /> E-Rechnung (ZUGFeRD + E-Rechnung-PDF) mitschicken & ablegen</label>
             </div>
             <p id="pollStatus" class="status">Noch nicht gestartet.</p>
             <div id="exportedFiles" class="files"></div>
@@ -1377,6 +1378,7 @@
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || '';
         if (emailBccInput) emailBccInput.value = data.emailBcc || '';
         if (document.getElementById('eInvoiceEnabled')) document.getElementById('eInvoiceEnabled').checked = data.eInvoiceEnabled !== false;
+        if (document.getElementById('includeEInvoiceArtifacts')) document.getElementById('includeEInvoiceArtifacts').checked = data.eInvoiceAttachAndStoreEnabled !== false;
         if (document.getElementById('eInvoiceBuyerName')) document.getElementById('eInvoiceBuyerName').value = data.eInvoiceBuyerName || '';
         if (document.getElementById('eInvoiceBuyerStreet')) document.getElementById('eInvoiceBuyerStreet').value = data.eInvoiceBuyerStreet || '';
         if (document.getElementById('eInvoiceBuyerZip')) document.getElementById('eInvoiceBuyerZip').value = data.eInvoiceBuyerZip || '';
@@ -1448,6 +1450,7 @@
           validationReminderTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '',
           eInvoicePdfTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.eInvoicePdfTemplateHtml || '',
           eInvoiceEnabled: !!document.getElementById('eInvoiceEnabled')?.checked,
+          eInvoiceAttachAndStoreEnabled: !!document.getElementById('includeEInvoiceArtifacts')?.checked,
           eInvoiceBuyerName: document.getElementById('eInvoiceBuyerName')?.value || '',
           eInvoiceBuyerStreet: document.getElementById('eInvoiceBuyerStreet')?.value || '',
           eInvoiceBuyerZip: document.getElementById('eInvoiceBuyerZip')?.value || '',
@@ -1468,6 +1471,7 @@
         if (smtpUsernameInput) smtpUsernameInput.value = data.smtpUsername || smtpUsernameInput.value;
         if (emailBccInput) emailBccInput.value = data.emailBcc || emailBccInput.value;
         if (document.getElementById('eInvoiceEnabled')) document.getElementById('eInvoiceEnabled').checked = data.eInvoiceEnabled !== false;
+        if (document.getElementById('includeEInvoiceArtifacts')) document.getElementById('includeEInvoiceArtifacts').checked = data.eInvoiceAttachAndStoreEnabled !== false;
         if (document.getElementById('eInvoiceBuyerName')) document.getElementById('eInvoiceBuyerName').value = data.eInvoiceBuyerName || '';
         if (document.getElementById('eInvoiceBuyerStreet')) document.getElementById('eInvoiceBuyerStreet').value = data.eInvoiceBuyerStreet || '';
         if (document.getElementById('eInvoiceBuyerZip')) document.getElementById('eInvoiceBuyerZip').value = data.eInvoiceBuyerZip || '';
@@ -1640,6 +1644,7 @@
         validationReminderTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '').trim(),
         eInvoicePdfTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.eInvoicePdfTemplateHtml || '').trim(),
         eInvoiceEnabled: !!document.getElementById('eInvoiceEnabled')?.checked,
+        eInvoiceAttachAndStoreEnabled: !!document.getElementById('includeEInvoiceArtifacts')?.checked,
         eInvoiceBuyerName: (document.getElementById('eInvoiceBuyerName')?.value || '').trim(),
         eInvoiceBuyerStreet: (document.getElementById('eInvoiceBuyerStreet')?.value || '').trim(),
         eInvoiceBuyerZip: (document.getElementById('eInvoiceBuyerZip')?.value || '').trim(),
@@ -1664,7 +1669,7 @@
     }
 
     function wireSettingsDirtyTracking() {
-      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
+      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
       ids.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -1790,7 +1795,8 @@
         try {
           const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
             paymentId,
-            pdfExportPath: input ? input.value : ''
+            pdfExportPath: input ? input.value : '',
+            includeEInvoiceArtifacts: !!document.getElementById('includeEInvoiceArtifacts')?.checked
           });
           if (input && data.pdfExportPath) input.value = data.pdfExportPath;
           if (data.file) createdFiles.push(data.file);
@@ -1834,14 +1840,15 @@
         }
         const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
           paymentId,
-          pdfExportPath: input ? input.value : ''
+          pdfExportPath: input ? input.value : '',
+          includeEInvoiceArtifacts: !!document.getElementById('includeEInvoiceArtifacts')?.checked
         });
         if (input && data.pdfExportPath) input.value = data.pdfExportPath;
         await loadMailLog();
         renderTable();
         status.textContent = data.opened
-          ? `Rechnungsdetails inkl. ZUGFeRD erstellt und geöffnet: ${data.file}`
-          : `Rechnungsdetails inkl. ZUGFeRD erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.zugferdFile ? ' | ' + data.zugferdFile : ''}${data.eInvoiceViewPdfFile ? ' | ' + data.eInvoiceViewPdfFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
+          ? `Rechnungsdetails erstellt und geöffnet: ${data.file}`
+          : `Rechnungsdetails erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.zugferdFile ? ' | ' + data.zugferdFile : ''}${data.eInvoiceViewPdfFile ? ' | ' + data.eInvoiceViewPdfFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
       } catch (error) {
         status.textContent = `Fehler bei Rechnungsdetails: ${error.message}`;
       }
