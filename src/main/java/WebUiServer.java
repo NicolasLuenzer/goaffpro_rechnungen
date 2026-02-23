@@ -83,6 +83,7 @@ public class WebUiServer {
         server.createContext("/api/version", new VersionHandler());
         server.createContext("/api/version/history", new VersionHistoryHandler());
         server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
+        server.createContext("/api/analytics/advisor-detail", new AnalyticsAdvisorDetailHandler());
         server.createContext("/api/commissions/add-latest", new AddLatestCommissionHandler());
         server.createContext("/api/commissions/remove", new RemoveCommissionHandler());
         server.createContext("/api/commissions/rebuild-from-payments", new RebuildCommissionHistoryHandler());
@@ -312,6 +313,18 @@ public class WebUiServer {
                 String emailRecipientMode = Objects.toString(config.getProperty("emailRecipientMode"), "contact").trim();
                 String emailTemplateHtml = Objects.toString(config.getProperty("emailTemplateHtml"), "");
                 String validationReminderTemplateHtml = Objects.toString(config.getProperty("validationReminderTemplateHtml"), "");
+                boolean eInvoiceEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true"));
+                String eInvoiceSellerName = Objects.toString(config.getProperty("eInvoiceSellerName"), "VEMMiNA").trim();
+                String eInvoiceSellerStreet = Objects.toString(config.getProperty("eInvoiceSellerStreet"), "").trim();
+                String eInvoiceSellerZip = Objects.toString(config.getProperty("eInvoiceSellerZip"), "").trim();
+                String eInvoiceSellerCity = Objects.toString(config.getProperty("eInvoiceSellerCity"), "").trim();
+                String eInvoiceSellerCountry = Objects.toString(config.getProperty("eInvoiceSellerCountry"), "DE").trim();
+                String eInvoiceSellerVatId = Objects.toString(config.getProperty("eInvoiceSellerVatId"), "").trim();
+                String eInvoiceSellerTaxNumber = Objects.toString(config.getProperty("eInvoiceSellerTaxNumber"), "").trim();
+                String eInvoiceBankIban = Objects.toString(config.getProperty("eInvoiceBankIban"), "").trim();
+                String eInvoiceBankBic = Objects.toString(config.getProperty("eInvoiceBankBic"), "").trim();
+                String eInvoiceBankAccountHolder = Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), "").trim();
+                String eInvoicePaymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
                 ensureCommissionInHistory(config, activeCommission);
                 persistSettings(config);
 
@@ -333,6 +346,18 @@ public class WebUiServer {
                 payload.put("emailTemplateHtmlDefault", getDefaultInvoiceMailHtmlTemplate());
                 payload.put("validationReminderTemplateHtml", validationReminderTemplateHtml.isBlank() ? getDefaultValidationReminderHtmlTemplate() : validationReminderTemplateHtml);
                 payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
+                payload.put("eInvoiceEnabled", eInvoiceEnabled);
+                payload.put("eInvoiceSellerName", eInvoiceSellerName);
+                payload.put("eInvoiceSellerStreet", eInvoiceSellerStreet);
+                payload.put("eInvoiceSellerZip", eInvoiceSellerZip);
+                payload.put("eInvoiceSellerCity", eInvoiceSellerCity);
+                payload.put("eInvoiceSellerCountry", eInvoiceSellerCountry);
+                payload.put("eInvoiceSellerVatId", eInvoiceSellerVatId);
+                payload.put("eInvoiceSellerTaxNumber", eInvoiceSellerTaxNumber);
+                payload.put("eInvoiceBankIban", eInvoiceBankIban);
+                payload.put("eInvoiceBankBic", eInvoiceBankBic);
+                payload.put("eInvoiceBankAccountHolder", eInvoiceBankAccountHolder);
+                payload.put("eInvoicePaymentTerms", eInvoicePaymentTerms);
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -357,6 +382,18 @@ public class WebUiServer {
                     String emailRecipientMode = asText(body, "emailRecipientMode").trim();
                     String emailTemplateHtml = asText(body, "emailTemplateHtml");
                     String validationReminderTemplateHtml = asText(body, "validationReminderTemplateHtml");
+                    boolean eInvoiceEnabled = !body.has("eInvoiceEnabled") || body.get("eInvoiceEnabled").asBoolean(true);
+                    String eInvoiceSellerName = asText(body, "eInvoiceSellerName").trim();
+                    String eInvoiceSellerStreet = asText(body, "eInvoiceSellerStreet").trim();
+                    String eInvoiceSellerZip = asText(body, "eInvoiceSellerZip").trim();
+                    String eInvoiceSellerCity = asText(body, "eInvoiceSellerCity").trim();
+                    String eInvoiceSellerCountry = asText(body, "eInvoiceSellerCountry").trim();
+                    String eInvoiceSellerVatId = asText(body, "eInvoiceSellerVatId").trim();
+                    String eInvoiceSellerTaxNumber = asText(body, "eInvoiceSellerTaxNumber").trim();
+                    String eInvoiceBankIban = asText(body, "eInvoiceBankIban").trim();
+                    String eInvoiceBankBic = asText(body, "eInvoiceBankBic").trim();
+                    String eInvoiceBankAccountHolder = asText(body, "eInvoiceBankAccountHolder").trim();
+                    String eInvoicePaymentTerms = asText(body, "eInvoicePaymentTerms").trim();
                     if (!"advisor".equals(emailRecipientMode)) emailRecipientMode = "contact";
 
                     Properties config = loadConfig();
@@ -384,6 +421,18 @@ public class WebUiServer {
                     config.setProperty("emailRecipientMode", emailRecipientMode);
                     config.setProperty("emailTemplateHtml", emailTemplateHtml);
                     config.setProperty("validationReminderTemplateHtml", validationReminderTemplateHtml);
+                    config.setProperty("eInvoiceEnabled", String.valueOf(eInvoiceEnabled));
+                    config.setProperty("eInvoiceSellerName", eInvoiceSellerName);
+                    config.setProperty("eInvoiceSellerStreet", eInvoiceSellerStreet);
+                    config.setProperty("eInvoiceSellerZip", eInvoiceSellerZip);
+                    config.setProperty("eInvoiceSellerCity", eInvoiceSellerCity);
+                    config.setProperty("eInvoiceSellerCountry", eInvoiceSellerCountry);
+                    config.setProperty("eInvoiceSellerVatId", eInvoiceSellerVatId);
+                    config.setProperty("eInvoiceSellerTaxNumber", eInvoiceSellerTaxNumber);
+                    config.setProperty("eInvoiceBankIban", eInvoiceBankIban);
+                    config.setProperty("eInvoiceBankBic", eInvoiceBankBic);
+                    config.setProperty("eInvoiceBankAccountHolder", eInvoiceBankAccountHolder);
+                    config.setProperty("eInvoicePaymentTerms", eInvoicePaymentTerms);
 
                     persistSettings(config);
 
@@ -406,6 +455,30 @@ public class WebUiServer {
                     payload.put("emailTemplateHtmlDefault", getDefaultInvoiceMailHtmlTemplate());
                     payload.put("validationReminderTemplateHtml", Objects.toString(config.getProperty("validationReminderTemplateHtml"), "").isBlank() ? getDefaultValidationReminderHtmlTemplate() : Objects.toString(config.getProperty("validationReminderTemplateHtml"), ""));
                     payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
+                    payload.put("eInvoiceEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true")));
+                    payload.put("eInvoiceSellerName", Objects.toString(config.getProperty("eInvoiceSellerName"), "VEMMiNA"));
+                    payload.put("eInvoiceSellerStreet", Objects.toString(config.getProperty("eInvoiceSellerStreet"), ""));
+                    payload.put("eInvoiceSellerZip", Objects.toString(config.getProperty("eInvoiceSellerZip"), ""));
+                    payload.put("eInvoiceSellerCity", Objects.toString(config.getProperty("eInvoiceSellerCity"), ""));
+                    payload.put("eInvoiceSellerCountry", Objects.toString(config.getProperty("eInvoiceSellerCountry"), "DE"));
+                    payload.put("eInvoiceSellerVatId", Objects.toString(config.getProperty("eInvoiceSellerVatId"), ""));
+                    payload.put("eInvoiceSellerTaxNumber", Objects.toString(config.getProperty("eInvoiceSellerTaxNumber"), ""));
+                    payload.put("eInvoiceBankIban", Objects.toString(config.getProperty("eInvoiceBankIban"), ""));
+                    payload.put("eInvoiceBankBic", Objects.toString(config.getProperty("eInvoiceBankBic"), ""));
+                    payload.put("eInvoiceBankAccountHolder", Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), ""));
+                    payload.put("eInvoicePaymentTerms", Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug"));
+                payload.put("eInvoiceEnabled", eInvoiceEnabled);
+                payload.put("eInvoiceSellerName", eInvoiceSellerName);
+                payload.put("eInvoiceSellerStreet", eInvoiceSellerStreet);
+                payload.put("eInvoiceSellerZip", eInvoiceSellerZip);
+                payload.put("eInvoiceSellerCity", eInvoiceSellerCity);
+                payload.put("eInvoiceSellerCountry", eInvoiceSellerCountry);
+                payload.put("eInvoiceSellerVatId", eInvoiceSellerVatId);
+                payload.put("eInvoiceSellerTaxNumber", eInvoiceSellerTaxNumber);
+                payload.put("eInvoiceBankIban", eInvoiceBankIban);
+                payload.put("eInvoiceBankBic", eInvoiceBankBic);
+                payload.put("eInvoiceBankAccountHolder", eInvoiceBankAccountHolder);
+                payload.put("eInvoicePaymentTerms", eInvoicePaymentTerms);
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -958,6 +1031,150 @@ public class WebUiServer {
         }
     }
 
+    private static class AnalyticsAdvisorDetailHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String advisorId = asText(body, "advisorId").trim();
+                if (advisorId.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"advisorId fehlt\"}");
+                    return;
+                }
+                String sinceId = asText(body, "sinceId").trim();
+                if (sinceId.isBlank()) sinceId = "0";
+                LocalDate fromDate = parseIsoDate(asText(body, "fromDate"));
+                LocalDate toDate = parseIsoDate(asText(body, "toDate"));
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
+
+                JsonNode advisor = fetchAffiliatesById(apiKey, List.of(advisorId)).get(advisorId);
+
+                String paymentsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + sinceId
+                        + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
+                JsonNode paymentRoot = requestJson(paymentsUrl, apiKey);
+                JsonNode payments = paymentRoot.get("payments");
+                if (payments == null || !payments.isArray()) payments = OBJECT_MAPPER.createArrayNode();
+
+                List<JsonNode> advisorPayments = new ArrayList<>();
+                for (JsonNode payment : payments) {
+                    if (!advisorId.equals(asText(payment, "affiliate_id").trim())) continue;
+                    LocalDate paymentDate = parseIsoDateTimeToLocalDate(asText(payment, "created_at"));
+                    if (paymentDate == null) continue;
+                    if (fromDate != null && paymentDate.isBefore(fromDate)) continue;
+                    if (toDate != null && paymentDate.isAfter(toDate)) continue;
+                    advisorPayments.add(payment);
+                }
+
+                double payoutSum = 0.0;
+                int directSalesCount = 0;
+                int indirectSalesCount = 0;
+                double directCommission = 0.0;
+                double indirectCommission = 0.0;
+                int totalTx = 0;
+                Set<String> orderIds = new LinkedHashSet<>();
+                List<Map<String, Object>> payoutRows = new ArrayList<>();
+
+                for (JsonNode payment : advisorPayments) {
+                    String paymentId = asText(payment, "id");
+                    double payout = parseDoubleSafeStatic(asText(payment, "amount"));
+                    payoutSum += payout;
+                    JsonNode txArray = payment.get("transactions");
+                    int txCount = (txArray != null && txArray.isArray()) ? txArray.size() : 0;
+                    totalTx += txCount;
+                    if (txArray != null && txArray.isArray()) {
+                        for (JsonNode tx : txArray) {
+                            String entityType = asText(tx, "entity_type");
+                            double txAmount = parseDoubleSafeStatic(asText(tx, "amount"));
+                            if ("orders".equalsIgnoreCase(entityType)) {
+                                directSalesCount++;
+                                directCommission += txAmount;
+                            } else {
+                                indirectSalesCount++;
+                                indirectCommission += txAmount;
+                            }
+                            String orderId = asText(tx.path("metadata"), "order_id").trim();
+                            if (orderId.isBlank()) orderId = asText(tx, "entity_id").trim();
+                            if (!orderId.isBlank()) orderIds.add(orderId);
+                        }
+                    }
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("paymentId", paymentId);
+                    row.put("created", formatDateTimeEuropeBerlinStatic(asText(payment, "created_at")));
+                    row.put("amount", payout);
+                    row.put("currency", asText(payment, "currency"));
+                    row.put("method", asText(payment, "payment_method"));
+                    row.put("txCount", txCount);
+                    row.put("periodLabel", buildPaymentPeriodLabel(payment));
+                    payoutRows.add(row);
+                }
+
+                Map<String, JsonNode> ordersById = fetchOrdersById(apiKey, new ArrayList<>(orderIds));
+                Map<String, Map<String, Object>> productAgg = new LinkedHashMap<>();
+                int totalUnits = 0;
+                for (JsonNode order : ordersById.values()) {
+                    JsonNode lineItems = order.get("line_items");
+                    if (lineItems == null || !lineItems.isArray()) continue;
+                    for (JsonNode li : lineItems) {
+                        String name = asText(li, "title");
+                        if (name.isBlank()) name = asText(li, "name");
+                        if (name.isBlank()) name = "(ohne Titel)";
+                        int qty = parseIntSafe(asText(li, "quantity"));
+                        double price = parseDoubleSafeStatic(asText(li, "price"));
+                        totalUnits += Math.max(qty, 0);
+                        Map<String, Object> agg = productAgg.computeIfAbsent(name, k -> {
+                            Map<String, Object> m = new LinkedHashMap<>();
+                            m.put("productName", k);
+                            m.put("quantity", 0);
+                            m.put("salesValue", 0.0);
+                            return m;
+                        });
+                        agg.put("quantity", ((Integer) agg.get("quantity")) + Math.max(qty, 0));
+                        agg.put("salesValue", ((Double) agg.get("salesValue")) + Math.max(price, 0.0) * Math.max(qty, 0));
+                    }
+                }
+                List<Map<String, Object>> productRows = new ArrayList<>(productAgg.values());
+                productRows.sort((a, b) -> Integer.compare((Integer) b.get("quantity"), (Integer) a.get("quantity")));
+
+                Map<String, Object> summary = new LinkedHashMap<>();
+                summary.put("advisorId", advisorId);
+                summary.put("advisorName", advisor != null ? asText(advisor, "name") : "");
+                summary.put("advisorEmail", advisor != null ? asText(advisor, "email") : "");
+                summary.put("advisorCountry", advisor != null ? asText(advisor, "country") : "");
+                summary.put("advisorStatus", advisor != null ? asText(advisor, "status") : "");
+                summary.put("payoutCount", advisorPayments.size());
+                summary.put("payoutSum", payoutSum);
+                summary.put("currency", advisorPayments.isEmpty() ? "EUR" : asText(advisorPayments.get(0), "currency"));
+                summary.put("totalTransactions", totalTx);
+                summary.put("directSalesCount", directSalesCount);
+                summary.put("indirectSalesCount", indirectSalesCount);
+                summary.put("directCommission", directCommission);
+                summary.put("indirectCommission", indirectCommission);
+                summary.put("orderCount", ordersById.size());
+                summary.put("soldUnits", totalUnits);
+
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("summary", summary);
+                payload.put("payoutRows", payoutRows);
+                payload.put("productRows", productRows);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
     private static class MailLogHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -1217,8 +1434,10 @@ public class WebUiServer {
                 String baseFilename = "rechnungsdetails_" + sanitizeFilename(paymentId) + "_" + timestamp;
                 Path pdfPath = runExportDir.resolve(baseFilename + ".pdf");
                 Path jsonPath = runExportDir.resolve(baseFilename + ".json");
+                Path zugferdPath = runExportDir.resolve(baseFilename + "_zugferd.xml");
                 createInvoiceDetailsPdf(pdfPath, response, affiliate);
                 writeOriginalJson(jsonPath, response);
+                createZugferdInvoiceXml(zugferdPath, payment, affiliate, config);
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
@@ -1235,9 +1454,9 @@ public class WebUiServer {
                 String periodLabel = buildPaymentPeriodLabel(payment);
                 if (sendEmailsEnabled) {
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
+                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
                     String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + ((affiliateNameForMail == null || affiliateNameForMail.isBlank()) ? "Beraterin" : affiliateNameForMail.trim());
-                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath);
+                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath);
                 }
 
                 boolean opened = false;
@@ -1261,6 +1480,7 @@ public class WebUiServer {
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
+                payload.put("zugferdFile", zugferdPath.toString());
                 payload.put("opened", opened);
                 payload.put("openMessage", openMessage);
                 payload.put("pdfExportPath", exportDir.toString());
@@ -1975,6 +2195,148 @@ public class WebUiServer {
     }
 
 
+    private static Map<String, JsonNode> fetchOrdersById(String apiKey, List<String> orderIds) throws Exception {
+        if (orderIds == null || orderIds.isEmpty()) return Collections.emptyMap();
+        String ids = String.join(",", orderIds);
+        String url = "https://api.goaffpro.com/v1/admin/orders?id=" + ids + "&fields=id,number,currency,total,status,affiliate_id,created_at,line_items";
+        JsonNode root = requestJson(url, apiKey);
+        JsonNode orders = root.get("orders");
+        if (orders == null || !orders.isArray()) return Collections.emptyMap();
+        Map<String, JsonNode> map = new LinkedHashMap<>();
+        for (JsonNode order : orders) {
+            String id = asText(order, "id").trim();
+            if (!id.isBlank()) map.put(id, order);
+        }
+        return map;
+    }
+
+    private static int parseIntSafe(String value) {
+        try {
+            if (value == null || value.isBlank()) return 0;
+            return Integer.parseInt(value.trim());
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static void createZugferdInvoiceXml(Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config) throws IOException {
+        boolean enabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true"));
+        if (!enabled) {
+            Files.writeString(xmlPath, "<!-- ZUGFeRD deaktiviert -->", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            return;
+        }
+
+        String sellerName = Objects.toString(config.getProperty("eInvoiceSellerName"), "VEMMiNA").trim();
+        String sellerStreet = Objects.toString(config.getProperty("eInvoiceSellerStreet"), "").trim();
+        String sellerZip = Objects.toString(config.getProperty("eInvoiceSellerZip"), "").trim();
+        String sellerCity = Objects.toString(config.getProperty("eInvoiceSellerCity"), "").trim();
+        String sellerCountry = Objects.toString(config.getProperty("eInvoiceSellerCountry"), "DE").trim();
+        String sellerVatId = Objects.toString(config.getProperty("eInvoiceSellerVatId"), "").trim();
+        String sellerTaxNumber = Objects.toString(config.getProperty("eInvoiceSellerTaxNumber"), "").trim();
+        String bankIban = Objects.toString(config.getProperty("eInvoiceBankIban"), "").trim();
+        String bankBic = Objects.toString(config.getProperty("eInvoiceBankBic"), "").trim();
+        String bankAccountHolder = Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), "").trim();
+        String paymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
+
+        String buyerName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
+        String buyerStreet = affiliate != null ? asText(affiliate, "address_1") : "";
+        String buyerCity = affiliate != null ? asText(affiliate, "city") : "";
+        String buyerZip = affiliate != null ? asText(affiliate, "zip") : "";
+        String buyerCountry = affiliate != null ? asText(affiliate, "country") : "";
+
+        String invoiceId = asText(payment, "id");
+        String issueDate = formatDateYmd(asText(payment, "created_at"));
+        String currency = asText(payment, "currency");
+        if (currency.isBlank()) currency = "EUR";
+        double amount = parseDoubleSafeStatic(asText(payment, "amount"));
+
+        String xml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
+                                          xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
+                                          xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
+                  <rsm:ExchangedDocumentContext>
+                    <ram:GuidelineSpecifiedDocumentContextParameter>
+                      <ram:ID>urn:cen.eu:en16931:2017#compliant#urn:zugferd.de:2p2:basic</ram:ID>
+                    </ram:GuidelineSpecifiedDocumentContextParameter>
+                  </rsm:ExchangedDocumentContext>
+                  <rsm:ExchangedDocument>
+                    <ram:ID>{{invoiceId}}</ram:ID>
+                    <ram:TypeCode>380</ram:TypeCode>
+                    <ram:IssueDateTime><udt:DateTimeString format="102">{{issueDate}}</udt:DateTimeString></ram:IssueDateTime>
+                  </rsm:ExchangedDocument>
+                  <rsm:SupplyChainTradeTransaction>
+                    <ram:ApplicableHeaderTradeAgreement>
+                      <ram:SellerTradeParty>
+                        <ram:Name>{{sellerName}}</ram:Name>
+                        <ram:PostalTradeAddress><ram:PostcodeCode>{{sellerZip}}</ram:PostcodeCode><ram:LineOne>{{sellerStreet}}</ram:LineOne><ram:CityName>{{sellerCity}}</ram:CityName><ram:CountryID>{{sellerCountry}}</ram:CountryID></ram:PostalTradeAddress>
+                        <ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">{{sellerVatId}}</ram:ID></ram:SpecifiedTaxRegistration>
+                        <ram:SpecifiedTaxRegistration><ram:ID schemeID="FC">{{sellerTaxNumber}}</ram:ID></ram:SpecifiedTaxRegistration>
+                      </ram:SellerTradeParty>
+                      <ram:BuyerTradeParty>
+                        <ram:Name>{{buyerName}}</ram:Name>
+                        <ram:PostalTradeAddress><ram:PostcodeCode>{{buyerZip}}</ram:PostcodeCode><ram:LineOne>{{buyerStreet}}</ram:LineOne><ram:CityName>{{buyerCity}}</ram:CityName><ram:CountryID>{{buyerCountry}}</ram:CountryID></ram:PostalTradeAddress>
+                      </ram:BuyerTradeParty>
+                    </ram:ApplicableHeaderTradeAgreement>
+                    <ram:ApplicableHeaderTradeSettlement>
+                      <ram:InvoiceCurrencyCode>{{currency}}</ram:InvoiceCurrencyCode>
+                      <ram:SpecifiedTradeSettlementPaymentMeans>
+                        <ram:TypeCode>58</ram:TypeCode>
+                        <ram:PayeePartyCreditorFinancialAccount><ram:IBANID>{{bankIban}}</ram:IBANID><ram:AccountName>{{bankAccountHolder}}</ram:AccountName></ram:PayeePartyCreditorFinancialAccount>
+                        <ram:PayeeSpecifiedCreditorFinancialInstitution><ram:BICID>{{bankBic}}</ram:BICID></ram:PayeeSpecifiedCreditorFinancialInstitution>
+                      </ram:SpecifiedTradeSettlementPaymentMeans>
+                      <ram:SpecifiedTradePaymentTerms><ram:Description>{{paymentTerms}}</ram:Description></ram:SpecifiedTradePaymentTerms>
+                      <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+                        <ram:LineTotalAmount>{{amount}}</ram:LineTotalAmount>
+                        <ram:GrandTotalAmount>{{amount}}</ram:GrandTotalAmount>
+                        <ram:DuePayableAmount>{{amount}}</ram:DuePayableAmount>
+                      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+                    </ram:ApplicableHeaderTradeSettlement>
+                  </rsm:SupplyChainTradeTransaction>
+                </rsm:CrossIndustryInvoice>
+                """;
+        xml = xml.replace("{{invoiceId}}", escapeXml(invoiceId))
+                .replace("{{issueDate}}", escapeXml(issueDate))
+                .replace("{{sellerName}}", escapeXml(sellerName))
+                .replace("{{sellerStreet}}", escapeXml(sellerStreet))
+                .replace("{{sellerZip}}", escapeXml(sellerZip))
+                .replace("{{sellerCity}}", escapeXml(sellerCity))
+                .replace("{{sellerCountry}}", escapeXml(sellerCountry))
+                .replace("{{sellerVatId}}", escapeXml(sellerVatId))
+                .replace("{{sellerTaxNumber}}", escapeXml(sellerTaxNumber))
+                .replace("{{buyerName}}", escapeXml(buyerName))
+                .replace("{{buyerStreet}}", escapeXml(buyerStreet))
+                .replace("{{buyerZip}}", escapeXml(buyerZip))
+                .replace("{{buyerCity}}", escapeXml(buyerCity))
+                .replace("{{buyerCountry}}", escapeXml(buyerCountry))
+                .replace("{{currency}}", escapeXml(currency))
+                .replace("{{bankIban}}", escapeXml(bankIban))
+                .replace("{{bankAccountHolder}}", escapeXml(bankAccountHolder))
+                .replace("{{bankBic}}", escapeXml(bankBic))
+                .replace("{{paymentTerms}}", escapeXml(paymentTerms))
+                .replace("{{amount}}", String.format(java.util.Locale.US, "%.2f", amount));
+
+        Files.writeString(xmlPath, xml, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    private static String formatDateYmd(String isoDateTime) {
+        try {
+            OffsetDateTime dt = OffsetDateTime.parse(isoDateTime);
+            return dt.atZoneSameInstant(ZoneId.of("Europe/Berlin")).toLocalDate().format(DateTimeFormatter.BASIC_ISO_DATE);
+        } catch (Exception e) {
+            return LocalDate.now(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.BASIC_ISO_DATE);
+        }
+    }
+
+    private static String escapeXml(String value) {
+        String safe = value == null ? "" : value;
+        return safe.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&apos;");
+    }
+
     private static List<Map<String, String>> fetchAdvisorValidationRows(String apiKey) throws Exception {
         String url = "https://api.goaffpro.com/v1/admin/affiliates?fields=id,avatar,honorific,date_of_birth,gender,name,first_name,last_name,email,ref_code,company_name,ref_codes,coupon,coupons,phone,website,facebook,twitter,instagram,address_1,address_2,city,state,zip,country,phone,admin_note,extra_1,extra_2,extra_3,group_id,registration_ip,personal_message,payment_method,payment_details,commission,status,last_login,total_referral_earnings,total_network_earnings,total_amount_paid,total_amount_pending,total_other_earnings,number_of_orders,tax_identification_number,login_token,signup_page,comments,tags,approved_at,blocked_at,created_at,updated_at";
         JsonNode root = requestJson(url, apiKey);
@@ -2236,7 +2598,7 @@ public class WebUiServer {
         Files.writeString(jsonPath, pretty, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -2283,10 +2645,18 @@ public class WebUiServer {
         jsonAttachmentPart.setDataHandler(new DataHandler(jsonDs));
         jsonAttachmentPart.setFileName(jsonPath.getFileName().toString());
 
+
+        MimeBodyPart zugferdAttachmentPart = new MimeBodyPart();
+        FileDataSource zugferdDs = new FileDataSource(zugferdPath.toFile());
+        zugferdAttachmentPart.setDataHandler(new DataHandler(zugferdDs));
+        zugferdAttachmentPart.setFileName(zugferdPath.getFileName().toString());
+        zugferdAttachmentPart.setHeader("Content-Type", "application/xml; charset=UTF-8");
+
         MimeMultipart multipart = new MimeMultipart("mixed");
         multipart.addBodyPart(contentPart);
         multipart.addBodyPart(attachmentPart);
         multipart.addBodyPart(jsonAttachmentPart);
+        multipart.addBodyPart(zugferdAttachmentPart);
         message.setContent(multipart);
 
         Transport transport = session.getTransport("smtp");
@@ -2416,7 +2786,7 @@ public class WebUiServer {
         }
     }
 
-    private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath) {
+    private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath, Path zugferdPath) {
         List<Map<String, String>> entries = readMailLogEntries(config);
         Map<String, String> row = new LinkedHashMap<>();
         row.put("paymentId", Objects.toString(paymentId, ""));
@@ -2428,6 +2798,8 @@ public class WebUiServer {
         row.put("jsonFile", jsonPath != null ? jsonPath.getFileName().toString() : "");
         row.put("pdfPath", pdfPath != null ? pdfPath.toAbsolutePath().toString() : "");
         row.put("jsonPath", jsonPath != null ? jsonPath.toAbsolutePath().toString() : "");
+        row.put("zugferdFile", zugferdPath != null ? zugferdPath.getFileName().toString() : "");
+        row.put("zugferdPath", zugferdPath != null ? zugferdPath.toAbsolutePath().toString() : "");
         row.put("sentAt", ZonedDateTime.now(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")));
         entries.add(0, row);
         if (entries.size() > 1000) entries = new ArrayList<>(entries.subList(0, 1000));
@@ -2690,6 +3062,18 @@ public class WebUiServer {
         ui.setProperty("emailRecipientMode", Objects.toString(source.getProperty("emailRecipientMode"), "contact"));
         ui.setProperty("emailTemplateHtml", Objects.toString(source.getProperty("emailTemplateHtml"), ""));
         ui.setProperty("validationReminderTemplateHtml", Objects.toString(source.getProperty("validationReminderTemplateHtml"), ""));
+        ui.setProperty("eInvoiceEnabled", Objects.toString(source.getProperty("eInvoiceEnabled"), "true"));
+        ui.setProperty("eInvoiceSellerName", Objects.toString(source.getProperty("eInvoiceSellerName"), "VEMMiNA"));
+        ui.setProperty("eInvoiceSellerStreet", Objects.toString(source.getProperty("eInvoiceSellerStreet"), ""));
+        ui.setProperty("eInvoiceSellerZip", Objects.toString(source.getProperty("eInvoiceSellerZip"), ""));
+        ui.setProperty("eInvoiceSellerCity", Objects.toString(source.getProperty("eInvoiceSellerCity"), ""));
+        ui.setProperty("eInvoiceSellerCountry", Objects.toString(source.getProperty("eInvoiceSellerCountry"), "DE"));
+        ui.setProperty("eInvoiceSellerVatId", Objects.toString(source.getProperty("eInvoiceSellerVatId"), ""));
+        ui.setProperty("eInvoiceSellerTaxNumber", Objects.toString(source.getProperty("eInvoiceSellerTaxNumber"), ""));
+        ui.setProperty("eInvoiceBankIban", Objects.toString(source.getProperty("eInvoiceBankIban"), ""));
+        ui.setProperty("eInvoiceBankBic", Objects.toString(source.getProperty("eInvoiceBankBic"), ""));
+        ui.setProperty("eInvoiceBankAccountHolder", Objects.toString(source.getProperty("eInvoiceBankAccountHolder"), ""));
+        ui.setProperty("eInvoicePaymentTerms", Objects.toString(source.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug"));
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
         ui.setProperty(COMMISSION_HISTORY_DATES_KEY, Objects.toString(source.getProperty(COMMISSION_HISTORY_DATES_KEY), ""));
         ui.setProperty(MAIL_LOG_KEY, Objects.toString(source.getProperty(MAIL_LOG_KEY), ""));
@@ -2747,6 +3131,18 @@ public class WebUiServer {
         config.setProperty("emailRecipientMode", uiEmailRecipientMode);
         config.setProperty("emailTemplateHtml", Objects.toString(uiSettings.getProperty("emailTemplateHtml"), Objects.toString(config.getProperty("emailTemplateHtml"), "")));
         config.setProperty("validationReminderTemplateHtml", Objects.toString(uiSettings.getProperty("validationReminderTemplateHtml"), Objects.toString(config.getProperty("validationReminderTemplateHtml"), "")));
+        config.setProperty("eInvoiceEnabled", Objects.toString(uiSettings.getProperty("eInvoiceEnabled"), Objects.toString(config.getProperty("eInvoiceEnabled"), "true")));
+        config.setProperty("eInvoiceSellerName", Objects.toString(uiSettings.getProperty("eInvoiceSellerName"), Objects.toString(config.getProperty("eInvoiceSellerName"), "VEMMiNA")));
+        config.setProperty("eInvoiceSellerStreet", Objects.toString(uiSettings.getProperty("eInvoiceSellerStreet"), Objects.toString(config.getProperty("eInvoiceSellerStreet"), "")));
+        config.setProperty("eInvoiceSellerZip", Objects.toString(uiSettings.getProperty("eInvoiceSellerZip"), Objects.toString(config.getProperty("eInvoiceSellerZip"), "")));
+        config.setProperty("eInvoiceSellerCity", Objects.toString(uiSettings.getProperty("eInvoiceSellerCity"), Objects.toString(config.getProperty("eInvoiceSellerCity"), "")));
+        config.setProperty("eInvoiceSellerCountry", Objects.toString(uiSettings.getProperty("eInvoiceSellerCountry"), Objects.toString(config.getProperty("eInvoiceSellerCountry"), "DE")));
+        config.setProperty("eInvoiceSellerVatId", Objects.toString(uiSettings.getProperty("eInvoiceSellerVatId"), Objects.toString(config.getProperty("eInvoiceSellerVatId"), "")));
+        config.setProperty("eInvoiceSellerTaxNumber", Objects.toString(uiSettings.getProperty("eInvoiceSellerTaxNumber"), Objects.toString(config.getProperty("eInvoiceSellerTaxNumber"), "")));
+        config.setProperty("eInvoiceBankIban", Objects.toString(uiSettings.getProperty("eInvoiceBankIban"), Objects.toString(config.getProperty("eInvoiceBankIban"), "")));
+        config.setProperty("eInvoiceBankBic", Objects.toString(uiSettings.getProperty("eInvoiceBankBic"), Objects.toString(config.getProperty("eInvoiceBankBic"), "")));
+        config.setProperty("eInvoiceBankAccountHolder", Objects.toString(uiSettings.getProperty("eInvoiceBankAccountHolder"), Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), "")));
+        config.setProperty("eInvoicePaymentTerms", Objects.toString(uiSettings.getProperty("eInvoicePaymentTerms"), Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug")));
 
         config.setProperty(MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(MAIL_LOG_KEY), Objects.toString(config.getProperty(MAIL_LOG_KEY), "")));
 
