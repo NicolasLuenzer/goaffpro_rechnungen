@@ -2948,7 +2948,7 @@ public class WebUiServer {
         String htmlTemplate = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "");
         if (htmlTemplate.isBlank()) htmlTemplate = getDefaultEInvoicePdfViewHtmlTemplate();
         String rendered = renderEInvoicePdfViewHtml(htmlTemplate, payment, affiliate, config);
-        String plain = rendered.replaceAll("<br\s*/?>", "\n").replaceAll("<[^>]+>", " ").replaceAll("\s+", " ").trim();
+        String plain = rendered.replaceAll("<br\\s*/?>", "\n").replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
         if (plain.isBlank()) plain = "Keine E-Rechnungs-Vorschau konfiguriert.";
 
         try (PDDocument document = new PDDocument()) {
@@ -2968,7 +2968,7 @@ public class WebUiServer {
                 int lineCount = 0;
                 for (String line : wrapText(plain, lineLen)) {
                     if (lineCount > 0) cs.newLineAtOffset(0, -14);
-                    cs.showText(line);
+                    cs.showText(sanitizePdfText(line));
                     lineCount++;
                     if (lineCount > 48) break;
                 }
@@ -2978,10 +2978,32 @@ public class WebUiServer {
         }
     }
 
+
+    private static String sanitizePdfText(String value) {
+        if (value == null || value.isEmpty()) return "";
+        StringBuilder out = new StringBuilder(value.length());
+        value.codePoints().forEach(cp -> {
+            if (cp == '\n' || cp == '\r' || cp == '\t') {
+                out.append(' ');
+                return;
+            }
+            if (cp < 32 || (cp >= 127 && cp <= 159)) {
+                out.append(' ');
+                return;
+            }
+            if (cp > 255) {
+                out.append('?');
+                return;
+            }
+            out.append((char) cp);
+        });
+        return out.toString();
+    }
+
     private static List<String> wrapText(String text, int maxChars) {
         List<String> lines = new ArrayList<>();
         if (text == null || text.isBlank()) return List.of("");
-        String[] words = text.split("\s+");
+        String[] words = text.split("\\s+");
         StringBuilder current = new StringBuilder();
         for (String word : words) {
             if (current.length() == 0) {
