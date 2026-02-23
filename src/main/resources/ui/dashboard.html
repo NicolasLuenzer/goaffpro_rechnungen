@@ -135,6 +135,8 @@
     const tableInteractionState = new WeakMap();
     let tableFilterMenuEl = null;
     let defaultEmailTemplateHtml = '';
+    let defaultValidationReminderTemplateHtml = '';
+    let activeEmailTemplateType = 'invoice';
     let emailTemplateHtmlMode = false;
     let emailPreviewAdvisors = [];
     let mailLogByPayment = new Map();
@@ -329,6 +331,7 @@
           <div id="main-email-designer" class="section-panel">
             <div class="settings">
               <strong>E-Mail Designer</strong>
+              <div class="toolbar"><label for="emailTemplateTypeSelect">Vorlage:</label><select id="emailTemplateTypeSelect" style="min-width:280px"><option value="invoice">Rechnungsservice (Provisionsmail)</option><option value="validationReminder">Stammdaten-Erinnerung</option></select></div>
               <div class="email-designer-layout">
                 <div>
                   <div class="toolbar email-editor-toolbar">
@@ -493,7 +496,7 @@
           <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
           <table>
             <thead>
-              <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>IBAN korrekt</th><th>Status</th></tr>
+              <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>Kontoinhaber</th><th>IBAN korrekt</th><th>Status</th><th>Aktion</th></tr>
             </thead>
             <tbody id="validationBody"></tbody>
           </table>
@@ -530,11 +533,17 @@
       const status = document.getElementById('validationStatus');
       const body = document.getElementById('validationBody');
       if (!status || !body) return;
-      body.innerHTML = validationRowsCache.map(r => `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderValidationCell(r.taxNumber)}${renderValidationCell(r.paymentMethod)}${renderValidationCell(r.iban)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderValidationCell(r.status)}</tr>`).join('');
+      body.innerHTML = validationRowsCache.map(r => { const missing = collectMissingValidationFields(r); return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderValidationCell(r.taxNumber)}${renderValidationCell(r.paymentMethod)}${renderValidationCell(r.iban)}${renderValidationCell(r.ibanOwner)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderValidationCell(r.status)}<td><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="settings-hint">${escapeHtml(missing.join(', ') || 'keine fehlenden Felder')}</div></td></tr>`; }).join('');
       status.textContent = `${validationRowsCache.length} Datensätze geladen.`;
       const table = body.closest('table');
       ensureResizableColumns(table || document);
       applyTableFilterAndSort(table);
+      body.querySelectorAll('.validation-reminder-btn').forEach(btn => btn.addEventListener('click', async () => {
+        const advisorId = String(btn.getAttribute('data-advisor-id') || "");
+        const row = validationRowsCache.find(r => String(r.id || "") === advisorId);
+        if (!row) return;
+        await sendValidationReminder(row);
+      }));
       updateEmptyTablesVisibility(document);
     }
 
@@ -1217,7 +1226,13 @@
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
         defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || data.emailTemplateHtml || '';
-        setCurrentEmailTemplateHtml(data.emailTemplateHtml || '');
+        defaultValidationReminderTemplateHtml = data.validationReminderTemplateHtmlDefault || data.validationReminderTemplateHtml || '';
+        const editorEl = document.getElementById('emailTemplateEditor');
+        if (editorEl) {
+          editorEl.dataset.emailTemplateHtml = data.emailTemplateHtml || '';
+          editorEl.dataset.validationReminderTemplateHtml = data.validationReminderTemplateHtml || '';
+        }
+        setCurrentEmailTemplateHtml((editorEl && editorEl.dataset[getActiveTemplateKey()]) || data.emailTemplateHtml || '');
         renderEmailTemplatePreview();
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
@@ -1259,7 +1274,8 @@
           smtpPassword: smtpPasswordInput ? smtpPasswordInput.value : '',
           sendEmailsEnabled: sendEmailsEnabledInput ? sendEmailsEnabledInput.checked : true,
           emailRecipientMode: emailRecipientAdvisorInput && emailRecipientAdvisorInput.checked ? 'advisor' : 'contact',
-          emailTemplateHtml: getCurrentEmailTemplateHtml()
+          emailTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtml || getCurrentEmailTemplateHtml(),
+          validationReminderTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || ''
         });
         input.value = data.pdfExportPath || input.value;
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
@@ -1274,7 +1290,13 @@
         if (emailRecipientContactInput) emailRecipientContactInput.checked = mode !== 'advisor';
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.checked = mode === 'advisor';
         defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || defaultEmailTemplateHtml;
-        setCurrentEmailTemplateHtml(data.emailTemplateHtml || '');
+        defaultValidationReminderTemplateHtml = data.validationReminderTemplateHtmlDefault || defaultValidationReminderTemplateHtml;
+        const editorEl2 = document.getElementById('emailTemplateEditor');
+        if (editorEl2) {
+          editorEl2.dataset.emailTemplateHtml = data.emailTemplateHtml || '';
+          editorEl2.dataset.validationReminderTemplateHtml = data.validationReminderTemplateHtml || '';
+        }
+        setCurrentEmailTemplateHtml((editorEl2 && editorEl2.dataset[getActiveTemplateKey()]) || data.emailTemplateHtml || '');
         renderEmailTemplatePreview();
         applyAdvisorRecipientUiState();
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
@@ -1331,7 +1353,8 @@
         .replaceAll('{{payout}}', '123,45 €')
         .replaceAll('{{method}}', 'Banküberweisung')
         .replaceAll('{{created}}', created)
-        .replaceAll('{{txCount}}', '12');
+        .replaceAll('{{txCount}}', '12')
+        .replaceAll('{{missingFields}}', 'Telefon\nSteuernummer\nKontoinhaber');
       box.innerHTML = preview || '<em>Keine Vorlage vorhanden.</em>';
     }
 
@@ -1350,6 +1373,50 @@
       renderEmailTemplatePreview();
     }
 
+
+    function getActiveTemplateKey() {
+      return activeEmailTemplateType === 'validationReminder' ? 'validationReminderTemplateHtml' : 'emailTemplateHtml';
+    }
+
+    function collectMissingValidationFields(row) {
+      if (!row) return [];
+      const checks = [
+        ['Name', row.name],
+        ['E-Mail', row.email],
+        ['Telefon', row.phone],
+        ['Adresse', row.address],
+        ['Land', row.country],
+        ['Geburtsdatum', row.dateOfBirth],
+        ['Steuernummer', row.taxNumber],
+        ['Zahlmethode', row.paymentMethod],
+        ['IBAN', row.iban],
+        ['Kontoinhaber', row.ibanOwner]
+      ];
+      return checks.filter(([,v]) => String(v || '').trim() === '').map(([label]) => label);
+    }
+
+    async function sendValidationReminder(row) {
+      const status = document.getElementById('validationStatus');
+      try {
+        const missing = collectMissingValidationFields(row);
+        if (!missing.length) {
+          if (status) status.textContent = `Für ${row.name || row.id} sind keine fehlenden Felder vorhanden.`;
+          return;
+        }
+        if (status) status.textContent = `Sende Erinnerung an ${row.name || row.id} ...`;
+        const data = await apiPost('/api/validation/send-reminder', {
+          advisorId: row.id || '',
+          advisorName: row.name || '',
+          advisorEmail: row.email || '',
+          missingFields: missing.join('\n'),
+          recipientMode: getEmailRecipientMode()
+        });
+        if (status) status.textContent = `${data.message || 'Erinnerung versendet.'} Empfänger: ${data.toEmail || '-'}`;
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Erinnerungsversand: ${error.message}`;
+      }
+    }
+
     function buildSettingsSnapshot() {
       return {
         pdfExportPath: (document.getElementById('pdfExportPath')?.value || '').trim(),
@@ -1362,7 +1429,8 @@
         emailBcc: (document.getElementById('emailBcc')?.value || '').trim(),
         sendEmailsEnabled: !!document.getElementById('sendEmailsEnabled')?.checked,
         emailRecipientMode: getEmailRecipientMode(),
-        emailTemplateHtml: getCurrentEmailTemplateHtml().trim()
+        emailTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtml || '').trim(),
+        validationReminderTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '').trim()
       };
     }
 
@@ -1396,6 +1464,7 @@
       const highlightColorInput = document.getElementById('emailHighlightColor');
       const renderPreviewBtn = document.getElementById('renderEmailPreviewBtn');
       const reloadAdvisorsBtn = document.getElementById('reloadEmailPreviewAdvisorsBtn');
+      const templateTypeSelect = document.getElementById('emailTemplateTypeSelect');
       if (!editor) return;
 
       document.querySelectorAll('[data-editor-cmd]').forEach(btn => btn.addEventListener('click', () => {
@@ -1446,15 +1515,27 @@
         renderEmailTemplatePreview();
       });
 
-      editor.addEventListener('input', () => { updateSaveButtonState(); renderEmailTemplatePreview(); });
-      if (source) source.addEventListener('input', () => { updateSaveButtonState(); renderEmailTemplatePreview(); });
+      const persistCurrentTemplate = () => {
+        const key = getActiveTemplateKey();
+        if (editor) editor.dataset[key] = getCurrentEmailTemplateHtml();
+      };
+      editor.addEventListener('input', () => { persistCurrentTemplate(); updateSaveButtonState(); renderEmailTemplatePreview(); });
+      if (source) source.addEventListener('input', () => { persistCurrentTemplate(); updateSaveButtonState(); renderEmailTemplatePreview(); });
 
       if (resetBtn) resetBtn.addEventListener('click', () => {
-        setCurrentEmailTemplateHtml(defaultEmailTemplateHtml || '');
+        const html = activeEmailTemplateType === 'validationReminder' ? (defaultValidationReminderTemplateHtml || '') : (defaultEmailTemplateHtml || '');
+        setCurrentEmailTemplateHtml(html);
+        if (editor) editor.dataset[getActiveTemplateKey()] = html;
         updateSaveButtonState();
         renderEmailTemplatePreview();
       });
 
+      if (templateTypeSelect) templateTypeSelect.addEventListener('change', () => {
+        activeEmailTemplateType = templateTypeSelect.value === 'validationReminder' ? 'validationReminder' : 'invoice';
+        setCurrentEmailTemplateHtml((editor && editor.dataset[getActiveTemplateKey()]) || '');
+        renderEmailTemplatePreview();
+        updateSaveButtonState();
+      });
       if (renderPreviewBtn) renderPreviewBtn.addEventListener('click', renderEmailTemplatePreview);
       if (reloadAdvisorsBtn) reloadAdvisorsBtn.addEventListener('click', reloadEmailPreviewAdvisors);
       reloadEmailPreviewAdvisors();

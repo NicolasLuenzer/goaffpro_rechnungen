@@ -89,6 +89,7 @@ public class WebUiServer {
         server.createContext("/api/help", new HelpHandler());
         server.createContext("/api/validation/advisors", new ValidationAdvisorsHandler());
         server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
+        server.createContext("/api/validation/send-reminder", new ValidationReminderMailHandler());
         server.setExecutor(null);
         server.start();
 
@@ -310,6 +311,7 @@ public class WebUiServer {
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
                 String emailRecipientMode = Objects.toString(config.getProperty("emailRecipientMode"), "contact").trim();
                 String emailTemplateHtml = Objects.toString(config.getProperty("emailTemplateHtml"), "");
+                String validationReminderTemplateHtml = Objects.toString(config.getProperty("validationReminderTemplateHtml"), "");
                 ensureCommissionInHistory(config, activeCommission);
                 persistSettings(config);
 
@@ -329,6 +331,8 @@ public class WebUiServer {
                 payload.put("emailRecipientMode", emailRecipientMode);
                 payload.put("emailTemplateHtml", emailTemplateHtml.isBlank() ? getDefaultInvoiceMailHtmlTemplate() : emailTemplateHtml);
                 payload.put("emailTemplateHtmlDefault", getDefaultInvoiceMailHtmlTemplate());
+                payload.put("validationReminderTemplateHtml", validationReminderTemplateHtml.isBlank() ? getDefaultValidationReminderHtmlTemplate() : validationReminderTemplateHtml);
+                payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -352,6 +356,7 @@ public class WebUiServer {
                     boolean sendEmailsEnabled = !body.has("sendEmailsEnabled") || body.get("sendEmailsEnabled").asBoolean(true);
                     String emailRecipientMode = asText(body, "emailRecipientMode").trim();
                     String emailTemplateHtml = asText(body, "emailTemplateHtml");
+                    String validationReminderTemplateHtml = asText(body, "validationReminderTemplateHtml");
                     if (!"advisor".equals(emailRecipientMode)) emailRecipientMode = "contact";
 
                     Properties config = loadConfig();
@@ -378,6 +383,7 @@ public class WebUiServer {
                     config.setProperty("sendEmailsEnabled", String.valueOf(sendEmailsEnabled));
                     config.setProperty("emailRecipientMode", emailRecipientMode);
                     config.setProperty("emailTemplateHtml", emailTemplateHtml);
+                    config.setProperty("validationReminderTemplateHtml", validationReminderTemplateHtml);
 
                     persistSettings(config);
 
@@ -398,6 +404,8 @@ public class WebUiServer {
                     payload.put("emailRecipientMode", Objects.toString(config.getProperty("emailRecipientMode"), "contact"));
                     payload.put("emailTemplateHtml", Objects.toString(config.getProperty("emailTemplateHtml"), "").isBlank() ? getDefaultInvoiceMailHtmlTemplate() : Objects.toString(config.getProperty("emailTemplateHtml"), ""));
                     payload.put("emailTemplateHtmlDefault", getDefaultInvoiceMailHtmlTemplate());
+                    payload.put("validationReminderTemplateHtml", Objects.toString(config.getProperty("validationReminderTemplateHtml"), "").isBlank() ? getDefaultValidationReminderHtmlTemplate() : Objects.toString(config.getProperty("validationReminderTemplateHtml"), ""));
+                    payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -1901,6 +1909,51 @@ public class WebUiServer {
         }
     }
 
+    private static class ValidationReminderMailHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String advisorName = asText(body, "advisorName").trim();
+                String advisorEmail = asText(body, "advisorEmail").trim();
+                String missingFields = asText(body, "missingFields").trim();
+                String recipientMode = asText(body, "recipientMode").trim();
+                if (!"advisor".equals(recipientMode)) recipientMode = "contact";
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
+                String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
+                String toEmail = "advisor".equals(recipientMode) ? advisorEmail : contactEmail;
+                if (sendEmailsEnabled && toEmail.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"Keine Empfänger-E-Mail vorhanden\"}");
+                    return;
+                }
+                if (sendEmailsEnabled) {
+                    String subject = "Bitte fehlende Stammdaten ergänzen";
+                    String plain = buildValidationReminderMailBody(advisorName, missingFields);
+                    String html = buildValidationReminderMailHtml(advisorName, missingFields, Objects.toString(config.getProperty("validationReminderTemplateHtml"), ""));
+                    sendSimpleHtmlMail(toEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), subject, plain, html, resolveSmtpConfig(config));
+                }
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", sendEmailsEnabled ? "Erinnerungs-E-Mail versendet." : "E-Mail-Versand ist deaktiviert.");
+                payload.put("toEmail", toEmail);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
     private static Map<String, JsonNode> fetchAffiliatesById(String apiKey, List<String> affiliateIds) throws Exception {
         if (affiliateIds.isEmpty()) {
             return Collections.emptyMap();
@@ -1944,6 +1997,7 @@ public class WebUiServer {
             row.put("paymentMethod", asText(a, "payment_method"));
             String iban = asText(a.path("payment_details"), "account_number").trim();
             row.put("iban", iban);
+            row.put("ibanOwner", asText(a.path("payment_details"), "account_name").trim());
             row.put("ibanValid", isValidIban(iban) ? "Ja" : "Nein");
             if (isValidationRowRelevant(row)) rows.add(row);
         }
@@ -2079,7 +2133,7 @@ public class WebUiServer {
     }
 
     private static boolean isValidationRowRelevant(Map<String, String> row) {
-        String[] keys = new String[]{"name", "email", "phone", "address", "country", "dateOfBirth", "taxNumber", "iban", "paymentMethod"};
+        String[] keys = new String[]{"name", "email", "phone", "address", "country", "dateOfBirth", "taxNumber", "iban", "ibanOwner", "paymentMethod"};
         for (String key : keys) {
             if (!Objects.toString(row.get(key), "").isBlank()) return true;
         }
@@ -2383,6 +2437,77 @@ public class WebUiServer {
         }
     }
 
+    private static void sendSimpleHtmlMail(String toEmail, String bccEmail, String subject, String plainTextBody, String htmlBody, SmtpConfig smtpConfig) throws Exception {
+        Properties props = new Properties();
+        props.put("mail.smtp.host", smtpConfig.host);
+        props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
+        props.put("mail.smtp.auth", "true");
+        props.put("mail.smtp.starttls.enable", String.valueOf(smtpConfig.tls));
+        props.put("mail.smtp.ssl.enable", "false");
+
+        Session session = Session.getInstance(props);
+        MimeMessage message = new MimeMessage(session);
+        message.setFrom(new InternetAddress(smtpConfig.username));
+        message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail, false));
+        if (bccEmail != null && !bccEmail.isBlank()) {
+            message.setRecipients(Message.RecipientType.BCC, InternetAddress.parse(bccEmail, false));
+        }
+        message.setSubject(subject, StandardCharsets.UTF_8.name());
+
+        MimeMultipart alternative = new MimeMultipart("alternative");
+        MimeBodyPart textPart = new MimeBodyPart();
+        textPart.setText(plainTextBody, StandardCharsets.UTF_8.name());
+        alternative.addBodyPart(textPart);
+        MimeBodyPart htmlPart = new MimeBodyPart();
+        htmlPart.setContent(htmlBody, "text/html; charset=UTF-8");
+        alternative.addBodyPart(htmlPart);
+        message.setContent(alternative);
+
+        Transport transport = session.getTransport("smtp");
+        try {
+            transport.connect(smtpConfig.host, smtpConfig.port, smtpConfig.username, smtpConfig.password);
+            transport.sendMessage(message, message.getAllRecipients());
+        } finally {
+            transport.close();
+        }
+    }
+
+    private static String buildValidationReminderMailBody(String advisorName, String missingFields) {
+        String name = (advisorName == null || advisorName.isBlank()) ? "liebe Beraterin" : ("liebe " + advisorName.trim());
+        String fields = (missingFields == null || missingFields.isBlank()) ? "einige Stammdaten" : missingFields;
+        return ("Hallo " + name + "\n\n" +
+                "für die vollständige Pflege Ihrer Stammdaten fehlen uns noch folgende Angaben:\n" +
+                fields + "\n\n" +
+                "Bitte senden Sie uns diese Informationen kurz per E-Mail zurück, damit wir Ihre Stammdaten vervollständigen können.\n\n" +
+                "Vielen Dank und viele Grüße\nIhr VEMMiNA Team");
+    }
+
+    private static String buildValidationReminderMailHtml(String advisorName, String missingFields, String configuredTemplateHtml) {
+        String name = (advisorName == null || advisorName.isBlank()) ? "Beraterin" : advisorName.trim();
+        String fields = (missingFields == null || missingFields.isBlank()) ? "-" : missingFields;
+        String template = (configuredTemplateHtml == null || configuredTemplateHtml.isBlank()) ? getDefaultValidationReminderHtmlTemplate() : configuredTemplateHtml;
+        return template
+                .replace("{{salutationName}}", escapeHtmlEmail(name))
+                .replace("{{missingFields}}", escapeHtmlEmail(fields).replace("\n", "<br/>"));
+    }
+
+    private static String getDefaultValidationReminderHtmlTemplate() {
+
+        return """
+                <!doctype html>
+                <html lang="de"><body style="font-family:Arial,sans-serif;background:#f8fafc;color:#1f2937;padding:18px;">
+                <div style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #dbe3ef;border-radius:12px;padding:20px;">
+                  <h2 style="margin-top:0;color:#1e3a8a;">Bitte fehlende Stammdaten ergänzen</h2>
+                  <p>Hallo {{salutationName}},</p>
+                  <p>für die vollständige Pflege Ihrer Stammdaten fehlen uns noch folgende Angaben:</p>
+                  <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:10px;white-space:pre-wrap;">{{missingFields}}</div>
+                  <p>Bitte senden Sie uns diese Informationen kurz per E-Mail zurück, damit wir Ihre Stammdaten vervollständigen können.</p>
+                  <p>Vielen Dank und viele Grüße<br/><b>Ihr VEMMiNA Team</b></p>
+                </div>
+                </body></html>
+                """;
+    }
+
     private static String escapeHtmlEmail(String value) {
         String safe = value == null ? "" : value;
         return safe.replace("&", "&amp;")
@@ -2564,6 +2689,7 @@ public class WebUiServer {
         ui.setProperty("sendEmailsEnabled", Objects.toString(source.getProperty("sendEmailsEnabled"), "true"));
         ui.setProperty("emailRecipientMode", Objects.toString(source.getProperty("emailRecipientMode"), "contact"));
         ui.setProperty("emailTemplateHtml", Objects.toString(source.getProperty("emailTemplateHtml"), ""));
+        ui.setProperty("validationReminderTemplateHtml", Objects.toString(source.getProperty("validationReminderTemplateHtml"), ""));
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
         ui.setProperty(COMMISSION_HISTORY_DATES_KEY, Objects.toString(source.getProperty(COMMISSION_HISTORY_DATES_KEY), ""));
         ui.setProperty(MAIL_LOG_KEY, Objects.toString(source.getProperty(MAIL_LOG_KEY), ""));
@@ -2620,6 +2746,7 @@ public class WebUiServer {
         if (!"advisor".equals(uiEmailRecipientMode)) uiEmailRecipientMode = "contact";
         config.setProperty("emailRecipientMode", uiEmailRecipientMode);
         config.setProperty("emailTemplateHtml", Objects.toString(uiSettings.getProperty("emailTemplateHtml"), Objects.toString(config.getProperty("emailTemplateHtml"), "")));
+        config.setProperty("validationReminderTemplateHtml", Objects.toString(uiSettings.getProperty("validationReminderTemplateHtml"), Objects.toString(config.getProperty("validationReminderTemplateHtml"), "")));
 
         config.setProperty(MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(MAIL_LOG_KEY), Objects.toString(config.getProperty(MAIL_LOG_KEY), "")));
 
