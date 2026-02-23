@@ -317,6 +317,7 @@ public class WebUiServer {
                 String validationReminderTemplateHtml = Objects.toString(config.getProperty("validationReminderTemplateHtml"), "");
                 String eInvoicePdfTemplateHtml = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "");
                 boolean eInvoiceEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true"));
+                boolean eInvoiceAttachAndStoreEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
                 String eInvoiceBuyerName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
                 String eInvoiceBuyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
                 String eInvoiceBuyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
@@ -375,6 +376,7 @@ public class WebUiServer {
                     String validationReminderTemplateHtml = asText(body, "validationReminderTemplateHtml");
                     String eInvoicePdfTemplateHtml = asText(body, "eInvoicePdfTemplateHtml");
                     boolean eInvoiceEnabled = !body.has("eInvoiceEnabled") || body.get("eInvoiceEnabled").asBoolean(true);
+                    boolean eInvoiceAttachAndStoreEnabled = !body.has("eInvoiceAttachAndStoreEnabled") || body.get("eInvoiceAttachAndStoreEnabled").asBoolean(true);
                     String eInvoiceBuyerName = asText(body, "eInvoiceBuyerName").trim();
                     String eInvoiceBuyerStreet = asText(body, "eInvoiceBuyerStreet").trim();
                     String eInvoiceBuyerZip = asText(body, "eInvoiceBuyerZip").trim();
@@ -415,6 +417,7 @@ public class WebUiServer {
                     config.setProperty("validationReminderTemplateHtml", validationReminderTemplateHtml);
                     config.setProperty("eInvoicePdfTemplateHtml", eInvoicePdfTemplateHtml);
                     config.setProperty("eInvoiceEnabled", String.valueOf(eInvoiceEnabled));
+                    config.setProperty("eInvoiceAttachAndStoreEnabled", String.valueOf(eInvoiceAttachAndStoreEnabled));
                     config.setProperty("eInvoiceBuyerName", eInvoiceBuyerName);
                     config.setProperty("eInvoiceBuyerStreet", eInvoiceBuyerStreet);
                     config.setProperty("eInvoiceBuyerZip", eInvoiceBuyerZip);
@@ -451,6 +454,7 @@ public class WebUiServer {
                     payload.put("eInvoicePdfTemplateHtml", Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "").isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), ""));
                     payload.put("eInvoicePdfTemplateHtmlDefault", getDefaultEInvoicePdfViewHtmlTemplate());
                     payload.put("eInvoiceEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true")));
+                    payload.put("eInvoiceAttachAndStoreEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true")));
                     payload.put("eInvoiceBuyerName", Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh"));
                     payload.put("eInvoiceBuyerStreet", Objects.toString(config.getProperty("eInvoiceBuyerStreet"), ""));
                     payload.put("eInvoiceBuyerZip", Objects.toString(config.getProperty("eInvoiceBuyerZip"), ""));
@@ -1375,6 +1379,7 @@ public class WebUiServer {
                 JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 String paymentId = asText(body, "paymentId").trim();
                 String requestedDir = asText(body, "pdfExportPath").trim();
+                Boolean includeEInvoiceArtifactsRequest = body.has("includeEInvoiceArtifacts") ? body.get("includeEInvoiceArtifacts").asBoolean() : null;
                 if (paymentId.isEmpty()) {
                     sendResponse(exchange, 400, "application/json", "{\"error\":\"paymentId fehlt\"}");
                     return;
@@ -1417,12 +1422,17 @@ public class WebUiServer {
                 String baseFilename = "rechnungsdetails_" + sanitizeFilename(paymentId) + "_" + timestamp;
                 Path pdfPath = runExportDir.resolve(baseFilename + ".pdf");
                 Path jsonPath = runExportDir.resolve(baseFilename + ".json");
-                Path zugferdPath = runExportDir.resolve(baseFilename + "_zugferd.xml");
-                Path eInvoiceViewPdfPath = runExportDir.resolve(baseFilename + "_einvoice_view.pdf");
+                boolean eInvoiceAttachAndStoreEnabled = includeEInvoiceArtifactsRequest != null
+                        ? includeEInvoiceArtifactsRequest
+                        : Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
+                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(baseFilename + "_zugferd.xml") : null;
+                Path eInvoiceViewPdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(baseFilename + "_einvoice_view.pdf") : null;
                 createInvoiceDetailsPdf(pdfPath, response, affiliate);
                 writeOriginalJson(jsonPath, response);
-                createZugferdInvoiceXml(zugferdPath, payment, affiliate, config);
-                createEInvoiceViewPdf(eInvoiceViewPdfPath, payment, affiliate, config);
+                if (eInvoiceAttachAndStoreEnabled) {
+                    createZugferdInvoiceXml(zugferdPath, payment, affiliate, config);
+                    createEInvoiceViewPdf(eInvoiceViewPdfPath, payment, affiliate, config);
+                }
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
@@ -1439,7 +1449,7 @@ public class WebUiServer {
                 String periodLabel = buildPaymentPeriodLabel(payment);
                 if (sendEmailsEnabled) {
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoiceViewPdfPath, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
+                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoiceViewPdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
                     String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + ((affiliateNameForMail == null || affiliateNameForMail.isBlank()) ? "Beraterin" : affiliateNameForMail.trim());
                     appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoiceViewPdfPath);
                 }
@@ -1465,11 +1475,12 @@ public class WebUiServer {
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
-                payload.put("zugferdFile", zugferdPath.toString());
-                payload.put("eInvoiceViewPdfFile", eInvoiceViewPdfPath.toString());
+                payload.put("zugferdFile", zugferdPath != null ? zugferdPath.toString() : "");
+                payload.put("eInvoiceViewPdfFile", eInvoiceViewPdfPath != null ? eInvoiceViewPdfPath.toString() : "");
                 payload.put("opened", opened);
                 payload.put("openMessage", openMessage);
                 payload.put("pdfExportPath", exportDir.toString());
+                payload.put("includeEInvoiceArtifacts", eInvoiceAttachAndStoreEnabled);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -2641,7 +2652,7 @@ public class WebUiServer {
         Files.writeString(jsonPath, pretty, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -2688,24 +2699,25 @@ public class WebUiServer {
         jsonAttachmentPart.setDataHandler(new DataHandler(jsonDs));
         jsonAttachmentPart.setFileName(jsonPath.getFileName().toString());
 
-
-        MimeBodyPart zugferdAttachmentPart = new MimeBodyPart();
-        FileDataSource zugferdDs = new FileDataSource(zugferdPath.toFile());
-        zugferdAttachmentPart.setDataHandler(new DataHandler(zugferdDs));
-        zugferdAttachmentPart.setFileName(zugferdPath.getFileName().toString());
-        zugferdAttachmentPart.setHeader("Content-Type", "application/xml; charset=UTF-8");
-
-        MimeBodyPart eInvoiceViewAttachmentPart = new MimeBodyPart();
-        FileDataSource eInvoiceViewDs = new FileDataSource(eInvoiceViewPdfPath.toFile());
-        eInvoiceViewAttachmentPart.setDataHandler(new DataHandler(eInvoiceViewDs));
-        eInvoiceViewAttachmentPart.setFileName(eInvoiceViewPdfPath.getFileName().toString());
-
         MimeMultipart multipart = new MimeMultipart("mixed");
         multipart.addBodyPart(contentPart);
         multipart.addBodyPart(attachmentPart);
         multipart.addBodyPart(jsonAttachmentPart);
-        multipart.addBodyPart(zugferdAttachmentPart);
-        multipart.addBodyPart(eInvoiceViewAttachmentPart);
+        if (includeEInvoiceAttachments && zugferdPath != null && eInvoiceViewPdfPath != null) {
+            MimeBodyPart zugferdAttachmentPart = new MimeBodyPart();
+            FileDataSource zugferdDs = new FileDataSource(zugferdPath.toFile());
+            zugferdAttachmentPart.setDataHandler(new DataHandler(zugferdDs));
+            zugferdAttachmentPart.setFileName(zugferdPath.getFileName().toString());
+            zugferdAttachmentPart.setHeader("Content-Type", "application/xml; charset=UTF-8");
+
+            MimeBodyPart eInvoiceViewAttachmentPart = new MimeBodyPart();
+            FileDataSource eInvoiceViewDs = new FileDataSource(eInvoiceViewPdfPath.toFile());
+            eInvoiceViewAttachmentPart.setDataHandler(new DataHandler(eInvoiceViewDs));
+            eInvoiceViewAttachmentPart.setFileName(eInvoiceViewPdfPath.getFileName().toString());
+
+            multipart.addBodyPart(zugferdAttachmentPart);
+            multipart.addBodyPart(eInvoiceViewAttachmentPart);
+        }
         message.setContent(multipart);
 
         Transport transport = session.getTransport("smtp");
@@ -3242,6 +3254,7 @@ public class WebUiServer {
         ui.setProperty("validationReminderTemplateHtml", Objects.toString(source.getProperty("validationReminderTemplateHtml"), ""));
         ui.setProperty("eInvoicePdfTemplateHtml", Objects.toString(source.getProperty("eInvoicePdfTemplateHtml"), ""));
         ui.setProperty("eInvoiceEnabled", Objects.toString(source.getProperty("eInvoiceEnabled"), "true"));
+        ui.setProperty("eInvoiceAttachAndStoreEnabled", Objects.toString(source.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
         ui.setProperty("eInvoiceBuyerName", Objects.toString(source.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh"));
         ui.setProperty("eInvoiceBuyerStreet", Objects.toString(source.getProperty("eInvoiceBuyerStreet"), ""));
         ui.setProperty("eInvoiceBuyerZip", Objects.toString(source.getProperty("eInvoiceBuyerZip"), ""));
@@ -3313,6 +3326,7 @@ public class WebUiServer {
         config.setProperty("validationReminderTemplateHtml", Objects.toString(uiSettings.getProperty("validationReminderTemplateHtml"), Objects.toString(config.getProperty("validationReminderTemplateHtml"), "")));
         config.setProperty("eInvoicePdfTemplateHtml", Objects.toString(uiSettings.getProperty("eInvoicePdfTemplateHtml"), Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "")));
         config.setProperty("eInvoiceEnabled", Objects.toString(uiSettings.getProperty("eInvoiceEnabled"), Objects.toString(config.getProperty("eInvoiceEnabled"), "true")));
+        config.setProperty("eInvoiceAttachAndStoreEnabled", Objects.toString(uiSettings.getProperty("eInvoiceAttachAndStoreEnabled"), Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true")));
         config.setProperty("eInvoiceBuyerName", Objects.toString(uiSettings.getProperty("eInvoiceBuyerName"), Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh")));
         config.setProperty("eInvoiceBuyerStreet", Objects.toString(uiSettings.getProperty("eInvoiceBuyerStreet"), Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "")));
         config.setProperty("eInvoiceBuyerZip", Objects.toString(uiSettings.getProperty("eInvoiceBuyerZip"), Objects.toString(config.getProperty("eInvoiceBuyerZip"), "")));
