@@ -140,6 +140,7 @@
     let emailTemplateHtmlMode = false;
     let emailPreviewAdvisors = [];
     let mailLogByPayment = new Map();
+    let reminderLogByAdvisor = new Map();
     let analyticsLastPayload = null;
 
     async function apiGet(path) {
@@ -529,7 +530,7 @@
           <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
           <table>
             <thead>
-              <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th>Steuernummer</th><th>Zahlmethode</th><th>IBAN</th><th>Kontoinhaber</th><th>IBAN korrekt</th><th>Status</th><th>Aktion</th></tr>
+              <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th>Umsatzsteuernummer</th><th>IBAN</th><th>Kontoinhaber</th><th>IBAN korrekt</th><th>Status</th><th>Aktion</th></tr>
             </thead>
             <tbody id="validationBody"></tbody>
           </table>
@@ -636,7 +637,15 @@
       const status = document.getElementById('validationStatus');
       const body = document.getElementById('validationBody');
       if (!status || !body) return;
-      body.innerHTML = validationRowsCache.map(r => { const missing = collectMissingValidationFields(r); return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderValidationCell(r.taxNumber)}${renderValidationCell(r.paymentMethod)}${renderValidationCell(r.iban)}${renderValidationCell(r.ibanOwner)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderValidationCell(r.status)}<td><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="settings-hint">${escapeHtml(missing.join(', ') || 'keine fehlenden Felder')}</div></td></tr>`; }).join('');
+      body.innerHTML = validationRowsCache.map(r => {
+        const missing = collectMissingValidationFields(r);
+        const logs = reminderLogByAdvisor.get(String(r.id || '')) || [];
+        const last = logs[0] || {};
+        const historyHtml = !logs.length
+          ? '<span class="mail-log-badge none">nicht versendet</span>'
+          : `<span class="mail-log-badge sent">${logs.length} gesendet</span> <button type="button" class="secondary reminder-log-btn" data-advisor-id="${escapeHtml(String(r.id || ''))}">anzeigen</button><div class="settings-hint">letzte: ${escapeHtml(last.toEmail || '')} (${escapeHtml(last.sentAt || '')})</div>`;
+        return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderValidationCell(r.taxNumber)}${renderValidationCell(r.iban)}${renderValidationCell(r.ibanOwner)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderValidationCell(r.status)}<td><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="settings-hint">${escapeHtml(missing.join(', ') || 'keine fehlenden Felder')}</div><div class="settings-hint">${historyHtml}</div></td></tr>`;
+      }).join('');
       status.textContent = `${validationRowsCache.length} Datensätze geladen.`;
       const table = body.closest('table');
       ensureResizableColumns(table || document);
@@ -645,7 +654,15 @@
         const advisorId = String(btn.getAttribute('data-advisor-id') || "");
         const row = validationRowsCache.find(r => String(r.id || "") === advisorId);
         if (!row) return;
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Sende...';
         await sendValidationReminder(row);
+        btn.disabled = false;
+        btn.textContent = original || 'Erinnerung senden';
+      }));
+      body.querySelectorAll('.reminder-log-btn').forEach(btn => btn.addEventListener('click', () => {
+        openReminderLogModal(String(btn.getAttribute('data-advisor-id') || ''));
       }));
       updateEmptyTablesVisibility(document);
     }
@@ -1109,6 +1126,31 @@
       }
     }
 
+    async function loadReminderLog() {
+      try {
+        const data = await apiGet('/api/validation/reminder-log');
+        const map = new Map();
+        const byAdvisor = data && data.byAdvisor ? data.byAdvisor : {};
+        Object.keys(byAdvisor).forEach(advisorId => {
+          const list = Array.isArray(byAdvisor[advisorId]) ? byAdvisor[advisorId] : [];
+          map.set(String(advisorId), list);
+        });
+        reminderLogByAdvisor = map;
+      } catch (_) {
+        reminderLogByAdvisor = new Map();
+      }
+    }
+
+    function openReminderLogModal(advisorId) {
+      const root = document.getElementById('mailLogModalRoot');
+      if (!root) return;
+      const rows = reminderLogByAdvisor.get(String(advisorId || '')) || [];
+      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Erinnerungs-Verlauf Beraterin ${escapeHtml(advisorId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Status</th><th>Betreff</th><th>Fehlende Felder</th></tr></thead><tbody>${rows.map(r => `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${escapeHtml(r.status || '')}</td><td>${escapeHtml(r.subject || '')}</td><td style="white-space:pre-wrap">${escapeHtml(r.missingFields || '')}</td></tr>`).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
+      const close = () => { root.innerHTML = ''; };
+      document.getElementById('closeMailLogModalBtn')?.addEventListener('click', close);
+      root.querySelector('.mail-log-modal')?.addEventListener('click', (evt) => { if (evt.target.classList.contains('mail-log-modal')) close(); });
+    }
+
     function openMailLogModal(paymentId) {
       const root = document.getElementById('mailLogModalRoot');
       if (!root) return;
@@ -1161,7 +1203,17 @@
 
       document.querySelectorAll('.details-btn').forEach(btn => btn.addEventListener('click', async (e) => {
         const paymentId = e.target.dataset.paymentId;
-        await loadInvoiceDetailsPdf(paymentId);
+        const status = document.getElementById('pollStatus');
+        if (status) status.textContent = `Starte Erstellung für Payment ${paymentId} ...`;
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Läuft...';
+        try {
+          await loadInvoiceDetailsPdf(paymentId);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = original || 'Rechnungsdetails';
+        }
       }));
       document.querySelectorAll('.mail-log-btn').forEach(btn => btn.addEventListener('click', (e) => {
         openMailLogModal(e.target.dataset.paymentId || '');
@@ -1481,7 +1533,7 @@
       const select = document.getElementById('emailPreviewAdvisorSelect');
       if (!box) return;
       const advisorId = select ? String(select.value || '') : '';
-      const advisor = emailPreviewAdvisors.find(a => String(a.id) === advisorId) || emailPreviewAdvisors[0] || { name: 'Beraterin Beispiel' };
+      const advisor = emailPreviewAdvisors.find(a => String(a.id) === advisorId) || emailPreviewAdvisors[0] || { id: '', name: 'Beraterin Beispiel' };
       const template = getCurrentEmailTemplateHtml();
       const now = new Date();
       const created = now.toLocaleString('de-DE', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
@@ -1493,7 +1545,7 @@
         .replaceAll('{{method}}', 'Banküberweisung')
         .replaceAll('{{created}}', created)
         .replaceAll('{{txCount}}', '12')
-        .replaceAll('{{missingFields}}', 'Telefon\nSteuernummer\nKontoinhaber');
+        .replaceAll('{{missingFields}}', escapeHtml(collectMissingValidationFields(advisor).join('\n') || 'Keine fehlenden Felder'));
       box.innerHTML = preview || '<em>Keine Vorlage vorhanden.</em>';
     }
 
@@ -1503,8 +1555,8 @@
       try {
         const data = await apiGet('/api/validation/advisors');
         const rows = Array.isArray(data.rows) ? data.rows : [];
-        emailPreviewAdvisors = rows.map(r => ({ id: r.id, name: r.name || `ID ${r.id}` })).filter(r => r.id);
-        select.innerHTML = emailPreviewAdvisors.map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)} (${escapeHtml(a.id)})</option>`).join('');
+        emailPreviewAdvisors = rows.filter(r => r && r.id);
+        select.innerHTML = emailPreviewAdvisors.map(a => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name || ('ID ' + a.id))} (${escapeHtml(a.id)})</option>`).join('');
       } catch (_) {
         emailPreviewAdvisors = [];
         select.innerHTML = '<option value="">keine Beraterinnen ladbar</option>';
@@ -1526,7 +1578,7 @@
         ['Adresse', row.address],
         ['Land', row.country],
         ['Geburtsdatum', row.dateOfBirth],
-        ['Steuernummer', row.taxNumber],
+        ['Umsatzsteuernummer', row.taxNumber],
         ['Zahlmethode', row.paymentMethod],
         ['IBAN', row.iban],
         ['Kontoinhaber', row.ibanOwner]
@@ -1551,6 +1603,8 @@
           recipientMode: getEmailRecipientMode()
         });
         if (status) status.textContent = `${data.message || 'Erinnerung versendet.'} Empfänger: ${data.toEmail || '-'}`;
+        await loadReminderLog();
+        renderValidationTable();
       } catch (error) {
         if (status) status.textContent = `Fehler beim Erinnerungsversand: ${error.message}`;
       }
@@ -2180,6 +2234,7 @@
         setPollingButtonState(false);
         await loadSettings();
         await loadMailLog();
+        await loadReminderLog();
         updateEmptyTablesVisibility(document);
       } catch (error) {
         document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;
