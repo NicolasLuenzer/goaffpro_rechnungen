@@ -64,6 +64,7 @@ public class WebUiServer {
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
     private static final String COMMISSION_HISTORY_DATES_KEY = "lastImportedComissionHistoryDates";
     private static final String MAIL_LOG_KEY = "sentMailLogJson";
+    private static final String REMINDER_LOG_KEY = "sentReminderLogJson";
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
     private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
@@ -91,6 +92,7 @@ public class WebUiServer {
         server.createContext("/api/validation/advisors", new ValidationAdvisorsHandler());
         server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
         server.createContext("/api/validation/send-reminder", new ValidationReminderMailHandler());
+        server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
         server.setExecutor(null);
         server.start();
 
@@ -2129,6 +2131,38 @@ public class WebUiServer {
         }
     }
 
+    private static class ValidationReminderLogHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                List<Map<String, String>> entries = readReminderLogEntries(config);
+                Map<String, List<Map<String, String>>> byAdvisor = new LinkedHashMap<>();
+                for (Map<String, String> row : entries) {
+                    String advisorId = Objects.toString(row.get("advisorId"), "").trim();
+                    if (advisorId.isBlank()) continue;
+                    byAdvisor.computeIfAbsent(advisorId, k -> new ArrayList<>()).add(row);
+                }
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("entries", entries);
+                payload.put("byAdvisor", byAdvisor);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
     private static class ValidationReminderMailHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -2142,6 +2176,7 @@ public class WebUiServer {
             }
             try {
                 JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String advisorId = asText(body, "advisorId").trim();
                 String advisorName = asText(body, "advisorName").trim();
                 String advisorEmail = asText(body, "advisorEmail").trim();
                 String missingFields = asText(body, "missingFields").trim();
@@ -2158,12 +2193,14 @@ public class WebUiServer {
                     sendResponse(exchange, 400, "application/json", "{\"error\":\"Keine Empfänger-E-Mail vorhanden\"}");
                     return;
                 }
+                String subject = "Bitte fehlende Stammdaten ergänzen";
                 if (sendEmailsEnabled) {
-                    String subject = "Bitte fehlende Stammdaten ergänzen";
                     String plain = buildValidationReminderMailBody(advisorName, missingFields);
                     String html = buildValidationReminderMailHtml(advisorName, missingFields, Objects.toString(config.getProperty("validationReminderTemplateHtml"), ""));
                     sendSimpleHtmlMail(toEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), subject, plain, html, resolveSmtpConfig(config));
                 }
+                appendReminderLogEntry(config, advisorId, advisorName, recipientMode, toEmail, subject, missingFields, sendEmailsEnabled ? "sent" : "skipped");
+                persistSettings(config);
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("message", sendEmailsEnabled ? "Erinnerungs-E-Mail versendet." : "E-Mail-Versand ist deaktiviert.");
                 payload.put("toEmail", toEmail);
@@ -2786,6 +2823,43 @@ public class WebUiServer {
         }
     }
 
+    private static List<Map<String, String>> readReminderLogEntries(Properties config) {
+        String raw = Objects.toString(config.getProperty(REMINDER_LOG_KEY), "").trim();
+        if (raw.isBlank()) return new ArrayList<>();
+        try {
+            List<Map<String, String>> list = OBJECT_MAPPER.readValue(raw, new TypeReference<List<Map<String, String>>>() {});
+            return list == null ? new ArrayList<>() : list;
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private static void appendReminderLogEntry(Properties config,
+                                               String advisorId,
+                                               String advisorName,
+                                               String recipientMode,
+                                               String toEmail,
+                                               String subject,
+                                               String missingFields,
+                                               String status) {
+        List<Map<String, String>> entries = readReminderLogEntries(config);
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put("advisorId", Objects.toString(advisorId, ""));
+        row.put("advisorName", Objects.toString(advisorName, ""));
+        row.put("recipientMode", Objects.toString(recipientMode, "contact"));
+        row.put("toEmail", Objects.toString(toEmail, ""));
+        row.put("subject", Objects.toString(subject, ""));
+        row.put("missingFields", Objects.toString(missingFields, ""));
+        row.put("status", Objects.toString(status, "sent"));
+        row.put("sentAt", ZonedDateTime.now(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")));
+        entries.add(0, row);
+        if (entries.size() > 1000) entries = new ArrayList<>(entries.subList(0, 1000));
+        try {
+            config.setProperty(REMINDER_LOG_KEY, OBJECT_MAPPER.writeValueAsString(entries));
+        } catch (Exception ignored) {
+        }
+    }
+
     private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath, Path zugferdPath) {
         List<Map<String, String>> entries = readMailLogEntries(config);
         Map<String, String> row = new LinkedHashMap<>();
@@ -3077,6 +3151,7 @@ public class WebUiServer {
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
         ui.setProperty(COMMISSION_HISTORY_DATES_KEY, Objects.toString(source.getProperty(COMMISSION_HISTORY_DATES_KEY), ""));
         ui.setProperty(MAIL_LOG_KEY, Objects.toString(source.getProperty(MAIL_LOG_KEY), ""));
+        ui.setProperty(REMINDER_LOG_KEY, Objects.toString(source.getProperty(REMINDER_LOG_KEY), ""));
 
         try (OutputStream os = Files.newOutputStream(uiSettingsFile(directory))) {
             ui.store(os, "GoAffPro UI settings");
@@ -3145,6 +3220,7 @@ public class WebUiServer {
         config.setProperty("eInvoicePaymentTerms", Objects.toString(uiSettings.getProperty("eInvoicePaymentTerms"), Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug")));
 
         config.setProperty(MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(MAIL_LOG_KEY), Objects.toString(config.getProperty(MAIL_LOG_KEY), "")));
+        config.setProperty(REMINDER_LOG_KEY, Objects.toString(uiSettings.getProperty(REMINDER_LOG_KEY), Objects.toString(config.getProperty(REMINDER_LOG_KEY), "")));
 
         ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
     }
@@ -3531,23 +3607,37 @@ private static String toGermanDate(String input) {
         String text = commitSubject.trim();
         String lower = text.toLowerCase();
 
+        String normalized = text
+                .replace("advisor", "Beraterin")
+                .replace("Advisor", "Beraterin")
+                .replace("analytics", "Auswertungen")
+                .replace("Analytics", "Auswertungen")
+                .replace("workflow", "Ablauf")
+                .replace("Workflow", "Ablauf")
+                .replace("mail-log", "Versandhistorie")
+                .replace("Mail-Log", "Versandhistorie")
+                .replace("invoice", "Rechnung")
+                .replace("Invoice", "Rechnung")
+                .replace("settings", "Einstellungen")
+                .replace("Settings", "Einstellungen");
+
         if (lower.startsWith("fix ") || lower.startsWith("fix:")) {
-            return "Fehlerbehebung: " + text.substring(text.indexOf(' ') + 1).trim();
+            return "Fehlerbehebung: " + normalized.substring(normalized.indexOf(' ') + 1).trim();
         }
         if (lower.startsWith("add ") || lower.startsWith("add:")) {
-            return "Erweiterung: " + text.substring(text.indexOf(' ') + 1).trim();
+            return "Erweiterung: " + normalized.substring(normalized.indexOf(' ') + 1).trim();
         }
         if (lower.startsWith("update ") || lower.startsWith("update:")) {
-            return "Aktualisierung: " + text.substring(text.indexOf(' ') + 1).trim();
+            return "Aktualisierung: " + normalized.substring(normalized.indexOf(' ') + 1).trim();
         }
         if (lower.startsWith("refactor ") || lower.startsWith("refactor:")) {
-            return "Umstrukturierung: " + text.substring(text.indexOf(' ') + 1).trim();
+            return "Umstrukturierung: " + normalized.substring(normalized.indexOf(' ') + 1).trim();
         }
         if (lower.startsWith("remove ") || lower.startsWith("remove:")) {
-            return "Entfernung: " + text.substring(text.indexOf(' ') + 1).trim();
+            return "Entfernung: " + normalized.substring(normalized.indexOf(' ') + 1).trim();
         }
 
-        return "Änderung: " + text;
+        return "Änderung: " + normalized;
     }
 
     private static String resolveVersionWithTimestampAndSequence() {
