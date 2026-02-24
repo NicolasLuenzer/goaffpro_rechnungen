@@ -399,7 +399,7 @@
                   </div>
                   <div id="emailTemplateEditor" class="email-editor" contenteditable="true"></div>
                   <textarea id="emailTemplateSource" class="email-editor-source" style="display:none"></textarea>
-                  <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>, <code>{{missingFields}}</code>, <code>{{advisorName}}</code>, <code>{{advisorAddress}}</code>, <code>{{advisorTaxNumber}}</code>, <code>{{buyerCompanyName}}</code>, <code>{{amount}}</code>, <code>{{currency}}</code>.</div>
+                  <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{invoiceNumber}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>, <code>{{missingFields}}</code>, <code>{{advisorName}}</code>, <code>{{advisorAddress}}</code>, <code>{{advisorEmail}}</code>, <code>{{advisorPhone}}</code>, <code>{{advisorTaxNumber}}</code>, <code>{{advisorIban}}</code>, <code>{{advisorBic}}</code>, <code>{{advisorAccountHolder}}</code>, <code>{{buyerCompanyName}}</code>, <code>{{buyerAddress}}</code>, <code>{{buyerVatId}}</code>, <code>{{buyerTaxNumber}}</code>, <code>{{amount}}</code>, <code>{{currency}}</code>.</div>
                 </div>
                 <div>
                   <div class="toolbar" style="width:100%;margin-top:0;">
@@ -1563,7 +1563,16 @@
         .replaceAll('{{advisorName}}', escapeHtml(advisor.name || 'Beraterin Beispiel'))
         .replaceAll('{{advisorAddress}}', escapeHtml(advisor.address || 'Musterstraße 1, 12345 Musterstadt'))
         .replaceAll('{{advisorTaxNumber}}', escapeHtml(advisor.taxNumber || '-'))
+        .replaceAll('{{advisorEmail}}', escapeHtml(advisor.email || 'beraterin@example.com'))
+        .replaceAll('{{advisorPhone}}', escapeHtml(advisor.phone || '+49 170 000000'))
+        .replaceAll('{{advisorIban}}', escapeHtml(advisor.iban || 'DE00123456780000000000'))
+        .replaceAll('{{advisorBic}}', escapeHtml(advisor.bic || 'GENODEF1XXX'))
+        .replaceAll('{{advisorAccountHolder}}', escapeHtml(advisor.ibanOwner || advisor.name || 'Beraterin Beispiel'))
         .replaceAll('{{buyerCompanyName}}', escapeHtml(document.getElementById('eInvoiceBuyerName')?.value || 'S+R linear technology gmbh'))
+        .replaceAll('{{buyerAddress}}', escapeHtml(((document.getElementById('eInvoiceBuyerStreet')?.value || 'Bleidernröder Str. 11') + ', ' + (document.getElementById('eInvoiceBuyerZip')?.value || '35315') + ' ' + (document.getElementById('eInvoiceBuyerCity')?.value || 'Homberg/Ohm') + ', ' + (document.getElementById('eInvoiceBuyerCountry')?.value || 'DE')).trim()))
+        .replaceAll('{{buyerVatId}}', escapeHtml(document.getElementById('eInvoiceBuyerVatId')?.value || '-'))
+        .replaceAll('{{buyerTaxNumber}}', escapeHtml(document.getElementById('eInvoiceBuyerTaxNumber')?.value || '-'))
+        .replaceAll('{{invoiceNumber}}', 'RE-2026-0001')
         .replaceAll('{{amount}}', '123,45 €')
         .replaceAll('{{currency}}', 'EUR');
       box.innerHTML = preview || '<em>Keine Vorlage vorhanden.</em>';

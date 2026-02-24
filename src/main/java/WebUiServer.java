@@ -3071,17 +3071,44 @@ public class WebUiServer {
     private static String renderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate, Properties config) {
         String advisorName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
         String advisorAddress = formatAffiliateAddress(affiliate);
+        String advisorEmail = affiliate != null ? asText(affiliate, "email") : "";
+        String advisorPhone = affiliate != null ? asText(affiliate, "phone") : "";
         String tax = affiliate != null ? asText(affiliate, "tax_identification_number") : "";
         String paymentId = payment != null ? asText(payment, "id") : "-";
         String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
         String amount = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
         String currency = payment != null ? asText(payment, "currency") : "EUR";
-        String buyer = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
+        String buyerCompanyName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
+        String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
+        String buyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
+        String buyerCity = Objects.toString(config.getProperty("eInvoiceBuyerCity"), "").trim();
+        String buyerCountry = Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE").trim();
+        String buyerVatId = Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "").trim();
+        String buyerTaxNumber = Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "").trim();
+        String buyerAddress = String.join(", ", List.of(
+                buyerStreet,
+                (buyerZip + " " + buyerCity).trim(),
+                buyerCountry
+        ).stream().filter(v -> v != null && !v.isBlank()).toList());
+        String advisorIban = parseAffiliatePaymentField(affiliate, "iban");
+        String advisorBic = parseAffiliatePaymentField(affiliate, "bic");
+        String advisorAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
+        if (advisorAccountHolder.isBlank()) advisorAccountHolder = advisorName;
+
         return template
                 .replace("{{advisorName}}", escapeHtmlEmail(advisorName))
                 .replace("{{advisorAddress}}", escapeHtmlEmail(advisorAddress))
+                .replace("{{advisorEmail}}", escapeHtmlEmail(advisorEmail))
+                .replace("{{advisorPhone}}", escapeHtmlEmail(advisorPhone))
                 .replace("{{advisorTaxNumber}}", escapeHtmlEmail(tax))
-                .replace("{{buyerCompanyName}}", escapeHtmlEmail(buyer))
+                .replace("{{advisorIban}}", escapeHtmlEmail(advisorIban))
+                .replace("{{advisorBic}}", escapeHtmlEmail(advisorBic))
+                .replace("{{advisorAccountHolder}}", escapeHtmlEmail(advisorAccountHolder))
+                .replace("{{buyerCompanyName}}", escapeHtmlEmail(buyerCompanyName))
+                .replace("{{buyerAddress}}", escapeHtmlEmail(buyerAddress))
+                .replace("{{buyerVatId}}", escapeHtmlEmail(buyerVatId))
+                .replace("{{buyerTaxNumber}}", escapeHtmlEmail(buyerTaxNumber))
+                .replace("{{invoiceNumber}}", escapeHtmlEmail(paymentId))
                 .replace("{{paymentId}}", escapeHtmlEmail(paymentId))
                 .replace("{{created}}", escapeHtmlEmail(created))
                 .replace("{{amount}}", escapeHtmlEmail(amount))
@@ -3090,16 +3117,63 @@ public class WebUiServer {
 
     private static String getDefaultEInvoicePdfViewHtmlTemplate() {
         return """
-                <h2>E-Rechnung (Vorschau)</h2>
-                <p><b>Rechnungsstellerin:</b> {{advisorName}}</p>
-                <p><b>Anschrift:</b> {{advisorAddress}}</p>
-                <p><b>Umsatzsteuernummer:</b> {{advisorTaxNumber}}</p>
-                <p><b>Rechnungsempfänger:</b> {{buyerCompanyName}}</p>
-                <hr/>
-                <p><b>Zahllauf-ID:</b> {{paymentId}}</p>
-                <p><b>Datum:</b> {{created}}</p>
-                <p><b>Betrag:</b> {{amount}} ({{currency}})</p>
-                <p>Hinweis: Diese E-Rechnung wird durch die Beraterin an {{buyerCompanyName}} gestellt. Wir stellen sie nur als Service bereit.</p>
+                <!doctype html>
+                <html lang="de"><body style="font-family:Arial,sans-serif;background:#f3f4f6;color:#111827;padding:20px;">
+                <div style="max-width:900px;margin:0 auto;background:#fff;border:1px solid #d1d5db;padding:22px;">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+                    <div>
+                      <div style="font-size:22px;font-weight:700;letter-spacing:.3px;">RECHNUNG</div>
+                      <div style="margin-top:6px;font-size:13px;color:#374151;">Rechnungsnummer: <b>{{invoiceNumber}}</b></div>
+                      <div style="font-size:13px;color:#374151;">Datum: {{created}}</div>
+                    </div>
+                    <div style="text-align:right;font-size:12px;color:#4b5563;">
+                      <div><b>Rechnungsstellerin</b></div>
+                      <div>{{advisorName}}</div>
+                      <div>{{advisorAddress}}</div>
+                      <div>E-Mail: {{advisorEmail}}</div>
+                      <div>Telefon: {{advisorPhone}}</div>
+                      <div>Steuernummer: {{advisorTaxNumber}}</div>
+                    </div>
+                  </div>
+
+                  <div style="margin-top:20px;padding:12px;border:1px solid #d1d5db;background:#fafafa;">
+                    <div style="font-size:12px;color:#6b7280;">Rechnungsempfänger</div>
+                    <div style="font-size:16px;font-weight:700;">{{buyerCompanyName}}</div>
+                    <div style="font-size:13px;">{{buyerAddress}}</div>
+                    <div style="font-size:12px;color:#6b7280;">USt-IdNr: {{buyerVatId}} | Steuernummer: {{buyerTaxNumber}}</div>
+                  </div>
+
+                  <table style="width:100%;margin-top:22px;border-collapse:collapse;font-size:13px;">
+                    <thead>
+                      <tr style="background:#f3f4f6;">
+                        <th style="text-align:left;padding:8px;border:1px solid #d1d5db;">Pos.</th>
+                        <th style="text-align:left;padding:8px;border:1px solid #d1d5db;">Beschreibung</th>
+                        <th style="text-align:right;padding:8px;border:1px solid #d1d5db;">Betrag</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style="padding:8px;border:1px solid #d1d5db;">1</td>
+                        <td style="padding:8px;border:1px solid #d1d5db;">Provisionsabrechnung Zahllauf {{paymentId}}</td>
+                        <td style="padding:8px;border:1px solid #d1d5db;text-align:right;">{{amount}} ({{currency}})</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <div style="margin-top:18px;display:flex;justify-content:flex-end;">
+                    <table style="min-width:280px;border-collapse:collapse;font-size:13px;">
+                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">Zwischensumme</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{amount}}</td></tr>
+                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">USt.</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">n. V. / laut Stammdaten</td></tr>
+                      <tr style="font-weight:700;"><td style="padding:6px 10px;border:1px solid #d1d5db;">Gesamtbetrag</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{amount}}</td></tr>
+                    </table>
+                  </div>
+
+                  <div style="margin-top:18px;font-size:12px;color:#374151;line-height:1.5;">
+                    <div><b>Bankverbindung der Rechnungsstellerin:</b> {{advisorAccountHolder}}, IBAN {{advisorIban}}, BIC {{advisorBic}}</div>
+                    <div style="margin-top:8px;">Hinweis: Diese Rechnung wird von der Beraterin an {{buyerCompanyName}} gestellt. Die App erzeugt die Unterlagen als Service.</div>
+                  </div>
+                </div>
+                </body></html>
                 """;
     }
 
