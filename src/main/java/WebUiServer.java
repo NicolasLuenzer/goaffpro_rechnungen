@@ -8,6 +8,14 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.common.filespecification.PDComplexFileSpecification;
+import org.apache.pdfbox.pdmodel.common.filespecification.PDEmbeddedFile;
+import org.apache.pdfbox.pdmodel.PDDocumentCatalog;
+import org.apache.pdfbox.pdmodel.PDDocumentNameDictionary;
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode;
 
 import jakarta.activation.DataHandler;
 import jakarta.activation.FileDataSource;
@@ -53,6 +61,13 @@ import java.util.Set;
 import java.security.MessageDigest;
 import java.util.stream.Collectors;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.concurrent.ConcurrentHashMap;
+
 public class WebUiServer {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final DateTimeFormatter INPUT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss[XXX]");
@@ -68,6 +83,10 @@ public class WebUiServer {
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
     private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
+    private static final String USER_STORE_FILENAME = "goaffpro_users.enc";
+    private static final String AUTH_SECRET_DEFAULT = "goaffpro-auth-secret";
+    private static final Map<String, SessionUser> ACTIVE_SESSIONS = new ConcurrentHashMap<>();
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final List<String> DEFAULT_COMMISSION_HISTORY = List.of("2103705", "2167905", "2190357", "2230376", "2336836", "2421355", "2497986", "2565325");
     private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
 
@@ -93,10 +112,127 @@ public class WebUiServer {
         server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
         server.createContext("/api/validation/send-reminder", new ValidationReminderMailHandler());
         server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
+        server.createContext("/api/auth/login", new AuthLoginHandler());
+        server.createContext("/api/auth/me", new AuthMeHandler());
+        server.createContext("/api/auth/logout", new AuthLogoutHandler());
+        server.createContext("/api/users", new UsersHandler());
         server.setExecutor(null);
         server.start();
 
         System.out.println("Web UI Server gestartet auf http://localhost:8080");
+    }
+
+
+    private static class AuthLoginHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String username = asText(body, "username").trim();
+                String password = asText(body, "password");
+                Properties config = loadConfig();
+                List<UserAccount> users = loadUserAccounts(config);
+                UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(username)).findFirst().orElse(null);
+                if (u == null || !verifyPassword(password, u.passwordSalt, u.passwordHash)) { sendResponse(exchange, 401, "application/json", "{\"error\":\"Ungültige Login-Daten\"}"); return; }
+                String token = generateToken();
+                ACTIVE_SESSIONS.put(token, new SessionUser(u.username, u.isAdmin, u.department));
+                Map<String,Object> payload = new LinkedHashMap<>();
+                payload.put("token", token);
+                payload.put("user", userToMap(u));
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) { sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}"); }
+        }
+    }
+
+    private static class AuthMeHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            SessionUser s = requireSession(exchange);
+            if (s == null) return;
+            try {
+                Properties config = loadConfig();
+                List<UserAccount> users = loadUserAccounts(config);
+                UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(s.username)).findFirst().orElse(null);
+                if (u == null) { sendResponse(exchange, 401, "application/json", "{\"error\":\"Session ungültig\"}"); return; }
+                Map<String,Object> payload = new LinkedHashMap<>();
+                payload.put("user", userToMap(u));
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) { sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}"); }
+        }
+    }
+
+    private static class AuthLogoutHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+            String token = Objects.toString(exchange.getRequestHeaders().getFirst("X-Auth-Token"), "").trim();
+            if (!token.isBlank()) ACTIVE_SESSIONS.remove(token);
+            sendResponse(exchange, 200, "application/json", "{}");
+        }
+    }
+
+    private static class UsersHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            if (!su.isAdmin) { sendResponse(exchange, 403, "application/json", "{\"error\":\"Nur Admin\"}"); return; }
+            try {
+                Properties config = loadConfig();
+                if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                    List<Map<String,Object>> users = loadUserAccounts(config).stream().map(WebUiServer::userToMap).collect(Collectors.toList());
+                    Map<String,Object> p = new HashMap<>(); p.put("users", users);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(p));
+                    return;
+                }
+                if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String action = asText(body, "action").trim();
+                List<UserAccount> users = loadUserAccounts(config);
+                if ("create".equals(action)) {
+                    String username = asText(body, "username").trim();
+                    if (username.isBlank()) { sendResponse(exchange, 400, "application/json", "{\"error\":\"username fehlt\"}"); return; }
+                    if (users.stream().anyMatch(u -> u.username.equalsIgnoreCase(username))) { sendResponse(exchange, 400, "application/json", "{\"error\":\"Benutzer existiert bereits\"}"); return; }
+                    UserAccount u = new UserAccount();
+                    u.username = username;
+                    u.firstName = asText(body, "firstName").trim();
+                    u.lastName = asText(body, "lastName").trim();
+                    u.email = asText(body, "email").trim();
+                    u.phone = asText(body, "phone").trim();
+                    u.department = normalizeDepartment(asText(body, "department").trim());
+                    u.isAdmin = body.has("isAdmin") && body.get("isAdmin").asBoolean(false);
+                    String temp = randomPassword();
+                    String[] pw = hashPassword(temp);
+                    u.passwordSalt = pw[0]; u.passwordHash = pw[1];
+                    u.forcePasswordChange = true;
+                    users.add(u);
+                    saveUserAccounts(config, users);
+                    trySendPasswordChangeMail(u.email, username, temp, config);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message","Benutzer angelegt")));
+                    return;
+                }
+                if ("resetPassword".equals(action)) {
+                    String username = asText(body, "username").trim();
+                    String newPassword = asText(body, "newPassword");
+                    UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(username)).findFirst().orElse(null);
+                    if (u == null) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Benutzer nicht gefunden\"}"); return; }
+                    if (newPassword.isBlank()) newPassword = randomPassword();
+                    String[] pw = hashPassword(newPassword);
+                    u.passwordSalt = pw[0]; u.passwordHash = pw[1];
+                    u.forcePasswordChange = true;
+                    saveUserAccounts(config, users);
+                    trySendPasswordChangeMail(u.email, u.username, newPassword, config);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message","Passwort überschrieben")));
+                    return;
+                }
+                sendResponse(exchange, 400, "application/json", "{\"error\":\"Unbekannte Aktion\"}");
+            } catch (Exception e) { sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}"); }
+        }
     }
 
     private static class UiHandler implements HttpHandler {
@@ -1425,13 +1561,13 @@ public class WebUiServer {
                 boolean eInvoiceAttachAndStoreEnabled = includeEInvoiceArtifactsRequest != null
                         ? includeEInvoiceArtifactsRequest
                         : Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
-                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(baseFilename + "_zugferd.xml") : null;
-                Path eInvoiceViewPdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(baseFilename + "_einvoice_view.pdf") : null;
+                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("rechnung_" + sanitizeFilename(paymentId) + "_" + timestamp + ".xml") : null;
+                Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("rechnung_" + sanitizeFilename(paymentId) + "_" + timestamp + ".pdf") : null;
                 createInvoiceDetailsPdf(pdfPath, response, affiliate);
                 writeOriginalJson(jsonPath, response);
                 if (eInvoiceAttachAndStoreEnabled) {
                     createZugferdInvoiceXml(zugferdPath, payment, affiliate, config);
-                    createEInvoiceViewPdf(eInvoiceViewPdfPath, payment, affiliate, config);
+                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, payment, affiliate, config);
                 }
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
@@ -1449,9 +1585,9 @@ public class WebUiServer {
                 String periodLabel = buildPaymentPeriodLabel(payment);
                 if (sendEmailsEnabled) {
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoiceViewPdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
+                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
                     String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + ((affiliateNameForMail == null || affiliateNameForMail.isBlank()) ? "Beraterin" : affiliateNameForMail.trim());
-                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoiceViewPdfPath);
+                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath);
                 }
 
                 boolean opened = false;
@@ -1476,7 +1612,8 @@ public class WebUiServer {
                 payload.put("file", pdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
                 payload.put("zugferdFile", zugferdPath != null ? zugferdPath.toString() : "");
-                payload.put("eInvoiceViewPdfFile", eInvoiceViewPdfPath != null ? eInvoiceViewPdfPath.toString() : "");
+                payload.put("eInvoicePdfFile", eInvoicePdfPath != null ? eInvoicePdfPath.toString() : "");
+                payload.put("eInvoiceViewPdfFile", eInvoicePdfPath != null ? eInvoicePdfPath.toString() : "");
                 payload.put("opened", opened);
                 payload.put("openMessage", openMessage);
                 payload.put("pdfExportPath", exportDir.toString());
@@ -1502,8 +1639,7 @@ public class WebUiServer {
                         cs.showText("Provisionsnachweis konnte nicht erstellt werden (keine Daten)");
                         cs.endText();
                     }
-                    document.save(pdfPath.toFile());
-                    return;
+                document.save(pdfPath.toFile());
                 }
 
                 List<JsonNode> txList = new ArrayList<>();
@@ -2652,7 +2788,7 @@ public class WebUiServer {
         Files.writeString(jsonPath, pretty, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -2703,7 +2839,7 @@ public class WebUiServer {
         multipart.addBodyPart(contentPart);
         multipart.addBodyPart(attachmentPart);
         multipart.addBodyPart(jsonAttachmentPart);
-        if (includeEInvoiceAttachments && zugferdPath != null && eInvoiceViewPdfPath != null) {
+        if (includeEInvoiceAttachments && zugferdPath != null && eInvoicePdfPath != null) {
             MimeBodyPart zugferdAttachmentPart = new MimeBodyPart();
             FileDataSource zugferdDs = new FileDataSource(zugferdPath.toFile());
             zugferdAttachmentPart.setDataHandler(new DataHandler(zugferdDs));
@@ -2711,9 +2847,9 @@ public class WebUiServer {
             zugferdAttachmentPart.setHeader("Content-Type", "application/xml; charset=UTF-8");
 
             MimeBodyPart eInvoiceViewAttachmentPart = new MimeBodyPart();
-            FileDataSource eInvoiceViewDs = new FileDataSource(eInvoiceViewPdfPath.toFile());
+            FileDataSource eInvoiceViewDs = new FileDataSource(eInvoicePdfPath.toFile());
             eInvoiceViewAttachmentPart.setDataHandler(new DataHandler(eInvoiceViewDs));
-            eInvoiceViewAttachmentPart.setFileName(eInvoiceViewPdfPath.getFileName().toString());
+            eInvoiceViewAttachmentPart.setFileName(eInvoicePdfPath.getFileName().toString());
 
             multipart.addBodyPart(zugferdAttachmentPart);
             multipart.addBodyPart(eInvoiceViewAttachmentPart);
@@ -2944,11 +3080,11 @@ public class WebUiServer {
         }
     }
 
-    private static void createEInvoiceViewPdf(Path pdfPath, JsonNode payment, JsonNode affiliate, Properties config) throws IOException {
+    private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config) throws IOException {
         String htmlTemplate = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "");
         if (htmlTemplate.isBlank()) htmlTemplate = getDefaultEInvoicePdfViewHtmlTemplate();
         String rendered = renderEInvoicePdfViewHtml(htmlTemplate, payment, affiliate, config);
-        String plain = rendered.replaceAll("<br\s*/?>", "\n").replaceAll("<[^>]+>", " ").replaceAll("\s+", " ").trim();
+        String plain = rendered.replaceAll("<br\\s*/?>", "\n").replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
         if (plain.isBlank()) plain = "Keine E-Rechnungs-Vorschau konfiguriert.";
 
         try (PDDocument document = new PDDocument()) {
@@ -2968,20 +3104,81 @@ public class WebUiServer {
                 int lineCount = 0;
                 for (String line : wrapText(plain, lineLen)) {
                     if (lineCount > 0) cs.newLineAtOffset(0, -14);
-                    cs.showText(line);
+                    cs.showText(sanitizePdfText(line));
                     lineCount++;
                     if (lineCount > 48) break;
                 }
                 cs.endText();
             }
+            if (xmlPath != null && Files.exists(xmlPath)) {
+                attachZugferdXmlToPdf(document, xmlPath);
+            }
             document.save(pdfPath.toFile());
         }
+    }
+
+
+    private static void attachZugferdXmlToPdf(PDDocument document, Path xmlPath) throws IOException {
+        byte[] xmlBytes = Files.readAllBytes(xmlPath);
+        PDComplexFileSpecification fs = new PDComplexFileSpecification();
+        fs.setFile(xmlPath.getFileName().toString());
+
+        try (java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(xmlBytes)) {
+            PDEmbeddedFile ef = new PDEmbeddedFile(document, bais);
+            ef.setSubtype("application/xml");
+            ef.setSize(xmlBytes.length);
+            ef.setCreationDate(new java.util.GregorianCalendar());
+            ef.setModDate(new java.util.GregorianCalendar());
+            fs.setEmbeddedFile(ef);
+        }
+
+        COSDictionary fsDict = fs.getCOSObject();
+        fsDict.setName(COSName.AF_RELATIONSHIP, "Alternative");
+
+        PDDocumentCatalog catalog = document.getDocumentCatalog();
+        PDDocumentNameDictionary names = catalog.getNames();
+        if (names == null) names = new PDDocumentNameDictionary(catalog);
+
+        PDEmbeddedFilesNameTreeNode efTree = names.getEmbeddedFiles();
+        if (efTree == null) efTree = new PDEmbeddedFilesNameTreeNode();
+
+        java.util.Map<String, PDComplexFileSpecification> map = efTree.getNames();
+        if (map == null) map = new java.util.HashMap<>();
+        map.put(xmlPath.getFileName().toString(), fs);
+        efTree.setNames(map);
+        names.setEmbeddedFiles(efTree);
+        catalog.setNames(names);
+
+        COSArray afArray = new COSArray();
+        afArray.add(fsDict);
+        catalog.getCOSObject().setItem(COSName.AF, afArray);
+    }
+
+    private static String sanitizePdfText(String value) {
+        if (value == null || value.isEmpty()) return "";
+        StringBuilder out = new StringBuilder(value.length());
+        value.codePoints().forEach(cp -> {
+            if (cp == '\n' || cp == '\r' || cp == '\t') {
+                out.append(' ');
+                return;
+            }
+            if (cp < 32 || (cp >= 127 && cp <= 159)) {
+                out.append(' ');
+                return;
+            }
+            if (cp > 255) {
+                out.append('?');
+                return;
+            }
+            out.append((char) cp);
+        });
+        return out.toString();
     }
 
     private static List<String> wrapText(String text, int maxChars) {
         List<String> lines = new ArrayList<>();
         if (text == null || text.isBlank()) return List.of("");
-        String[] words = text.split("\s+");
+        String[] words = text.split("\\s+");
         StringBuilder current = new StringBuilder();
         for (String word : words) {
             if (current.length() == 0) {
@@ -3002,17 +3199,44 @@ public class WebUiServer {
     private static String renderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate, Properties config) {
         String advisorName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
         String advisorAddress = formatAffiliateAddress(affiliate);
+        String advisorEmail = affiliate != null ? asText(affiliate, "email") : "";
+        String advisorPhone = affiliate != null ? asText(affiliate, "phone") : "";
         String tax = affiliate != null ? asText(affiliate, "tax_identification_number") : "";
         String paymentId = payment != null ? asText(payment, "id") : "-";
         String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
         String amount = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
         String currency = payment != null ? asText(payment, "currency") : "EUR";
-        String buyer = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
+        String buyerCompanyName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
+        String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
+        String buyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
+        String buyerCity = Objects.toString(config.getProperty("eInvoiceBuyerCity"), "").trim();
+        String buyerCountry = Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE").trim();
+        String buyerVatId = Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "").trim();
+        String buyerTaxNumber = Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "").trim();
+        String buyerAddress = String.join(", ", List.of(
+                buyerStreet,
+                (buyerZip + " " + buyerCity).trim(),
+                buyerCountry
+        ).stream().filter(v -> v != null && !v.isBlank()).toList());
+        String advisorIban = parseAffiliatePaymentField(affiliate, "iban");
+        String advisorBic = parseAffiliatePaymentField(affiliate, "bic");
+        String advisorAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
+        if (advisorAccountHolder.isBlank()) advisorAccountHolder = advisorName;
+
         return template
                 .replace("{{advisorName}}", escapeHtmlEmail(advisorName))
                 .replace("{{advisorAddress}}", escapeHtmlEmail(advisorAddress))
+                .replace("{{advisorEmail}}", escapeHtmlEmail(advisorEmail))
+                .replace("{{advisorPhone}}", escapeHtmlEmail(advisorPhone))
                 .replace("{{advisorTaxNumber}}", escapeHtmlEmail(tax))
-                .replace("{{buyerCompanyName}}", escapeHtmlEmail(buyer))
+                .replace("{{advisorIban}}", escapeHtmlEmail(advisorIban))
+                .replace("{{advisorBic}}", escapeHtmlEmail(advisorBic))
+                .replace("{{advisorAccountHolder}}", escapeHtmlEmail(advisorAccountHolder))
+                .replace("{{buyerCompanyName}}", escapeHtmlEmail(buyerCompanyName))
+                .replace("{{buyerAddress}}", escapeHtmlEmail(buyerAddress))
+                .replace("{{buyerVatId}}", escapeHtmlEmail(buyerVatId))
+                .replace("{{buyerTaxNumber}}", escapeHtmlEmail(buyerTaxNumber))
+                .replace("{{invoiceNumber}}", escapeHtmlEmail(paymentId))
                 .replace("{{paymentId}}", escapeHtmlEmail(paymentId))
                 .replace("{{created}}", escapeHtmlEmail(created))
                 .replace("{{amount}}", escapeHtmlEmail(amount))
@@ -3021,16 +3245,63 @@ public class WebUiServer {
 
     private static String getDefaultEInvoicePdfViewHtmlTemplate() {
         return """
-                <h2>E-Rechnung (Vorschau)</h2>
-                <p><b>Rechnungsstellerin:</b> {{advisorName}}</p>
-                <p><b>Anschrift:</b> {{advisorAddress}}</p>
-                <p><b>Umsatzsteuernummer:</b> {{advisorTaxNumber}}</p>
-                <p><b>Rechnungsempfänger:</b> {{buyerCompanyName}}</p>
-                <hr/>
-                <p><b>Zahllauf-ID:</b> {{paymentId}}</p>
-                <p><b>Datum:</b> {{created}}</p>
-                <p><b>Betrag:</b> {{amount}} ({{currency}})</p>
-                <p>Hinweis: Diese E-Rechnung wird durch die Beraterin an {{buyerCompanyName}} gestellt. Wir stellen sie nur als Service bereit.</p>
+                <!doctype html>
+                <html lang="de"><body style="font-family:Arial,sans-serif;background:#f3f4f6;color:#111827;padding:20px;">
+                <div style="max-width:900px;margin:0 auto;background:#fff;border:1px solid #d1d5db;padding:22px;">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+                    <div>
+                      <div style="font-size:22px;font-weight:700;letter-spacing:.3px;">RECHNUNG</div>
+                      <div style="margin-top:6px;font-size:13px;color:#374151;">Rechnungsnummer: <b>{{invoiceNumber}}</b></div>
+                      <div style="font-size:13px;color:#374151;">Datum: {{created}}</div>
+                    </div>
+                    <div style="text-align:right;font-size:12px;color:#4b5563;">
+                      <div><b>Rechnungsstellerin</b></div>
+                      <div>{{advisorName}}</div>
+                      <div>{{advisorAddress}}</div>
+                      <div>E-Mail: {{advisorEmail}}</div>
+                      <div>Telefon: {{advisorPhone}}</div>
+                      <div>Steuernummer: {{advisorTaxNumber}}</div>
+                    </div>
+                  </div>
+
+                  <div style="margin-top:20px;padding:12px;border:1px solid #d1d5db;background:#fafafa;">
+                    <div style="font-size:12px;color:#6b7280;">Rechnungsempfänger</div>
+                    <div style="font-size:16px;font-weight:700;">{{buyerCompanyName}}</div>
+                    <div style="font-size:13px;">{{buyerAddress}}</div>
+                    <div style="font-size:12px;color:#6b7280;">USt-IdNr: {{buyerVatId}} | Steuernummer: {{buyerTaxNumber}}</div>
+                  </div>
+
+                  <table style="width:100%;margin-top:22px;border-collapse:collapse;font-size:13px;">
+                    <thead>
+                      <tr style="background:#f3f4f6;">
+                        <th style="text-align:left;padding:8px;border:1px solid #d1d5db;">Pos.</th>
+                        <th style="text-align:left;padding:8px;border:1px solid #d1d5db;">Beschreibung</th>
+                        <th style="text-align:right;padding:8px;border:1px solid #d1d5db;">Betrag</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style="padding:8px;border:1px solid #d1d5db;">1</td>
+                        <td style="padding:8px;border:1px solid #d1d5db;">Provisionsabrechnung Zahllauf {{paymentId}}</td>
+                        <td style="padding:8px;border:1px solid #d1d5db;text-align:right;">{{amount}} ({{currency}})</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <div style="margin-top:18px;display:flex;justify-content:flex-end;">
+                    <table style="min-width:280px;border-collapse:collapse;font-size:13px;">
+                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">Zwischensumme</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{amount}}</td></tr>
+                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">USt.</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">n. V. / laut Stammdaten</td></tr>
+                      <tr style="font-weight:700;"><td style="padding:6px 10px;border:1px solid #d1d5db;">Gesamtbetrag</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{amount}}</td></tr>
+                    </table>
+                  </div>
+
+                  <div style="margin-top:18px;font-size:12px;color:#374151;line-height:1.5;">
+                    <div><b>Bankverbindung der Rechnungsstellerin:</b> {{advisorAccountHolder}}, IBAN {{advisorIban}}, BIC {{advisorBic}}</div>
+                    <div style="margin-top:8px;">Hinweis: Diese Rechnung wird von der Beraterin an {{buyerCompanyName}} gestellt. Die App erzeugt die Unterlagen als Service.</div>
+                  </div>
+                </div>
+                </body></html>
                 """;
     }
 
@@ -3081,6 +3352,174 @@ public class WebUiServer {
 
     private static String euroStatic(double value) {
         return String.format(java.util.Locale.GERMANY, "%.2f €", value);
+    }
+
+
+    private static class SessionUser {
+        final String username;
+        final boolean isAdmin;
+        final String department;
+        SessionUser(String username, boolean isAdmin, String department) { this.username = username; this.isAdmin = isAdmin; this.department = department; }
+    }
+
+    private static class UserAccount {
+        public String username;
+        public String firstName;
+        public String lastName;
+        public String email;
+        public String phone;
+        public String department;
+        public boolean isAdmin;
+        public boolean forcePasswordChange;
+        public String passwordSalt;
+        public String passwordHash;
+    }
+
+    private static SessionUser requireSession(HttpExchange exchange) throws IOException {
+        String token = Objects.toString(exchange.getRequestHeaders().getFirst("X-Auth-Token"), "").trim();
+        SessionUser su = ACTIVE_SESSIONS.get(token);
+        if (su == null) {
+            sendResponse(exchange, 401, "application/json", "{\"error\":\"Nicht angemeldet\"}");
+            return null;
+        }
+        return su;
+    }
+
+    private static Path resolveUserStorePath(Properties config) {
+        String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH).trim();
+        if (exportDir.isBlank()) exportDir = DEFAULT_PDF_EXPORT_PATH;
+        return Paths.get(exportDir).toAbsolutePath().resolve(USER_STORE_FILENAME);
+    }
+
+    private static List<UserAccount> loadUserAccounts(Properties config) throws Exception {
+        ensureUserStoreInitialized(config);
+        Path p = resolveUserStorePath(config);
+        try {
+            byte[] enc = Files.readAllBytes(p);
+            byte[] plain = decrypt(enc, Objects.toString(config.getProperty("authSecret"), AUTH_SECRET_DEFAULT));
+            return OBJECT_MAPPER.readValue(plain, new TypeReference<List<UserAccount>>(){});
+        } catch (Exception ex) {
+            List<UserAccount> defaults = new ArrayList<>(List.of(buildDefaultAdminUser(config)));
+            saveUserAccounts(config, defaults);
+            return defaults;
+        }
+    }
+
+    private static void saveUserAccounts(Properties config, List<UserAccount> users) throws Exception {
+        Path p = resolveUserStorePath(config);
+        Files.createDirectories(p.getParent());
+        byte[] raw = OBJECT_MAPPER.writeValueAsBytes(users);
+        byte[] enc = encrypt(raw, Objects.toString(config.getProperty("authSecret"), AUTH_SECRET_DEFAULT));
+        Files.write(p, enc, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    private static void ensureUserStoreInitialized(Properties config) throws Exception {
+        if (Objects.toString(config.getProperty("adminUsername"), "").isBlank()) config.setProperty("adminUsername", "admin");
+        if (Objects.toString(config.getProperty("adminPassword"), "").isBlank()) config.setProperty("adminPassword", "admin");
+        if (Objects.toString(config.getProperty("authSecret"), "").isBlank()) config.setProperty("authSecret", AUTH_SECRET_DEFAULT);
+        Path p = resolveUserStorePath(config);
+        if (Files.exists(p)) return;
+        UserAccount admin = buildDefaultAdminUser(config);
+        saveUserAccounts(config, new ArrayList<>(List.of(admin)));
+        persistSettings(config);
+    }
+
+    private static UserAccount buildDefaultAdminUser(Properties config) {
+        UserAccount admin = new UserAccount();
+        admin.username = Objects.toString(config.getProperty("adminUsername"), "admin");
+        admin.firstName = "Admin";
+        admin.lastName = "User";
+        admin.department = "ALL";
+        admin.isAdmin = true;
+        admin.email = "";
+        admin.phone = "";
+        admin.forcePasswordChange = false;
+        String[] pw = hashPassword(Objects.toString(config.getProperty("adminPassword"), "admin"));
+        admin.passwordSalt = pw[0];
+        admin.passwordHash = pw[1];
+        return admin;
+    }
+
+    private static byte[] encrypt(byte[] plain, String secret) throws Exception {
+        byte[] key = sha256Bytes(secret.getBytes(StandardCharsets.UTF_8));
+        byte[] iv = new byte[12];
+        SECURE_RANDOM.nextBytes(iv);
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
+        byte[] enc = c.doFinal(plain);
+        byte[] out = new byte[iv.length + enc.length];
+        System.arraycopy(iv, 0, out, 0, iv.length);
+        System.arraycopy(enc, 0, out, iv.length, enc.length);
+        return out;
+    }
+
+    private static byte[] decrypt(byte[] data, String secret) throws Exception {
+        byte[] key = sha256Bytes(secret.getBytes(StandardCharsets.UTF_8));
+        byte[] iv = java.util.Arrays.copyOfRange(data, 0, 12);
+        byte[] enc = java.util.Arrays.copyOfRange(data, 12, data.length);
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
+        return c.doFinal(enc);
+    }
+
+    private static String[] hashPassword(String password) {
+        byte[] salt = new byte[16];
+        SECURE_RANDOM.nextBytes(salt);
+        String saltB64 = Base64.getEncoder().encodeToString(salt);
+        String hash = sha256Hex(saltB64 + ":" + (password == null ? "" : password));
+        return new String[]{saltB64, hash};
+    }
+
+    private static boolean verifyPassword(String password, String saltB64, String hash) {
+        return sha256Hex(Objects.toString(saltB64, "") + ":" + (password == null ? "" : password)).equals(Objects.toString(hash, ""));
+    }
+
+    private static byte[] sha256Bytes(byte[] data) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        return digest.digest(data);
+    }
+
+    private static String generateToken() {
+        byte[] b = new byte[24];
+        SECURE_RANDOM.nextBytes(b);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+    }
+
+    private static String randomPassword() {
+        byte[] b = new byte[9];
+        SECURE_RANDOM.nextBytes(b);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+    }
+
+    private static String normalizeDepartment(String dep) {
+        String d = Objects.toString(dep, "").trim().toUpperCase();
+        if ("AS".equals(d) || "VEMMINA".equals(d) || "LT".equals(d) || "ALL".equals(d)) return d;
+        return "VEMMINA";
+    }
+
+    private static Map<String, Object> userToMap(UserAccount u) {
+        Map<String,Object> m = new LinkedHashMap<>();
+        m.put("username", u.username);
+        m.put("firstName", u.firstName);
+        m.put("lastName", u.lastName);
+        m.put("email", u.email);
+        m.put("phone", u.phone);
+        m.put("department", u.department);
+        m.put("isAdmin", u.isAdmin);
+        m.put("forcePasswordChange", u.forcePasswordChange);
+        return m;
+    }
+
+    private static void trySendPasswordChangeMail(String to, String username, String tempPassword, Properties config) {
+        try {
+            if (to == null || to.isBlank()) return;
+            SmtpConfig smtpConfig = resolveSmtpConfig(config);
+            if (smtpConfig.username == null || smtpConfig.username.isBlank()) return;
+            String subject = "Zugang eingerichtet - Passwort bitte ändern";
+            String text = "Hallo " + username + "\n\nIhr Zugang wurde eingerichtet.\nTemporäres Passwort: " + tempPassword + "\nBitte melden Sie sich an und ändern Sie das Passwort umgehend.";
+            String html = "<p>Hallo " + escapeHtmlEmail(username) + ",</p><p>Ihr Zugang wurde eingerichtet.</p><p><b>Temporäres Passwort:</b> " + escapeHtmlEmail(tempPassword) + "</p><p>Bitte melden Sie sich an und ändern Sie das Passwort umgehend.</p>";
+            sendSimpleHtmlMail(to, Objects.toString(config.getProperty("emailBcc"), ""), subject, text, html, smtpConfig);
+        } catch (Exception ignored) {}
     }
 
     private static Map<String, String> parseQueryParams(URI uri) {

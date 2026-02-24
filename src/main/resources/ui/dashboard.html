@@ -10,6 +10,13 @@
     .app-header { display:flex; align-items:center; gap:14px; margin-bottom: 14px; background: linear-gradient(120deg, #ffffff, #eef6ff); border: 1px solid #dbeafe; border-radius: 12px; padding: 12px 14px; }
     .app-logo { height: 42px; width: auto; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.12)); }
     .app-subtitle { margin: 2px 0 0; color: #4b5563; font-size: 13px; }
+    .header-spacer { flex:1; }
+    .header-btn { background:#2563eb; }
+    .login-overlay { position:fixed; inset:0; background:rgba(15,23,42,.55); z-index:5000; display:none; align-items:center; justify-content:center; }
+    .login-card { width:min(420px,94vw); background:#fff; border:1px solid #d1d5db; border-radius:12px; padding:16px; }
+    .area-tabs { display:flex; gap:8px; margin-bottom:12px; }
+    .area-panel { display:none; }
+    .area-panel.active { display:block; }
     .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
     .tab { border: 1px solid #93c5fd; border-radius: 8px; padding: 10px 14px; background: #dbeafe; color: #1e3a8a; font-weight: 600; cursor: pointer; transition: all .15s ease; }
     .tab:hover { background: #bfdbfe; }
@@ -110,6 +117,9 @@
       <h1>VEMMiNA Provisionssystem</h1>
       <p class="app-subtitle">Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.</p>
     </div>
+    <div class="header-spacer"></div>
+    <button id="headerSettingsBtn" class="header-btn" type="button">Einstellungen</button>
+    <button id="headerHelpBtn" class="header-btn" type="button">Hilfe</button>
   </div>
   <div id="appVersion" class="app-version" title="Klicken für Versionshistorie">Version: lädt…</div>
   <div id="versionHistoryPopup" class="version-popup" style="display:none">
@@ -117,9 +127,20 @@
     <ul id="versionHistoryList"></ul>
   </div>
 
-  <div id="tabs" class="tabs"></div>
-  <div id="panels"></div>
+  <div id="areaTabs" class="area-tabs"></div>
+  <div id="asPanel" class="panel area-panel"><h2>AS</h2><p>Noch keine Inhalte vorhanden.</p></div>
+  <div id="ltPanel" class="panel area-panel"><h2>LT</h2><p>Noch keine Inhalte vorhanden.</p></div>
+  <div id="vPanel" class="area-panel active"><div id="tabs" class="tabs"></div><div id="panels"></div></div>
   <div id="mailLogModalRoot"></div>
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-card">
+      <h3 style="margin-top:0">Anmeldung</h3>
+      <div class="toolbar"><label>Benutzername</label><input id="loginUsername" type="text" style="min-width:100%"/></div>
+      <div class="toolbar"><label>Passwort</label><input id="loginPassword" type="password" style="min-width:100%"/></div>
+      <div class="toolbar"><button id="loginBtn" type="button">Login</button><span id="loginStatus" class="status"></span></div>
+      <div id="adminUsersBox" style="display:none;margin-top:12px;"></div>
+    </div>
+  </div>
 
   <script>
     const API_BASE = "http://localhost:8080";
@@ -143,17 +164,23 @@
     let mailLogByPayment = new Map();
     let reminderLogByAdvisor = new Map();
     let analyticsLastPayload = null;
+    let currentUser = null;
+    let activeArea = "VEMMiNA";
 
     async function apiGet(path) {
-      const response = await fetch(`${API_BASE}${path}`);
+      const token = localStorage.getItem("authToken") || "";
+      const response = await fetch(`${API_BASE}${path}`, { headers: token ? { "X-Auth-Token": token } : {} });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'API-Fehler');
       return json;
     }
 
     async function apiPost(path, payload) {
+      const token = localStorage.getItem("authToken") || "";
+      const headers = { 'Content-Type': 'application/json' };
+      if (token) headers['X-Auth-Token'] = token;
       const response = await fetch(`${API_BASE}${path}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        method: 'POST', headers, body: JSON.stringify(payload)
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'API-Fehler');
@@ -266,6 +293,7 @@
                   <th data-col="hasValidIban">IBAN korrekt</th>
                   <th data-col="amount">Betrag</th>
                   <th data-col="mailStatus">Mailversand</th>
+                  <th data-col="eInvoiceStatus">E-Rechnung</th>
                   <th data-col="actions">Aktion</th>
                 </tr>
               </thead>
@@ -370,6 +398,33 @@
                     <input id="eInvoicePaymentTerms" type="text" placeholder="Zahlbar sofort ohne Abzug" />
                   </div>
                 </div>
+
+                <div class="settings-group" id="adminUserMgmtGroup" style="display:none;">
+                  <h3>Benutzer- und Rechteverwaltung (Admin)</h3>
+                  <div class="toolbar"><button id="reloadUsersBtn" class="secondary" type="button">Benutzer neu laden</button></div>
+                  <table><thead><tr><th>Username</th><th>Vorname</th><th>Nachname</th><th>E-Mail</th><th>Telefon</th><th>Abteilung</th><th>Admin</th></tr></thead><tbody id="usersAdminBody"></tbody></table>
+                  <div class="toolbar"><strong>Neuen Benutzer registrieren</strong></div>
+                  <div class="toolbar">
+                    <input id="newUserUsername" type="text" placeholder="Username" />
+                    <input id="newUserFirstName" type="text" placeholder="Vorname" />
+                    <input id="newUserLastName" type="text" placeholder="Nachname" />
+                  </div>
+                  <div class="toolbar">
+                    <input id="newUserEmail" type="email" placeholder="E-Mail" />
+                    <input id="newUserPhone" type="text" placeholder="Telefon" />
+                    <select id="newUserDepartment" style="min-width:200px"><option value="VEMMiNA">VEMMiNA</option><option value="AS">AS</option><option value="LT">LT</option></select>
+                    <label><input id="newUserIsAdmin" type="checkbox" /> Admin</label>
+                    <button id="createUserBtn" class="secondary" type="button">Benutzer anlegen</button>
+                  </div>
+                  <div class="toolbar"><strong>Passwort überschreiben</strong></div>
+                  <div class="toolbar">
+                    <input id="resetUserUsername" type="text" placeholder="Username" />
+                    <input id="resetUserPassword" type="text" placeholder="Neues Passwort (leer = zufällig)" />
+                    <button id="resetUserPasswordBtn" class="danger" type="button">Passwort überschreiben</button>
+                  </div>
+                  <p id="usersAdminStatus" class="status"></p>
+                </div>
+
               </div>
               <div class="toolbar"><button id="saveSettingsBtn" class="secondary">Speichern</button></div>
               <div class="settings-hint">Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</div>
@@ -398,7 +453,7 @@
                   </div>
                   <div id="emailTemplateEditor" class="email-editor" contenteditable="true"></div>
                   <textarea id="emailTemplateSource" class="email-editor-source" style="display:none"></textarea>
-                  <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>, <code>{{missingFields}}</code>, <code>{{advisorName}}</code>, <code>{{advisorAddress}}</code>, <code>{{advisorTaxNumber}}</code>, <code>{{buyerCompanyName}}</code>, <code>{{amount}}</code>, <code>{{currency}}</code>.</div>
+                  <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{invoiceNumber}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>, <code>{{missingFields}}</code>, <code>{{advisorName}}</code>, <code>{{advisorAddress}}</code>, <code>{{advisorEmail}}</code>, <code>{{advisorPhone}}</code>, <code>{{advisorTaxNumber}}</code>, <code>{{advisorIban}}</code>, <code>{{advisorBic}}</code>, <code>{{advisorAccountHolder}}</code>, <code>{{buyerCompanyName}}</code>, <code>{{buyerAddress}}</code>, <code>{{buyerVatId}}</code>, <code>{{buyerTaxNumber}}</code>, <code>{{amount}}</code>, <code>{{currency}}</code>.</div>
                 </div>
                 <div>
                   <div class="toolbar" style="width:100%;margin-top:0;">
@@ -1181,7 +1236,10 @@
         const invalidIban = (row.hasValidIban || '').toLowerCase() !== 'ja';
         if (missingName || missingIban || invalidIban) tr.classList.add('row-warning');
         const advisorDataEncoded = encodeURIComponent(JSON.stringify(row));
-        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ''}</td><td>${row.belegdatum || ''}</td><td><span class="advisor-name-link" data-advisor="${advisorDataEncoded}">${row.affiliateName || ''}</span></td><td>${row.affiliateEmail || ''}</td><td>${row.affiliateAddress || ''}</td><td>${row.affiliateCountry || ''}</td><td>${row.affiliateSteuernummer || ''}</td><td title="${row.hasIban || ''}">${ibanState}</td><td title="${row.hasValidIban || ''}">${ibanValidState}</td><td>${formatEuroAmount(row.amount)}</td><td>${(() => { const logs = mailLogByPayment.get(String(row.paymentId || '')) || []; if (!logs.length) return "<span class=\"mail-log-badge none\">nicht versendet</span>"; const last = logs[0] || {}; return `<span class=\"mail-log-badge sent\">${logs.length} gesendet</span> <button type=\"button\" class=\"secondary mail-log-btn\" data-payment-id=\"${escapeHtml(String(row.paymentId || ''))}\">anzeigen</button><div class=\"settings-hint\">letzte: ${escapeHtml(last.toEmail || '')} (${escapeHtml(last.sentAt || '')})</div>`; })()}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ''}" type="button">Rechnungsdetails</button></td>`;
+        const logs = mailLogByPayment.get(String(row.paymentId || "")) || [];
+        const eInvoiceLogs = logs.filter(l => (l && ((l.zugferdPath && l.zugferdPath.trim()) || (l.eInvoiceViewPdfPath && l.eInvoiceViewPdfPath.trim()))));
+        const eInvoiceStatusHtml = eInvoiceLogs.length ? `<span class="mail-log-badge sent">${eInvoiceLogs.length} erzeugt/versendet</span>` : `<span class="mail-log-badge none">nicht erzeugt/versendet</span>`;
+        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ""}</td><td>${row.belegdatum || ""}</td><td><span class="advisor-name-link" data-advisor="${advisorDataEncoded}">${row.affiliateName || ""}</span></td><td>${row.affiliateEmail || ""}</td><td>${row.affiliateAddress || ""}</td><td>${row.affiliateCountry || ""}</td><td>${row.affiliateSteuernummer || ""}</td><td title="${row.hasIban || ""}">${ibanState}</td><td title="${row.hasValidIban || ""}">${ibanValidState}</td><td>${formatEuroAmount(row.amount)}</td><td>${(() => { if (!logs.length) return "<span class=\"mail-log-badge none\">nicht versendet</span>"; const last = logs[0] || {}; return `<span class=\"mail-log-badge sent\">${logs.length} gesendet</span> <button type=\"button\" class=\"secondary mail-log-btn\" data-payment-id=\"${escapeHtml(String(row.paymentId || ""))}\">anzeigen</button><div class=\"settings-hint\">letzte: ${escapeHtml(last.toEmail || "")} (${escapeHtml(last.sentAt || "")})</div>`; })()}</td><td>${eInvoiceStatusHtml}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ""}" type="button">Rechnungsdetails</button></td>`;
         body.appendChild(tr);
       });
 
@@ -1559,7 +1617,16 @@
         .replaceAll('{{advisorName}}', escapeHtml(advisor.name || 'Beraterin Beispiel'))
         .replaceAll('{{advisorAddress}}', escapeHtml(advisor.address || 'Musterstraße 1, 12345 Musterstadt'))
         .replaceAll('{{advisorTaxNumber}}', escapeHtml(advisor.taxNumber || '-'))
+        .replaceAll('{{advisorEmail}}', escapeHtml(advisor.email || 'beraterin@example.com'))
+        .replaceAll('{{advisorPhone}}', escapeHtml(advisor.phone || '+49 170 000000'))
+        .replaceAll('{{advisorIban}}', escapeHtml(advisor.iban || 'DE00123456780000000000'))
+        .replaceAll('{{advisorBic}}', escapeHtml(advisor.bic || 'GENODEF1XXX'))
+        .replaceAll('{{advisorAccountHolder}}', escapeHtml(advisor.ibanOwner || advisor.name || 'Beraterin Beispiel'))
         .replaceAll('{{buyerCompanyName}}', escapeHtml(document.getElementById('eInvoiceBuyerName')?.value || 'S+R linear technology gmbh'))
+        .replaceAll('{{buyerAddress}}', escapeHtml(((document.getElementById('eInvoiceBuyerStreet')?.value || 'Bleidernröder Str. 11') + ', ' + (document.getElementById('eInvoiceBuyerZip')?.value || '35315') + ' ' + (document.getElementById('eInvoiceBuyerCity')?.value || 'Homberg/Ohm') + ', ' + (document.getElementById('eInvoiceBuyerCountry')?.value || 'DE')).trim()))
+        .replaceAll('{{buyerVatId}}', escapeHtml(document.getElementById('eInvoiceBuyerVatId')?.value || '-'))
+        .replaceAll('{{buyerTaxNumber}}', escapeHtml(document.getElementById('eInvoiceBuyerTaxNumber')?.value || '-'))
+        .replaceAll('{{invoiceNumber}}', 'RE-2026-0001')
         .replaceAll('{{amount}}', '123,45 €')
         .replaceAll('{{currency}}', 'EUR');
       box.innerHTML = preview || '<em>Keine Vorlage vorhanden.</em>';
@@ -1622,6 +1689,14 @@
         });
         if (status) status.textContent = `${data.message || 'Erinnerung versendet.'} Empfänger: ${data.toEmail || '-'}`;
         await loadReminderLog();
+        if (currentUser?.isAdmin) {
+          const group = document.getElementById('adminUserMgmtGroup');
+          if (group) group.style.display = "block";
+          await loadAdminUsers();
+        } else {
+          document.querySelector('.section-tab[data-section-target="main-settings"]')?.remove();
+          document.getElementById('headerSettingsBtn').style.display = "none";
+        }
         renderValidationTable();
       } catch (error) {
         if (status) status.textContent = `Fehler beim Erinnerungsversand: ${error.message}`;
@@ -2185,8 +2260,115 @@
       });
     }
 
+
+    function canSeeDepartment(dep) {
+      if (!currentUser) return false;
+      if (currentUser.isAdmin) return true;
+      const d = String(currentUser.department || '').toUpperCase();
+      return d === dep || d === 'ALL';
+    }
+
+    function switchArea(area) {
+      activeArea = area;
+      document.getElementById('vPanel')?.classList.toggle('active', area === 'VEMMiNA');
+      document.getElementById('asPanel')?.classList.toggle('active', area === 'AS');
+      document.getElementById('ltPanel')?.classList.toggle('active', area === 'LT');
+      document.querySelectorAll('#areaTabs .tab').forEach(t => t.classList.toggle('active', t.dataset.area === area));
+    }
+
+    function renderAreaTabs() {
+      const box = document.getElementById('areaTabs');
+      if (!box) return;
+      const areas = [];
+      if (canSeeDepartment('VEMMINA')) areas.push('VEMMiNA');
+      if (canSeeDepartment('AS')) areas.push('AS');
+      if (canSeeDepartment('LT')) areas.push('LT');
+      box.innerHTML = areas.map((a,i)=>`<button class="tab ${i===0?'active':''}" data-area="${a}">${a}</button>`).join('');
+      box.querySelectorAll('.tab').forEach(b => b.addEventListener('click', () => switchArea(b.dataset.area)));
+      if (areas.length) switchArea(areas[0]);
+    }
+
+    async function showLoginAndAuthenticate() {
+      const overlay = document.getElementById('loginOverlay');
+      const btn = document.getElementById('loginBtn');
+      const status = document.getElementById('loginStatus');
+      const u = document.getElementById('loginUsername');
+      const p = document.getElementById('loginPassword');
+      overlay.style.display = 'flex';
+      const tryExisting = localStorage.getItem('authToken');
+      if (tryExisting) {
+        try {
+          const me = await apiGet('/api/auth/me');
+          currentUser = me.user || null;
+          overlay.style.display = 'none';
+          return;
+        } catch (_) {}
+      }
+      await new Promise(resolve => {
+        btn.addEventListener('click', async () => {
+          try {
+            status.textContent = 'Anmeldung läuft...';
+            const data = await apiPost('/api/auth/login', { username: u.value || '', password: p.value || '' });
+            localStorage.setItem('authToken', data.token || '');
+            currentUser = data.user || null;
+            status.textContent = 'Erfolgreich angemeldet.';
+            overlay.style.display = 'none';
+            resolve();
+          } catch (e) {
+            status.textContent = `Login fehlgeschlagen: ${e.message}`;
+          }
+        }, { once: true });
+      });
+    }
+
+
+    async function loadAdminUsers() {
+      if (!currentUser?.isAdmin) return;
+      const body = document.getElementById('usersAdminBody');
+      const status = document.getElementById('usersAdminStatus');
+      if (!body) return;
+      try {
+        const data = await apiGet('/api/users');
+        const rows = Array.isArray(data.users) ? data.users : [];
+        body.innerHTML = rows.map(u => `<tr><td>${escapeHtml(u.username || '')}</td><td>${escapeHtml(u.firstName || '')}</td><td>${escapeHtml(u.lastName || '')}</td><td>${escapeHtml(u.email || '')}</td><td>${escapeHtml(u.phone || '')}</td><td>${escapeHtml(u.department || '')}</td><td>${u.isAdmin ? 'ja' : 'nein'}</td></tr>`).join('');
+        if (status) status.textContent = `${rows.length} Benutzer geladen.`;
+      } catch (e) { if (status) status.textContent = `Fehler: ${e.message}`; }
+    }
+
+    async function createAdminUser() {
+      const status = document.getElementById('usersAdminStatus');
+      try {
+        await apiPost('/api/users', {
+          action: 'create',
+          username: document.getElementById('newUserUsername')?.value || '',
+          firstName: document.getElementById('newUserFirstName')?.value || '',
+          lastName: document.getElementById('newUserLastName')?.value || '',
+          email: document.getElementById('newUserEmail')?.value || '',
+          phone: document.getElementById('newUserPhone')?.value || '',
+          department: document.getElementById('newUserDepartment')?.value || 'VEMMiNA',
+          isAdmin: !!document.getElementById('newUserIsAdmin')?.checked
+        });
+        if (status) status.textContent = 'Benutzer angelegt. E-Mail mit Passwortwechsel wurde versendet (wenn SMTP konfiguriert).';
+        await loadAdminUsers();
+      } catch (e) { if (status) status.textContent = `Fehler: ${e.message}`; }
+    }
+
+    async function resetAdminUserPassword() {
+      const status = document.getElementById('usersAdminStatus');
+      try {
+        await apiPost('/api/users', {
+          action: 'resetPassword',
+          username: document.getElementById('resetUserUsername')?.value || '',
+          newPassword: document.getElementById('resetUserPassword')?.value || ''
+        });
+        if (status) status.textContent = 'Passwort wurde überschrieben.';
+      } catch (e) { if (status) status.textContent = `Fehler: ${e.message}`; }
+    }
+
     async function init() {
       try {
+        await showLoginAndAuthenticate();
+        renderAreaTabs();
         const executables = await fetchExecutables();
         if (!Array.isArray(executables) || executables.length === 0) {
           document.getElementById('panels').innerHTML = '<p>Keine ausführbaren Java-Dateien gefunden.</p>';
@@ -2198,16 +2380,20 @@
           document.getElementById('panels').innerHTML = '<p>MainProvisionenGoaffpro konnte nicht gefunden werden.</p>';
           return;
         }
-        createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
-        createValidationTabAndPanel();
-        createAnalyticsTabAndPanel();
-        createHelpTabAndPanel();
+        if (canSeeDepartment('VEMMINA')) {
+          createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
+          createValidationTabAndPanel();
+          createAnalyticsTabAndPanel();
+          createHelpTabAndPanel();
+        }
         const helpTab = document.querySelector('.tab[data-target="help-panel"]');
         if (helpTab) helpTab.style.marginLeft = 'auto';
         wireTabSwitching();
         await loadVersion();
         await loadHelpDocumentation();
         wireVersionPopup();
+        document.getElementById('headerHelpBtn')?.addEventListener('click', () => { const t = document.querySelector('.tab[data-target="help-panel"]'); if (t) t.click(); });
+        document.getElementById('headerSettingsBtn')?.addEventListener('click', () => { const t = document.querySelector('.tab[data-target="MainProvisionenGoaffpro"]'); if (t) { t.click(); document.querySelector('.section-tab[data-section-target="main-settings"]')?.click(); } });
 
         const pollingBtn = document.getElementById('togglePollingBtn');
         const saveBtn = document.getElementById('saveSettingsBtn');
@@ -2222,6 +2408,9 @@
         const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
         const expandAllTreeBtn = document.getElementById('expandAllTreeBtn');
         const collapseAllTreeBtn = document.getElementById('collapseAllTreeBtn');
+        const reloadUsersBtn = document.getElementById('reloadUsersBtn');
+        const createUserBtn = document.getElementById('createUserBtn');
+        const resetUserPasswordBtn = document.getElementById('resetUserPasswordBtn');
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
         if (emailDesignerSaveBtn) emailDesignerSaveBtn.addEventListener('click', saveSettings);
@@ -2235,6 +2424,9 @@
         if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
         if (expandAllTreeBtn) expandAllTreeBtn.addEventListener('click', expandAllValidationTree);
         if (collapseAllTreeBtn) collapseAllTreeBtn.addEventListener('click', collapseAllValidationTree);
+        if (reloadUsersBtn) reloadUsersBtn.addEventListener('click', loadAdminUsers);
+        if (createUserBtn) createUserBtn.addEventListener('click', createAdminUser);
+        if (resetUserPasswordBtn) resetUserPasswordBtn.addEventListener('click', resetAdminUserPassword);
 
         const emailRecipientContactInput = document.getElementById('emailRecipientContact');
         const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
@@ -2258,6 +2450,14 @@
         await loadSettings();
         await loadMailLog();
         await loadReminderLog();
+        if (currentUser?.isAdmin) {
+          const group = document.getElementById('adminUserMgmtGroup');
+          if (group) group.style.display = "block";
+          await loadAdminUsers();
+        } else {
+          document.querySelector('.section-tab[data-section-target="main-settings"]')?.remove();
+          document.getElementById('headerSettingsBtn').style.display = "none";
+        }
         updateEmptyTablesVisibility(document);
       } catch (error) {
         document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;
