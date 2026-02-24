@@ -8,6 +8,14 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.common.filespecification.PDComplexFileSpecification;
+import org.apache.pdfbox.pdmodel.common.filespecification.PDEmbeddedFile;
+import org.apache.pdfbox.pdmodel.PDDocumentCatalog;
+import org.apache.pdfbox.pdmodel.PDDocumentNameDictionary;
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode;
 
 import jakarta.activation.DataHandler;
 import jakarta.activation.FileDataSource;
@@ -1425,13 +1433,13 @@ public class WebUiServer {
                 boolean eInvoiceAttachAndStoreEnabled = includeEInvoiceArtifactsRequest != null
                         ? includeEInvoiceArtifactsRequest
                         : Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
-                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(baseFilename + "_zugferd.xml") : null;
-                Path eInvoiceViewPdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(baseFilename + "_einvoice_view.pdf") : null;
+                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("rechnung_" + sanitizeFilename(paymentId) + "_" + timestamp + ".xml") : null;
+                Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("rechnung_" + sanitizeFilename(paymentId) + "_" + timestamp + ".pdf") : null;
                 createInvoiceDetailsPdf(pdfPath, response, affiliate);
                 writeOriginalJson(jsonPath, response);
                 if (eInvoiceAttachAndStoreEnabled) {
                     createZugferdInvoiceXml(zugferdPath, payment, affiliate, config);
-                    createEInvoiceViewPdf(eInvoiceViewPdfPath, payment, affiliate, config);
+                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, payment, affiliate, config);
                 }
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
@@ -1449,9 +1457,9 @@ public class WebUiServer {
                 String periodLabel = buildPaymentPeriodLabel(payment);
                 if (sendEmailsEnabled) {
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoiceViewPdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
+                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
                     String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + ((affiliateNameForMail == null || affiliateNameForMail.isBlank()) ? "Beraterin" : affiliateNameForMail.trim());
-                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoiceViewPdfPath);
+                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath);
                 }
 
                 boolean opened = false;
@@ -1476,7 +1484,8 @@ public class WebUiServer {
                 payload.put("file", pdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
                 payload.put("zugferdFile", zugferdPath != null ? zugferdPath.toString() : "");
-                payload.put("eInvoiceViewPdfFile", eInvoiceViewPdfPath != null ? eInvoiceViewPdfPath.toString() : "");
+                payload.put("eInvoicePdfFile", eInvoicePdfPath != null ? eInvoicePdfPath.toString() : "");
+                payload.put("eInvoiceViewPdfFile", eInvoicePdfPath != null ? eInvoicePdfPath.toString() : "");
                 payload.put("opened", opened);
                 payload.put("openMessage", openMessage);
                 payload.put("pdfExportPath", exportDir.toString());
@@ -1502,8 +1511,7 @@ public class WebUiServer {
                         cs.showText("Provisionsnachweis konnte nicht erstellt werden (keine Daten)");
                         cs.endText();
                     }
-                    document.save(pdfPath.toFile());
-                    return;
+                document.save(pdfPath.toFile());
                 }
 
                 List<JsonNode> txList = new ArrayList<>();
@@ -2652,7 +2660,7 @@ public class WebUiServer {
         Files.writeString(jsonPath, pretty, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -2703,7 +2711,7 @@ public class WebUiServer {
         multipart.addBodyPart(contentPart);
         multipart.addBodyPart(attachmentPart);
         multipart.addBodyPart(jsonAttachmentPart);
-        if (includeEInvoiceAttachments && zugferdPath != null && eInvoiceViewPdfPath != null) {
+        if (includeEInvoiceAttachments && zugferdPath != null && eInvoicePdfPath != null) {
             MimeBodyPart zugferdAttachmentPart = new MimeBodyPart();
             FileDataSource zugferdDs = new FileDataSource(zugferdPath.toFile());
             zugferdAttachmentPart.setDataHandler(new DataHandler(zugferdDs));
@@ -2711,9 +2719,9 @@ public class WebUiServer {
             zugferdAttachmentPart.setHeader("Content-Type", "application/xml; charset=UTF-8");
 
             MimeBodyPart eInvoiceViewAttachmentPart = new MimeBodyPart();
-            FileDataSource eInvoiceViewDs = new FileDataSource(eInvoiceViewPdfPath.toFile());
+            FileDataSource eInvoiceViewDs = new FileDataSource(eInvoicePdfPath.toFile());
             eInvoiceViewAttachmentPart.setDataHandler(new DataHandler(eInvoiceViewDs));
-            eInvoiceViewAttachmentPart.setFileName(eInvoiceViewPdfPath.getFileName().toString());
+            eInvoiceViewAttachmentPart.setFileName(eInvoicePdfPath.getFileName().toString());
 
             multipart.addBodyPart(zugferdAttachmentPart);
             multipart.addBodyPart(eInvoiceViewAttachmentPart);
@@ -2944,7 +2952,7 @@ public class WebUiServer {
         }
     }
 
-    private static void createEInvoiceViewPdf(Path pdfPath, JsonNode payment, JsonNode affiliate, Properties config) throws IOException {
+    private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config) throws IOException {
         String htmlTemplate = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "");
         if (htmlTemplate.isBlank()) htmlTemplate = getDefaultEInvoicePdfViewHtmlTemplate();
         String rendered = renderEInvoicePdfViewHtml(htmlTemplate, payment, affiliate, config);
@@ -2974,10 +2982,49 @@ public class WebUiServer {
                 }
                 cs.endText();
             }
+            if (xmlPath != null && Files.exists(xmlPath)) {
+                attachZugferdXmlToPdf(document, xmlPath);
+            }
             document.save(pdfPath.toFile());
         }
     }
 
+
+    private static void attachZugferdXmlToPdf(PDDocument document, Path xmlPath) throws IOException {
+        byte[] xmlBytes = Files.readAllBytes(xmlPath);
+        PDComplexFileSpecification fs = new PDComplexFileSpecification();
+        fs.setFile(xmlPath.getFileName().toString());
+
+        try (java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(xmlBytes)) {
+            PDEmbeddedFile ef = new PDEmbeddedFile(document, bais);
+            ef.setSubtype("application/xml");
+            ef.setSize(xmlBytes.length);
+            ef.setCreationDate(new java.util.GregorianCalendar());
+            ef.setModDate(new java.util.GregorianCalendar());
+            fs.setEmbeddedFile(ef);
+        }
+
+        COSDictionary fsDict = fs.getCOSObject();
+        fsDict.setName(COSName.AF_RELATIONSHIP, "Alternative");
+
+        PDDocumentCatalog catalog = document.getDocumentCatalog();
+        PDDocumentNameDictionary names = catalog.getNames();
+        if (names == null) names = new PDDocumentNameDictionary(catalog);
+
+        PDEmbeddedFilesNameTreeNode efTree = names.getEmbeddedFiles();
+        if (efTree == null) efTree = new PDEmbeddedFilesNameTreeNode();
+
+        java.util.Map<String, PDComplexFileSpecification> map = efTree.getNames();
+        if (map == null) map = new java.util.HashMap<>();
+        map.put(xmlPath.getFileName().toString(), fs);
+        efTree.setNames(map);
+        names.setEmbeddedFiles(efTree);
+        catalog.setNames(names);
+
+        COSArray afArray = new COSArray();
+        afArray.add(fsDict);
+        catalog.getCOSObject().setItem(COSName.AF, afArray);
+    }
 
     private static String sanitizePdfText(String value) {
         if (value == null || value.isEmpty()) return "";
