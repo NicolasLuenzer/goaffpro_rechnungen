@@ -3363,16 +3363,16 @@ public class WebUiServer {
     }
 
     private static class UserAccount {
-        String username;
-        String firstName;
-        String lastName;
-        String email;
-        String phone;
-        String department;
-        boolean isAdmin;
-        boolean forcePasswordChange;
-        String passwordSalt;
-        String passwordHash;
+        public String username;
+        public String firstName;
+        public String lastName;
+        public String email;
+        public String phone;
+        public String department;
+        public boolean isAdmin;
+        public boolean forcePasswordChange;
+        public String passwordSalt;
+        public String passwordHash;
     }
 
     private static SessionUser requireSession(HttpExchange exchange) throws IOException {
@@ -3394,9 +3394,15 @@ public class WebUiServer {
     private static List<UserAccount> loadUserAccounts(Properties config) throws Exception {
         ensureUserStoreInitialized(config);
         Path p = resolveUserStorePath(config);
-        byte[] enc = Files.readAllBytes(p);
-        byte[] plain = decrypt(enc, Objects.toString(config.getProperty("authSecret"), AUTH_SECRET_DEFAULT));
-        return OBJECT_MAPPER.readValue(plain, new TypeReference<List<UserAccount>>(){});
+        try {
+            byte[] enc = Files.readAllBytes(p);
+            byte[] plain = decrypt(enc, Objects.toString(config.getProperty("authSecret"), AUTH_SECRET_DEFAULT));
+            return OBJECT_MAPPER.readValue(plain, new TypeReference<List<UserAccount>>(){});
+        } catch (Exception ex) {
+            List<UserAccount> defaults = new ArrayList<>(List.of(buildDefaultAdminUser(config)));
+            saveUserAccounts(config, defaults);
+            return defaults;
+        }
     }
 
     private static void saveUserAccounts(Properties config, List<UserAccount> users) throws Exception {
@@ -3413,6 +3419,12 @@ public class WebUiServer {
         if (Objects.toString(config.getProperty("authSecret"), "").isBlank()) config.setProperty("authSecret", AUTH_SECRET_DEFAULT);
         Path p = resolveUserStorePath(config);
         if (Files.exists(p)) return;
+        UserAccount admin = buildDefaultAdminUser(config);
+        saveUserAccounts(config, new ArrayList<>(List.of(admin)));
+        persistSettings(config);
+    }
+
+    private static UserAccount buildDefaultAdminUser(Properties config) {
         UserAccount admin = new UserAccount();
         admin.username = Objects.toString(config.getProperty("adminUsername"), "admin");
         admin.firstName = "Admin";
@@ -3423,9 +3435,9 @@ public class WebUiServer {
         admin.phone = "";
         admin.forcePasswordChange = false;
         String[] pw = hashPassword(Objects.toString(config.getProperty("adminPassword"), "admin"));
-        admin.passwordSalt = pw[0]; admin.passwordHash = pw[1];
-        saveUserAccounts(config, new ArrayList<>(List.of(admin)));
-        persistSettings(config);
+        admin.passwordSalt = pw[0];
+        admin.passwordHash = pw[1];
+        return admin;
     }
 
     private static byte[] encrypt(byte[] plain, String secret) throws Exception {
