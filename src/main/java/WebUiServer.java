@@ -91,7 +91,39 @@ public class WebUiServer {
     private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
 
     public static void main(String[] args) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
+        HttpServer server;
+        try {
+            server = HttpServer.create(new InetSocketAddress(8080), 0);
+        } catch (java.net.BindException e) {
+            System.err.println("Port 8080 ist bereits belegt. Versuche, den bestehenden Prozess zu beenden...");
+            try {
+                Process netstat = new ProcessBuilder("netstat", "-ano").start();
+                String output = new String(netstat.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                netstat.waitFor();
+                String pid = null;
+                for (String line : output.split("\n")) {
+                    if (line.contains(":8080") && line.contains("LISTENING")) {
+                        String[] parts = line.trim().split("\\s+");
+                        pid = parts[parts.length - 1].trim();
+                        break;
+                    }
+                }
+                if (pid == null) {
+                    System.err.println("Kein Prozess auf Port 8080 gefunden.");
+                    throw e;
+                }
+                System.err.println("Beende Prozess PID " + pid + "...");
+                new ProcessBuilder("taskkill", "/F", "/PID", pid).start().waitFor();
+                Thread.sleep(1500);
+            } catch (java.net.BindException be) {
+                throw be;
+            } catch (Exception ex) {
+                System.err.println("Konnte Prozess nicht automatisch beenden: " + ex.getMessage());
+                System.err.println("Bitte manuell beenden: netstat -ano | findstr :8080, dann: taskkill /F /PID <PID>");
+                throw e;
+            }
+            server = HttpServer.create(new InetSocketAddress(8080), 0);
+        }
         server.createContext("/", new UiHandler());
         server.createContext("/api/executables", new ExecutablesHandler());
         server.createContext("/api/provisionen-goaffpro/poll", new PollGoaffproHandler());
@@ -228,6 +260,28 @@ public class WebUiServer {
                     saveUserAccounts(config, users);
                     trySendPasswordChangeMail(u.email, u.username, newPassword, config);
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message","Passwort überschrieben")));
+                    return;
+                }
+                if ("update".equals(action)) {
+                    String username = asText(body, "username").trim();
+                    UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(username)).findFirst().orElse(null);
+                    if (u == null) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Benutzer nicht gefunden\"}"); return; }
+                    u.firstName = asText(body, "firstName").trim();
+                    u.lastName = asText(body, "lastName").trim();
+                    u.email = asText(body, "email").trim();
+                    u.phone = asText(body, "phone").trim();
+                    u.department = normalizeDepartment(asText(body, "department").trim());
+                    u.isAdmin = body.has("isAdmin") && body.get("isAdmin").asBoolean(false);
+                    saveUserAccounts(config, users);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message", "Benutzer aktualisiert")));
+                    return;
+                }
+                if ("delete".equals(action)) {
+                    String username = asText(body, "username").trim();
+                    boolean removed = users.removeIf(x -> x.username.equalsIgnoreCase(username));
+                    if (!removed) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Benutzer nicht gefunden\"}"); return; }
+                    saveUserAccounts(config, users);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message", "Benutzer gelöscht")));
                     return;
                 }
                 sendResponse(exchange, 400, "application/json", "{\"error\":\"Unbekannte Aktion\"}");
@@ -440,6 +494,7 @@ public class WebUiServer {
                 String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH);
                 String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
                 String goaffproAPIKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
+                String erpnextApiKey = Objects.toString(config.getProperty("erpnextApiKey"), "").trim();
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 String smtpHost = Objects.toString(config.getProperty("smtpHost"), "").trim();
                 String smtpPort = Objects.toString(config.getProperty("smtpPort"), "587").trim();
@@ -473,6 +528,7 @@ public class WebUiServer {
                 payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 payload.put("lastImportedComission", activeCommission);
                 payload.put("goaffproAPIKey", goaffproAPIKey);
+                payload.put("erpnextApiKey", erpnextApiKey);
                 payload.put("contactEmail", contactEmail);
                 payload.put("smtpHost", smtpHost);
                 payload.put("smtpPort", smtpPort);
@@ -486,6 +542,8 @@ public class WebUiServer {
                 payload.put("emailTemplateHtmlDefault", getDefaultInvoiceMailHtmlTemplate());
                 payload.put("validationReminderTemplateHtml", validationReminderTemplateHtml.isBlank() ? getDefaultValidationReminderHtmlTemplate() : validationReminderTemplateHtml);
                 payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
+                payload.put("eInvoicePdfTemplateHtml", eInvoicePdfTemplateHtml.isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : eInvoicePdfTemplateHtml);
+                payload.put("eInvoicePdfTemplateHtmlDefault", getDefaultEInvoicePdfViewHtmlTemplate());
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -499,6 +557,8 @@ public class WebUiServer {
                     String newPath = asText(body, "pdfExportPath").trim();
                     String selectedCommission = asText(body, "lastImportedComission").trim();
                     String goaffproAPIKey = asText(body, "goaffproAPIKey").trim();
+                    String erpnextApiKey = asText(body, "erpnextApiKey").trim();
+                    String erpnextApiSecret = asText(body, "erpnextApiSecret").trim();
                     String contactEmail = asText(body, "contactEmail").trim();
                     String smtpHost = asText(body, "smtpHost").trim();
                     String smtpPort = asText(body, "smtpPort").trim();
@@ -534,6 +594,10 @@ public class WebUiServer {
                     if (!goaffproAPIKey.isEmpty()) {
                         config.setProperty("goaffproAPIKey", goaffproAPIKey);
                     }
+                    config.setProperty("erpnextApiKey", erpnextApiKey);
+                    if (!erpnextApiSecret.isBlank()) {
+                        config.setProperty("erpnextApiSecret", erpnextApiSecret);
+                    }
                     if (!selectedCommission.isEmpty()) {
                         config.setProperty("lastImportedComission", selectedCommission);
                         ensureCommissionInHistory(config, selectedCommission);
@@ -549,9 +613,21 @@ public class WebUiServer {
                     }
                     config.setProperty("sendEmailsEnabled", String.valueOf(sendEmailsEnabled));
                     config.setProperty("emailRecipientMode", emailRecipientMode);
-                    config.setProperty("emailTemplateHtml", emailTemplateHtml);
-                    config.setProperty("validationReminderTemplateHtml", validationReminderTemplateHtml);
-                    config.setProperty("eInvoicePdfTemplateHtml", eInvoicePdfTemplateHtml);
+                    if (!emailTemplateHtml.isBlank()) {
+                        config.setProperty("emailTemplateHtml", emailTemplateHtml);
+                    } else {
+                        config.remove("emailTemplateHtml");
+                    }
+                    if (!validationReminderTemplateHtml.isBlank()) {
+                        config.setProperty("validationReminderTemplateHtml", validationReminderTemplateHtml);
+                    } else {
+                        config.remove("validationReminderTemplateHtml");
+                    }
+                    if (!eInvoicePdfTemplateHtml.isBlank()) {
+                        config.setProperty("eInvoicePdfTemplateHtml", eInvoicePdfTemplateHtml);
+                    } else {
+                        config.remove("eInvoicePdfTemplateHtml");
+                    }
                     config.setProperty("eInvoiceEnabled", String.valueOf(eInvoiceEnabled));
                     config.setProperty("eInvoiceAttachAndStoreEnabled", String.valueOf(eInvoiceAttachAndStoreEnabled));
                     config.setProperty("eInvoiceBuyerName", eInvoiceBuyerName);
@@ -574,6 +650,7 @@ public class WebUiServer {
                     payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                     payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
                     payload.put("goaffproAPIKey", Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY));
+                    payload.put("erpnextApiKey", Objects.toString(config.getProperty("erpnextApiKey"), ""));
                     payload.put("contactEmail", Objects.toString(config.getProperty("contactEmail"), ""));
                     payload.put("smtpHost", Objects.toString(config.getProperty("smtpHost"), ""));
                     payload.put("smtpPort", Objects.toString(config.getProperty("smtpPort"), "587"));
@@ -3081,34 +3158,250 @@ public class WebUiServer {
     }
 
     private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config) throws IOException {
-        String htmlTemplate = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "");
-        if (htmlTemplate.isBlank()) htmlTemplate = getDefaultEInvoicePdfViewHtmlTemplate();
-        String rendered = renderEInvoicePdfViewHtml(htmlTemplate, payment, affiliate, config);
-        String plain = rendered.replaceAll("<br\\s*/?>", "\n").replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
-        if (plain.isBlank()) plain = "Keine E-Rechnungs-Vorschau konfiguriert.";
+        // Extract variables
+        String advisorName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
+        String advisorAddressOneLiner = formatAffiliateAddress(affiliate);
+        String advisorEmail = affiliate != null ? asText(affiliate, "email") : "";
+        String advisorPhone = affiliate != null ? asText(affiliate, "phone") : "";
+        String advisorTaxNumber = affiliate != null ? asText(affiliate, "tax_identification_number") : "";
+        String advisorIban = parseAffiliatePaymentField(affiliate, "iban");
+        String advisorBic = parseAffiliatePaymentField(affiliate, "bic");
+        String advisorAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
+        if (advisorAccountHolder.isBlank()) advisorAccountHolder = advisorName;
+        String paymentId = payment != null ? asText(payment, "id") : "-";
+        String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
+        String amount = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
+        String buyerCompanyName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "").trim();
+        String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
+        String buyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
+        String buyerCity = Objects.toString(config.getProperty("eInvoiceBuyerCity"), "").trim();
+        String buyerCountry = Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE").trim();
+        String buyerVatId = Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "").trim();
+        String buyerTaxNumber = Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "").trim();
+        String paymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
 
         try (PDDocument document = new PDDocument()) {
             PDPage page = new PDPage();
             document.addPage(page);
-            try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
-                cs.beginText();
-                cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
-                cs.newLineAtOffset(45, 780);
-                cs.showText("E-Rechnung Vorschau (für Beraterin)");
-                cs.endText();
+            float pageWidth = page.getMediaBox().getWidth();
+            float pageHeight = page.getMediaBox().getHeight();
+            float left = 45f;
+            float right = pageWidth - 45f;
+            float usableW = right - left;
 
-                cs.beginText();
-                cs.setFont(PDType1Font.HELVETICA, 10);
-                cs.newLineAtOffset(45, 750);
-                int lineLen = 110;
-                int lineCount = 0;
-                for (String line : wrapText(plain, lineLen)) {
-                    if (lineCount > 0) cs.newLineAtOffset(0, -14);
-                    cs.showText(sanitizePdfText(line));
-                    lineCount++;
-                    if (lineCount > 48) break;
-                }
+            try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
+                float y = pageHeight - 38f;
+
+                // ── HEADER: advisor name + address as small letterhead line ──
+                String hdrLine = advisorName + (advisorAddressOneLiner.isBlank() ? "" : " \u00b7 " + advisorAddressOneLiner);
+                cs.setNonStrokingColor(new Color(100, 100, 100));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8f);
+                cs.newLineAtOffset(left, y);
+                cs.showText(sanitizePdfText(shortenForPdf(hdrLine, 95)));
                 cs.endText();
+                y -= 7f;
+                cs.setStrokingColor(new Color(180, 180, 180)); cs.setLineWidth(0.4f);
+                cs.moveTo(left, y); cs.lineTo(right, y); cs.stroke();
+                y -= 20f;
+
+                // ── TWO COLUMNS: Bill To (left) | Invoice Meta (right) ──
+                float colL = left;
+                float colR = left + usableW * 0.55f;
+                float startY2col = y;
+
+                // LEFT: buyer address block
+                cs.setNonStrokingColor(new Color(130, 130, 130));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8f);
+                cs.newLineAtOffset(colL, y); cs.showText("Rechnungsempf\u00e4nger"); cs.endText();
+                y -= 14f;
+                cs.setNonStrokingColor(new Color(15, 15, 15));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 12f);
+                cs.newLineAtOffset(colL, y);
+                cs.showText(sanitizePdfText(shortenForPdf(buyerCompanyName, 32))); cs.endText();
+                y -= 14f;
+                List<String> buyerLines = new ArrayList<>();
+                if (!buyerStreet.isBlank()) buyerLines.add(buyerStreet);
+                String cLine = (buyerZip + " " + buyerCity).trim();
+                if (!cLine.isBlank()) buyerLines.add(cLine);
+                if (!buyerCountry.isBlank()) buyerLines.add(buyerCountry);
+                for (String bl : buyerLines) {
+                    cs.setNonStrokingColor(new Color(40, 40, 40));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                    cs.newLineAtOffset(colL, y); cs.showText(sanitizePdfText(bl)); cs.endText();
+                    y -= 13f;
+                }
+                if (!buyerVatId.isBlank()) {
+                    cs.setNonStrokingColor(new Color(100, 100, 100));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
+                    cs.newLineAtOffset(colL, y); cs.showText("USt-IdNr: " + sanitizePdfText(buyerVatId)); cs.endText();
+                    y -= 11f;
+                }
+                if (!buyerTaxNumber.isBlank()) {
+                    cs.setNonStrokingColor(new Color(100, 100, 100));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
+                    cs.newLineAtOffset(colL, y); cs.showText("Steuernummer: " + sanitizePdfText(buyerTaxNumber)); cs.endText();
+                    y -= 11f;
+                }
+                float leftEndY = y;
+
+                // RIGHT: contact info + invoice metadata
+                float ry = startY2col;
+                List<String[]> metaRows = new ArrayList<>();
+                if (!advisorEmail.isBlank()) metaRows.add(new String[]{"E-Mail:", advisorEmail});
+                if (!advisorPhone.isBlank()) metaRows.add(new String[]{"Telefon:", advisorPhone});
+                if (!advisorTaxNumber.isBlank()) metaRows.add(new String[]{"Steuernummer:", advisorTaxNumber});
+                metaRows.add(new String[]{"Rechnungsnummer:", paymentId});
+                metaRows.add(new String[]{"Datum:", created});
+                float lblW = 82f;
+                for (String[] row : metaRows) {
+                    cs.setNonStrokingColor(new Color(130, 130, 130));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 9f);
+                    cs.newLineAtOffset(colR, ry); cs.showText(sanitizePdfText(row[0])); cs.endText();
+                    cs.setNonStrokingColor(new Color(20, 20, 20));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 9f);
+                    cs.newLineAtOffset(colR + lblW, ry); cs.showText(sanitizePdfText(shortenForPdf(row[1], 28))); cs.endText();
+                    ry -= 13f;
+                }
+                y = Math.min(leftEndY, ry) - 14f;
+
+                // ── INVOICE TITLE BOX ──
+                float boxH = 28f;
+                cs.setNonStrokingColor(new Color(235, 235, 235));
+                cs.addRect(left, y - boxH, usableW, boxH); cs.fill();
+                cs.setStrokingColor(new Color(200, 200, 200)); cs.setLineWidth(0.4f);
+                cs.addRect(left, y - boxH, usableW, boxH); cs.stroke();
+                cs.setNonStrokingColor(new Color(15, 15, 15));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 13f);
+                cs.newLineAtOffset(left + 8f, y - 19f);
+                cs.showText("RECHNUNG  Nr. " + sanitizePdfText(paymentId)); cs.endText();
+                cs.setNonStrokingColor(new Color(80, 80, 80));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 9.5f);
+                cs.newLineAtOffset(right - 135f, y - 19f);
+                cs.showText("Datum: " + sanitizePdfText(created)); cs.endText();
+                y -= boxH + 14f;
+
+                // ── ITEM TABLE ──
+                float rowH = 22f;
+                float cW0 = 28f;   // Pos
+                float cW2 = 105f;  // Betrag
+                float cW1 = usableW - cW0 - cW2; // Beschreibung
+                float[] cx = {left, left + cW0, left + cW0 + cW1};
+
+                // Table header row
+                cs.setNonStrokingColor(new Color(245, 245, 245));
+                cs.addRect(left, y - rowH, usableW, rowH); cs.fill();
+                cs.setStrokingColor(new Color(200, 200, 200)); cs.setLineWidth(0.4f);
+                cs.addRect(left, y - rowH, usableW, rowH); cs.stroke();
+                String[] hdrs = {"Pos.", "Beschreibung", "Betrag"};
+                cs.setNonStrokingColor(new Color(60, 60, 60));
+                for (int i = 0; i < 3; i++) {
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 9.5f);
+                    cs.newLineAtOffset(cx[i] + 4f, y - 15f); cs.showText(hdrs[i]); cs.endText();
+                }
+                y -= rowH;
+
+                // Data row
+                float dRowH = 24f;
+                cs.setStrokingColor(new Color(210, 210, 210)); cs.setLineWidth(0.4f);
+                cs.addRect(left, y - dRowH, usableW, dRowH); cs.stroke();
+                cs.setNonStrokingColor(new Color(30, 30, 30));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                cs.newLineAtOffset(cx[0] + 4f, y - 16f); cs.showText("1"); cs.endText();
+                String desc = "Provisionsabrechnung Zahllauf " + sanitizePdfText(paymentId);
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                cs.newLineAtOffset(cx[1] + 4f, y - 16f);
+                cs.showText(sanitizePdfText(shortenForPdf(desc, 48))); cs.endText();
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                cs.newLineAtOffset(cx[2] + 4f, y - 16f);
+                cs.showText(sanitizePdfText(amount)); cs.endText();
+                y -= dRowH + 14f;
+
+                // ── TOTALS (right-aligned) ──
+                float tX = left + usableW * 0.52f;
+                float tW = usableW * 0.48f;
+                float tLblW = tW * 0.52f;
+                float tValX = tX + tLblW;
+
+                // Nettobetrag
+                cs.setStrokingColor(new Color(200, 200, 200)); cs.setLineWidth(0.4f);
+                cs.addRect(tX, y - 20f, tW, 20f); cs.stroke();
+                cs.setNonStrokingColor(new Color(40, 40, 40));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                cs.newLineAtOffset(tX + 4f, y - 14f); cs.showText("Nettobetrag"); cs.endText();
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                cs.newLineAtOffset(tValX, y - 14f); cs.showText(sanitizePdfText(amount)); cs.endText();
+                y -= 20f;
+
+                // VAT note
+                cs.setNonStrokingColor(new Color(242, 242, 242));
+                cs.addRect(tX, y - 26f, tW, 26f); cs.fill();
+                cs.setStrokingColor(new Color(200, 200, 200));
+                cs.addRect(tX, y - 26f, tW, 26f); cs.stroke();
+                cs.setNonStrokingColor(new Color(80, 80, 80));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
+                cs.newLineAtOffset(tX + 4f, y - 11f);
+                cs.showText("Gem. \u00a7 19 UStG wird keine Umsatzsteuer"); cs.endText();
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
+                cs.newLineAtOffset(tX + 4f, y - 20f); cs.showText("berechnet."); cs.endText();
+                y -= 26f;
+
+                // Grand Total
+                cs.setNonStrokingColor(new Color(225, 225, 225));
+                cs.addRect(tX, y - 24f, tW, 24f); cs.fill();
+                cs.setStrokingColor(new Color(180, 180, 180));
+                cs.addRect(tX, y - 24f, tW, 24f); cs.stroke();
+                cs.setNonStrokingColor(new Color(15, 15, 15));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 11f);
+                cs.newLineAtOffset(tX + 4f, y - 16f); cs.showText("Gesamtbetrag"); cs.endText();
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 11f);
+                cs.newLineAtOffset(tValX, y - 16f); cs.showText(sanitizePdfText(amount)); cs.endText();
+                y -= 24f + 20f;
+
+                // ── PAYMENT TERMS ──
+                if (!paymentTerms.isBlank()) {
+                    cs.setNonStrokingColor(new Color(60, 60, 60));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 9f);
+                    cs.newLineAtOffset(left, y);
+                    cs.showText("Zahlungsbedingungen: " + sanitizePdfText(paymentTerms)); cs.endText();
+                    y -= 14f;
+                }
+
+                // ── BANK DETAILS ──
+                y -= 10f;
+                cs.setStrokingColor(new Color(180, 180, 180)); cs.setLineWidth(0.4f);
+                cs.moveTo(left, y); cs.lineTo(right, y); cs.stroke();
+                y -= 14f;
+                cs.setNonStrokingColor(new Color(40, 40, 40));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 9f);
+                cs.newLineAtOffset(left, y); cs.showText("Bankverbindung"); cs.endText();
+                y -= 12f;
+                List<String[]> bankRows = new ArrayList<>();
+                bankRows.add(new String[]{"Kontoinhaber:", advisorAccountHolder});
+                if (!advisorIban.isBlank()) bankRows.add(new String[]{"IBAN:", advisorIban});
+                if (!advisorBic.isBlank()) bankRows.add(new String[]{"BIC:", advisorBic});
+                for (String[] br : bankRows) {
+                    cs.setNonStrokingColor(new Color(100, 100, 100));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
+                    cs.newLineAtOffset(left, y); cs.showText(sanitizePdfText(br[0])); cs.endText();
+                    cs.setNonStrokingColor(new Color(30, 30, 30));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
+                    cs.newLineAtOffset(left + 55f, y); cs.showText(sanitizePdfText(br[1])); cs.endText();
+                    y -= 12f;
+                }
+
+                // ── BOTTOM FOOTER ──
+                float footerY = 35f;
+                cs.setStrokingColor(new Color(180, 180, 180)); cs.setLineWidth(0.4f);
+                cs.moveTo(left, footerY + 12f); cs.lineTo(right, footerY + 12f); cs.stroke();
+                cs.setNonStrokingColor(new Color(120, 120, 120));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
+                cs.newLineAtOffset(left, footerY);
+                cs.showText(sanitizePdfText(shortenForPdf(hdrLine, 95))); cs.endText();
+                if (!advisorTaxNumber.isBlank()) {
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
+                    cs.newLineAtOffset(left, footerY - 9f);
+                    cs.showText("Steuernummer: " + sanitizePdfText(advisorTaxNumber)); cs.endText();
+                }
             }
             if (xmlPath != null && Files.exists(xmlPath)) {
                 attachZugferdXmlToPdf(document, xmlPath);
@@ -3491,10 +3784,19 @@ public class WebUiServer {
         return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
     }
 
+    private static final java.util.Set<String> VALID_DEPARTMENTS = java.util.Set.of("AS", "VEMMINA", "LT", "ALL");
+
     private static String normalizeDepartment(String dep) {
-        String d = Objects.toString(dep, "").trim().toUpperCase();
-        if ("AS".equals(d) || "VEMMINA".equals(d) || "LT".equals(d) || "ALL".equals(d)) return d;
-        return "VEMMINA";
+        if (dep == null || dep.isBlank()) return "VEMMINA";
+        String[] parts = dep.split("[,;\\s]+");
+        List<String> result = new ArrayList<>();
+        for (String p : parts) {
+            String d = p.trim().toUpperCase();
+            if (VALID_DEPARTMENTS.contains(d)) result.add(d);
+        }
+        if (result.isEmpty()) return "VEMMINA";
+        if (result.contains("ALL")) return "ALL";
+        return String.join(",", result);
     }
 
     private static Map<String, Object> userToMap(UserAccount u) {
