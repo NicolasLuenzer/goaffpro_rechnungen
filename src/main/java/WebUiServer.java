@@ -8,6 +8,14 @@ import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
 import org.apache.pdfbox.pdmodel.PDPageContentStream;
 import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.common.filespecification.PDComplexFileSpecification;
+import org.apache.pdfbox.pdmodel.common.filespecification.PDEmbeddedFile;
+import org.apache.pdfbox.pdmodel.PDDocumentCatalog;
+import org.apache.pdfbox.pdmodel.PDDocumentNameDictionary;
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSDictionary;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode;
 
 import jakarta.activation.DataHandler;
 import jakarta.activation.FileDataSource;
@@ -38,6 +46,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneId;
+import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -52,6 +61,13 @@ import java.util.Set;
 import java.security.MessageDigest;
 import java.util.stream.Collectors;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.concurrent.ConcurrentHashMap;
+
 public class WebUiServer {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final DateTimeFormatter INPUT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss[XXX]");
@@ -62,33 +78,215 @@ public class WebUiServer {
     private static final Path HELP_DOC_PATH = Paths.get("docs/HILFE.md");
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
     private static final String COMMISSION_HISTORY_DATES_KEY = "lastImportedComissionHistoryDates";
+    private static final String MAIL_LOG_KEY = "sentMailLogJson";
+    private static final String REMINDER_LOG_KEY = "sentReminderLogJson";
     private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
     private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
+    private static final String USER_STORE_FILENAME = "goaffpro_users.enc";
+    private static final String AUTH_SECRET_DEFAULT = "goaffpro-auth-secret";
+    private static final Map<String, SessionUser> ACTIVE_SESSIONS = new ConcurrentHashMap<>();
+    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final List<String> DEFAULT_COMMISSION_HISTORY = List.of("2103705", "2167905", "2190357", "2230376", "2336836", "2421355", "2497986", "2565325");
     private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
 
     public static void main(String[] args) throws IOException {
-        HttpServer server = HttpServer.create(new InetSocketAddress(8080), 0);
+        HttpServer server;
+        try {
+            server = HttpServer.create(new InetSocketAddress(8080), 0);
+        } catch (java.net.BindException e) {
+            System.err.println("Port 8080 ist bereits belegt. Versuche, den bestehenden Prozess zu beenden...");
+            try {
+                Process netstat = new ProcessBuilder("netstat", "-ano").start();
+                String output = new String(netstat.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                netstat.waitFor();
+                String pid = null;
+                for (String line : output.split("\n")) {
+                    if (line.contains(":8080") && line.contains("LISTENING")) {
+                        String[] parts = line.trim().split("\\s+");
+                        pid = parts[parts.length - 1].trim();
+                        break;
+                    }
+                }
+                if (pid == null) {
+                    System.err.println("Kein Prozess auf Port 8080 gefunden.");
+                    throw e;
+                }
+                System.err.println("Beende Prozess PID " + pid + "...");
+                new ProcessBuilder("taskkill", "/F", "/PID", pid).start().waitFor();
+                Thread.sleep(1500);
+            } catch (java.net.BindException be) {
+                throw be;
+            } catch (Exception ex) {
+                System.err.println("Konnte Prozess nicht automatisch beenden: " + ex.getMessage());
+                System.err.println("Bitte manuell beenden: netstat -ano | findstr :8080, dann: taskkill /F /PID <PID>");
+                throw e;
+            }
+            server = HttpServer.create(new InetSocketAddress(8080), 0);
+        }
         server.createContext("/", new UiHandler());
         server.createContext("/api/executables", new ExecutablesHandler());
         server.createContext("/api/provisionen-goaffpro/poll", new PollGoaffproHandler());
         server.createContext("/api/settings", new SettingsHandler());
         server.createContext("/api/provisionen-goaffpro/export-pdf", new ExportPdfHandler());
         server.createContext("/api/provisionen-goaffpro/invoice-details-pdf", new InvoiceDetailsPdfHandler());
+        server.createContext("/api/mail-log", new MailLogHandler());
+        server.createContext("/api/mail-log/download", new MailLogDownloadHandler());
         server.createContext("/api/version", new VersionHandler());
         server.createContext("/api/version/history", new VersionHistoryHandler());
         server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
+        server.createContext("/api/analytics/advisor-detail", new AnalyticsAdvisorDetailHandler());
         server.createContext("/api/commissions/add-latest", new AddLatestCommissionHandler());
         server.createContext("/api/commissions/remove", new RemoveCommissionHandler());
         server.createContext("/api/commissions/rebuild-from-payments", new RebuildCommissionHistoryHandler());
         server.createContext("/api/help", new HelpHandler());
         server.createContext("/api/validation/advisors", new ValidationAdvisorsHandler());
         server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
+        server.createContext("/api/validation/send-reminder", new ValidationReminderMailHandler());
+        server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
+        server.createContext("/api/auth/login", new AuthLoginHandler());
+        server.createContext("/api/auth/me", new AuthMeHandler());
+        server.createContext("/api/auth/logout", new AuthLogoutHandler());
+        server.createContext("/api/users", new UsersHandler());
         server.setExecutor(null);
         server.start();
 
         System.out.println("Web UI Server gestartet auf http://localhost:8080");
+    }
+
+
+    private static class AuthLoginHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String username = asText(body, "username").trim();
+                String password = asText(body, "password");
+                Properties config = loadConfig();
+                List<UserAccount> users = loadUserAccounts(config);
+                UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(username)).findFirst().orElse(null);
+                if (u == null || !verifyPassword(password, u.passwordSalt, u.passwordHash)) { sendResponse(exchange, 401, "application/json", "{\"error\":\"Ungültige Login-Daten\"}"); return; }
+                String token = generateToken();
+                ACTIVE_SESSIONS.put(token, new SessionUser(u.username, u.isAdmin, u.department));
+                Map<String,Object> payload = new LinkedHashMap<>();
+                payload.put("token", token);
+                payload.put("user", userToMap(u));
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) { sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}"); }
+        }
+    }
+
+    private static class AuthMeHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            SessionUser s = requireSession(exchange);
+            if (s == null) return;
+            try {
+                Properties config = loadConfig();
+                List<UserAccount> users = loadUserAccounts(config);
+                UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(s.username)).findFirst().orElse(null);
+                if (u == null) { sendResponse(exchange, 401, "application/json", "{\"error\":\"Session ungültig\"}"); return; }
+                Map<String,Object> payload = new LinkedHashMap<>();
+                payload.put("user", userToMap(u));
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) { sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}"); }
+        }
+    }
+
+    private static class AuthLogoutHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+            String token = Objects.toString(exchange.getRequestHeaders().getFirst("X-Auth-Token"), "").trim();
+            if (!token.isBlank()) ACTIVE_SESSIONS.remove(token);
+            sendResponse(exchange, 200, "application/json", "{}");
+        }
+    }
+
+    private static class UsersHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            if (!su.isAdmin) { sendResponse(exchange, 403, "application/json", "{\"error\":\"Nur Admin\"}"); return; }
+            try {
+                Properties config = loadConfig();
+                if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                    List<Map<String,Object>> users = loadUserAccounts(config).stream().map(WebUiServer::userToMap).collect(Collectors.toList());
+                    Map<String,Object> p = new HashMap<>(); p.put("users", users);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(p));
+                    return;
+                }
+                if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String action = asText(body, "action").trim();
+                List<UserAccount> users = loadUserAccounts(config);
+                if ("create".equals(action)) {
+                    String username = asText(body, "username").trim();
+                    if (username.isBlank()) { sendResponse(exchange, 400, "application/json", "{\"error\":\"username fehlt\"}"); return; }
+                    if (users.stream().anyMatch(u -> u.username.equalsIgnoreCase(username))) { sendResponse(exchange, 400, "application/json", "{\"error\":\"Benutzer existiert bereits\"}"); return; }
+                    UserAccount u = new UserAccount();
+                    u.username = username;
+                    u.firstName = asText(body, "firstName").trim();
+                    u.lastName = asText(body, "lastName").trim();
+                    u.email = asText(body, "email").trim();
+                    u.phone = asText(body, "phone").trim();
+                    u.department = normalizeDepartment(asText(body, "department").trim());
+                    u.isAdmin = body.has("isAdmin") && body.get("isAdmin").asBoolean(false);
+                    String temp = randomPassword();
+                    String[] pw = hashPassword(temp);
+                    u.passwordSalt = pw[0]; u.passwordHash = pw[1];
+                    u.forcePasswordChange = true;
+                    users.add(u);
+                    saveUserAccounts(config, users);
+                    trySendPasswordChangeMail(u.email, username, temp, config);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message","Benutzer angelegt")));
+                    return;
+                }
+                if ("resetPassword".equals(action)) {
+                    String username = asText(body, "username").trim();
+                    String newPassword = asText(body, "newPassword");
+                    UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(username)).findFirst().orElse(null);
+                    if (u == null) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Benutzer nicht gefunden\"}"); return; }
+                    if (newPassword.isBlank()) newPassword = randomPassword();
+                    String[] pw = hashPassword(newPassword);
+                    u.passwordSalt = pw[0]; u.passwordHash = pw[1];
+                    u.forcePasswordChange = true;
+                    saveUserAccounts(config, users);
+                    trySendPasswordChangeMail(u.email, u.username, newPassword, config);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message","Passwort überschrieben")));
+                    return;
+                }
+                if ("update".equals(action)) {
+                    String username = asText(body, "username").trim();
+                    UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(username)).findFirst().orElse(null);
+                    if (u == null) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Benutzer nicht gefunden\"}"); return; }
+                    u.firstName = asText(body, "firstName").trim();
+                    u.lastName = asText(body, "lastName").trim();
+                    u.email = asText(body, "email").trim();
+                    u.phone = asText(body, "phone").trim();
+                    u.department = normalizeDepartment(asText(body, "department").trim());
+                    u.isAdmin = body.has("isAdmin") && body.get("isAdmin").asBoolean(false);
+                    saveUserAccounts(config, users);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message", "Benutzer aktualisiert")));
+                    return;
+                }
+                if ("delete".equals(action)) {
+                    String username = asText(body, "username").trim();
+                    boolean removed = users.removeIf(x -> x.username.equalsIgnoreCase(username));
+                    if (!removed) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Benutzer nicht gefunden\"}"); return; }
+                    saveUserAccounts(config, users);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message", "Benutzer gelöscht")));
+                    return;
+                }
+                sendResponse(exchange, 400, "application/json", "{\"error\":\"Unbekannte Aktion\"}");
+            } catch (Exception e) { sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}"); }
+        }
     }
 
     private static class UiHandler implements HttpHandler {
@@ -296,15 +494,32 @@ public class WebUiServer {
                 String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH);
                 String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
                 String goaffproAPIKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
+                String erpnextApiKey = Objects.toString(config.getProperty("erpnextApiKey"), "").trim();
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 String smtpHost = Objects.toString(config.getProperty("smtpHost"), "").trim();
                 String smtpPort = Objects.toString(config.getProperty("smtpPort"), "587").trim();
                 String smtpUsername = Objects.toString(config.getProperty("smtpUsername"), "").trim();
+                String emailBcc = Objects.toString(config.getProperty("emailBcc"), "").trim();
                 boolean smtpTls = Boolean.parseBoolean(Objects.toString(config.getProperty("smtpTls"), "false"));
                 boolean hasSmtpPassword = !Objects.toString(config.getProperty("smtpPassword"), "").trim().isBlank();
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
                 String emailRecipientMode = Objects.toString(config.getProperty("emailRecipientMode"), "contact").trim();
                 String emailTemplateHtml = Objects.toString(config.getProperty("emailTemplateHtml"), "");
+                String validationReminderTemplateHtml = Objects.toString(config.getProperty("validationReminderTemplateHtml"), "");
+                String eInvoicePdfTemplateHtml = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "");
+                boolean eInvoiceEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true"));
+                boolean eInvoiceAttachAndStoreEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
+                String eInvoiceBuyerName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
+                String eInvoiceBuyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
+                String eInvoiceBuyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
+                String eInvoiceBuyerCity = Objects.toString(config.getProperty("eInvoiceBuyerCity"), "").trim();
+                String eInvoiceBuyerCountry = Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE").trim();
+                String eInvoiceBuyerVatId = Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "").trim();
+                String eInvoiceBuyerTaxNumber = Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "").trim();
+                String eInvoiceBankIban = Objects.toString(config.getProperty("eInvoiceBankIban"), "").trim();
+                String eInvoiceBankBic = Objects.toString(config.getProperty("eInvoiceBankBic"), "").trim();
+                String eInvoiceBankAccountHolder = Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), "").trim();
+                String eInvoicePaymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
                 ensureCommissionInHistory(config, activeCommission);
                 persistSettings(config);
 
@@ -313,16 +528,22 @@ public class WebUiServer {
                 payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 payload.put("lastImportedComission", activeCommission);
                 payload.put("goaffproAPIKey", goaffproAPIKey);
+                payload.put("erpnextApiKey", erpnextApiKey);
                 payload.put("contactEmail", contactEmail);
                 payload.put("smtpHost", smtpHost);
                 payload.put("smtpPort", smtpPort);
                 payload.put("smtpUsername", smtpUsername);
+                payload.put("emailBcc", emailBcc);
                 payload.put("smtpTls", smtpTls);
                 payload.put("hasSmtpPassword", hasSmtpPassword);
                 payload.put("sendEmailsEnabled", sendEmailsEnabled);
                 payload.put("emailRecipientMode", emailRecipientMode);
                 payload.put("emailTemplateHtml", emailTemplateHtml.isBlank() ? getDefaultInvoiceMailHtmlTemplate() : emailTemplateHtml);
                 payload.put("emailTemplateHtmlDefault", getDefaultInvoiceMailHtmlTemplate());
+                payload.put("validationReminderTemplateHtml", validationReminderTemplateHtml.isBlank() ? getDefaultValidationReminderHtmlTemplate() : validationReminderTemplateHtml);
+                payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
+                payload.put("eInvoicePdfTemplateHtml", eInvoicePdfTemplateHtml.isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : eInvoicePdfTemplateHtml);
+                payload.put("eInvoicePdfTemplateHtmlDefault", getDefaultEInvoicePdfViewHtmlTemplate());
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -336,15 +557,33 @@ public class WebUiServer {
                     String newPath = asText(body, "pdfExportPath").trim();
                     String selectedCommission = asText(body, "lastImportedComission").trim();
                     String goaffproAPIKey = asText(body, "goaffproAPIKey").trim();
+                    String erpnextApiKey = asText(body, "erpnextApiKey").trim();
+                    String erpnextApiSecret = asText(body, "erpnextApiSecret").trim();
                     String contactEmail = asText(body, "contactEmail").trim();
                     String smtpHost = asText(body, "smtpHost").trim();
                     String smtpPort = asText(body, "smtpPort").trim();
                     String smtpUsername = asText(body, "smtpUsername").trim();
+                    String emailBcc = asText(body, "emailBcc").trim();
                     String smtpPassword = asText(body, "smtpPassword").trim();
                     boolean smtpTls = body.has("smtpTls") && body.get("smtpTls").asBoolean(false);
                     boolean sendEmailsEnabled = !body.has("sendEmailsEnabled") || body.get("sendEmailsEnabled").asBoolean(true);
                     String emailRecipientMode = asText(body, "emailRecipientMode").trim();
                     String emailTemplateHtml = asText(body, "emailTemplateHtml");
+                    String validationReminderTemplateHtml = asText(body, "validationReminderTemplateHtml");
+                    String eInvoicePdfTemplateHtml = asText(body, "eInvoicePdfTemplateHtml");
+                    boolean eInvoiceEnabled = !body.has("eInvoiceEnabled") || body.get("eInvoiceEnabled").asBoolean(true);
+                    boolean eInvoiceAttachAndStoreEnabled = !body.has("eInvoiceAttachAndStoreEnabled") || body.get("eInvoiceAttachAndStoreEnabled").asBoolean(true);
+                    String eInvoiceBuyerName = asText(body, "eInvoiceBuyerName").trim();
+                    String eInvoiceBuyerStreet = asText(body, "eInvoiceBuyerStreet").trim();
+                    String eInvoiceBuyerZip = asText(body, "eInvoiceBuyerZip").trim();
+                    String eInvoiceBuyerCity = asText(body, "eInvoiceBuyerCity").trim();
+                    String eInvoiceBuyerCountry = asText(body, "eInvoiceBuyerCountry").trim();
+                    String eInvoiceBuyerVatId = asText(body, "eInvoiceBuyerVatId").trim();
+                    String eInvoiceBuyerTaxNumber = asText(body, "eInvoiceBuyerTaxNumber").trim();
+                    String eInvoiceBankIban = asText(body, "eInvoiceBankIban").trim();
+                    String eInvoiceBankBic = asText(body, "eInvoiceBankBic").trim();
+                    String eInvoiceBankAccountHolder = asText(body, "eInvoiceBankAccountHolder").trim();
+                    String eInvoicePaymentTerms = asText(body, "eInvoicePaymentTerms").trim();
                     if (!"advisor".equals(emailRecipientMode)) emailRecipientMode = "contact";
 
                     Properties config = loadConfig();
@@ -355,6 +594,10 @@ public class WebUiServer {
                     if (!goaffproAPIKey.isEmpty()) {
                         config.setProperty("goaffproAPIKey", goaffproAPIKey);
                     }
+                    config.setProperty("erpnextApiKey", erpnextApiKey);
+                    if (!erpnextApiSecret.isBlank()) {
+                        config.setProperty("erpnextApiSecret", erpnextApiSecret);
+                    }
                     if (!selectedCommission.isEmpty()) {
                         config.setProperty("lastImportedComission", selectedCommission);
                         ensureCommissionInHistory(config, selectedCommission);
@@ -363,13 +606,41 @@ public class WebUiServer {
                     config.setProperty("smtpHost", smtpHost);
                     config.setProperty("smtpPort", smtpPort.isBlank() ? "587" : smtpPort);
                     config.setProperty("smtpUsername", smtpUsername);
+                    config.setProperty("emailBcc", emailBcc);
                     config.setProperty("smtpTls", String.valueOf(smtpTls));
                     if (!smtpPassword.isBlank()) {
                         config.setProperty("smtpPassword", smtpPassword);
                     }
                     config.setProperty("sendEmailsEnabled", String.valueOf(sendEmailsEnabled));
                     config.setProperty("emailRecipientMode", emailRecipientMode);
-                    config.setProperty("emailTemplateHtml", emailTemplateHtml);
+                    if (!emailTemplateHtml.isBlank()) {
+                        config.setProperty("emailTemplateHtml", emailTemplateHtml);
+                    } else {
+                        config.remove("emailTemplateHtml");
+                    }
+                    if (!validationReminderTemplateHtml.isBlank()) {
+                        config.setProperty("validationReminderTemplateHtml", validationReminderTemplateHtml);
+                    } else {
+                        config.remove("validationReminderTemplateHtml");
+                    }
+                    if (!eInvoicePdfTemplateHtml.isBlank()) {
+                        config.setProperty("eInvoicePdfTemplateHtml", eInvoicePdfTemplateHtml);
+                    } else {
+                        config.remove("eInvoicePdfTemplateHtml");
+                    }
+                    config.setProperty("eInvoiceEnabled", String.valueOf(eInvoiceEnabled));
+                    config.setProperty("eInvoiceAttachAndStoreEnabled", String.valueOf(eInvoiceAttachAndStoreEnabled));
+                    config.setProperty("eInvoiceBuyerName", eInvoiceBuyerName);
+                    config.setProperty("eInvoiceBuyerStreet", eInvoiceBuyerStreet);
+                    config.setProperty("eInvoiceBuyerZip", eInvoiceBuyerZip);
+                    config.setProperty("eInvoiceBuyerCity", eInvoiceBuyerCity);
+                    config.setProperty("eInvoiceBuyerCountry", eInvoiceBuyerCountry);
+                    config.setProperty("eInvoiceBuyerVatId", eInvoiceBuyerVatId);
+                    config.setProperty("eInvoiceBuyerTaxNumber", eInvoiceBuyerTaxNumber);
+                    config.setProperty("eInvoiceBankIban", eInvoiceBankIban);
+                    config.setProperty("eInvoiceBankBic", eInvoiceBankBic);
+                    config.setProperty("eInvoiceBankAccountHolder", eInvoiceBankAccountHolder);
+                    config.setProperty("eInvoicePaymentTerms", eInvoicePaymentTerms);
 
                     persistSettings(config);
 
@@ -379,16 +650,35 @@ public class WebUiServer {
                     payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                     payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
                     payload.put("goaffproAPIKey", Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY));
+                    payload.put("erpnextApiKey", Objects.toString(config.getProperty("erpnextApiKey"), ""));
                     payload.put("contactEmail", Objects.toString(config.getProperty("contactEmail"), ""));
                     payload.put("smtpHost", Objects.toString(config.getProperty("smtpHost"), ""));
                     payload.put("smtpPort", Objects.toString(config.getProperty("smtpPort"), "587"));
                     payload.put("smtpUsername", Objects.toString(config.getProperty("smtpUsername"), ""));
+                    payload.put("emailBcc", Objects.toString(config.getProperty("emailBcc"), ""));
                     payload.put("smtpTls", Boolean.parseBoolean(Objects.toString(config.getProperty("smtpTls"), "false")));
                     payload.put("hasSmtpPassword", !Objects.toString(config.getProperty("smtpPassword"), "").trim().isBlank());
                     payload.put("sendEmailsEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true")));
                     payload.put("emailRecipientMode", Objects.toString(config.getProperty("emailRecipientMode"), "contact"));
                     payload.put("emailTemplateHtml", Objects.toString(config.getProperty("emailTemplateHtml"), "").isBlank() ? getDefaultInvoiceMailHtmlTemplate() : Objects.toString(config.getProperty("emailTemplateHtml"), ""));
                     payload.put("emailTemplateHtmlDefault", getDefaultInvoiceMailHtmlTemplate());
+                    payload.put("validationReminderTemplateHtml", Objects.toString(config.getProperty("validationReminderTemplateHtml"), "").isBlank() ? getDefaultValidationReminderHtmlTemplate() : Objects.toString(config.getProperty("validationReminderTemplateHtml"), ""));
+                    payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
+                    payload.put("eInvoicePdfTemplateHtml", Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "").isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), ""));
+                    payload.put("eInvoicePdfTemplateHtmlDefault", getDefaultEInvoicePdfViewHtmlTemplate());
+                    payload.put("eInvoiceEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true")));
+                    payload.put("eInvoiceAttachAndStoreEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true")));
+                    payload.put("eInvoiceBuyerName", Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh"));
+                    payload.put("eInvoiceBuyerStreet", Objects.toString(config.getProperty("eInvoiceBuyerStreet"), ""));
+                    payload.put("eInvoiceBuyerZip", Objects.toString(config.getProperty("eInvoiceBuyerZip"), ""));
+                    payload.put("eInvoiceBuyerCity", Objects.toString(config.getProperty("eInvoiceBuyerCity"), ""));
+                    payload.put("eInvoiceBuyerCountry", Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE"));
+                    payload.put("eInvoiceBuyerVatId", Objects.toString(config.getProperty("eInvoiceBuyerVatId"), ""));
+                    payload.put("eInvoiceBuyerTaxNumber", Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), ""));
+                    payload.put("eInvoiceBankIban", Objects.toString(config.getProperty("eInvoiceBankIban"), ""));
+                    payload.put("eInvoiceBankBic", Objects.toString(config.getProperty("eInvoiceBankBic"), ""));
+                    payload.put("eInvoiceBankAccountHolder", Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), ""));
+                    payload.put("eInvoicePaymentTerms", Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug"));
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -941,6 +1231,217 @@ public class WebUiServer {
         }
     }
 
+    private static class AnalyticsAdvisorDetailHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String advisorId = asText(body, "advisorId").trim();
+                if (advisorId.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"advisorId fehlt\"}");
+                    return;
+                }
+                String sinceId = asText(body, "sinceId").trim();
+                if (sinceId.isBlank()) sinceId = "0";
+                LocalDate fromDate = parseIsoDate(asText(body, "fromDate"));
+                LocalDate toDate = parseIsoDate(asText(body, "toDate"));
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
+
+                JsonNode advisor = fetchAffiliatesById(apiKey, List.of(advisorId)).get(advisorId);
+
+                String paymentsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + sinceId
+                        + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
+                JsonNode paymentRoot = requestJson(paymentsUrl, apiKey);
+                JsonNode payments = paymentRoot.get("payments");
+                if (payments == null || !payments.isArray()) payments = OBJECT_MAPPER.createArrayNode();
+
+                List<JsonNode> advisorPayments = new ArrayList<>();
+                for (JsonNode payment : payments) {
+                    if (!advisorId.equals(asText(payment, "affiliate_id").trim())) continue;
+                    LocalDate paymentDate = parseIsoDateTimeToLocalDate(asText(payment, "created_at"));
+                    if (paymentDate == null) continue;
+                    if (fromDate != null && paymentDate.isBefore(fromDate)) continue;
+                    if (toDate != null && paymentDate.isAfter(toDate)) continue;
+                    advisorPayments.add(payment);
+                }
+
+                double payoutSum = 0.0;
+                int directSalesCount = 0;
+                int indirectSalesCount = 0;
+                double directCommission = 0.0;
+                double indirectCommission = 0.0;
+                int totalTx = 0;
+                Set<String> orderIds = new LinkedHashSet<>();
+                List<Map<String, Object>> payoutRows = new ArrayList<>();
+
+                for (JsonNode payment : advisorPayments) {
+                    String paymentId = asText(payment, "id");
+                    double payout = parseDoubleSafeStatic(asText(payment, "amount"));
+                    payoutSum += payout;
+                    JsonNode txArray = payment.get("transactions");
+                    int txCount = (txArray != null && txArray.isArray()) ? txArray.size() : 0;
+                    totalTx += txCount;
+                    if (txArray != null && txArray.isArray()) {
+                        for (JsonNode tx : txArray) {
+                            String entityType = asText(tx, "entity_type");
+                            double txAmount = parseDoubleSafeStatic(asText(tx, "amount"));
+                            if ("orders".equalsIgnoreCase(entityType)) {
+                                directSalesCount++;
+                                directCommission += txAmount;
+                            } else {
+                                indirectSalesCount++;
+                                indirectCommission += txAmount;
+                            }
+                            String orderId = asText(tx.path("metadata"), "order_id").trim();
+                            if (orderId.isBlank()) orderId = asText(tx, "entity_id").trim();
+                            if (!orderId.isBlank()) orderIds.add(orderId);
+                        }
+                    }
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("paymentId", paymentId);
+                    row.put("created", formatDateTimeEuropeBerlinStatic(asText(payment, "created_at")));
+                    row.put("amount", payout);
+                    row.put("currency", asText(payment, "currency"));
+                    row.put("method", asText(payment, "payment_method"));
+                    row.put("txCount", txCount);
+                    row.put("periodLabel", buildPaymentPeriodLabel(payment));
+                    payoutRows.add(row);
+                }
+
+                Map<String, JsonNode> ordersById = fetchOrdersById(apiKey, new ArrayList<>(orderIds));
+                Map<String, Map<String, Object>> productAgg = new LinkedHashMap<>();
+                int totalUnits = 0;
+                for (JsonNode order : ordersById.values()) {
+                    JsonNode lineItems = order.get("line_items");
+                    if (lineItems == null || !lineItems.isArray()) continue;
+                    for (JsonNode li : lineItems) {
+                        String name = asText(li, "title");
+                        if (name.isBlank()) name = asText(li, "name");
+                        if (name.isBlank()) name = "(ohne Titel)";
+                        int qty = parseIntSafe(asText(li, "quantity"));
+                        double price = parseDoubleSafeStatic(asText(li, "price"));
+                        totalUnits += Math.max(qty, 0);
+                        Map<String, Object> agg = productAgg.computeIfAbsent(name, k -> {
+                            Map<String, Object> m = new LinkedHashMap<>();
+                            m.put("productName", k);
+                            m.put("quantity", 0);
+                            m.put("salesValue", 0.0);
+                            return m;
+                        });
+                        agg.put("quantity", ((Integer) agg.get("quantity")) + Math.max(qty, 0));
+                        agg.put("salesValue", ((Double) agg.get("salesValue")) + Math.max(price, 0.0) * Math.max(qty, 0));
+                    }
+                }
+                List<Map<String, Object>> productRows = new ArrayList<>(productAgg.values());
+                productRows.sort((a, b) -> Integer.compare((Integer) b.get("quantity"), (Integer) a.get("quantity")));
+
+                Map<String, Object> summary = new LinkedHashMap<>();
+                summary.put("advisorId", advisorId);
+                summary.put("advisorName", advisor != null ? asText(advisor, "name") : "");
+                summary.put("advisorEmail", advisor != null ? asText(advisor, "email") : "");
+                summary.put("advisorCountry", advisor != null ? asText(advisor, "country") : "");
+                summary.put("advisorStatus", advisor != null ? asText(advisor, "status") : "");
+                summary.put("payoutCount", advisorPayments.size());
+                summary.put("payoutSum", payoutSum);
+                summary.put("currency", advisorPayments.isEmpty() ? "EUR" : asText(advisorPayments.get(0), "currency"));
+                summary.put("totalTransactions", totalTx);
+                summary.put("directSalesCount", directSalesCount);
+                summary.put("indirectSalesCount", indirectSalesCount);
+                summary.put("directCommission", directCommission);
+                summary.put("indirectCommission", indirectCommission);
+                summary.put("orderCount", ordersById.size());
+                summary.put("soldUnits", totalUnits);
+
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("summary", summary);
+                payload.put("payoutRows", payoutRows);
+                payload.put("productRows", productRows);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class MailLogHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                List<Map<String, String>> entries = readMailLogEntries(config);
+                Map<String, List<Map<String, String>>> byPayment = new LinkedHashMap<>();
+                for (Map<String, String> row : entries) {
+                    String paymentId = Objects.toString(row.get("paymentId"), "").trim();
+                    if (paymentId.isBlank()) continue;
+                    byPayment.computeIfAbsent(paymentId, k -> new ArrayList<>()).add(row);
+                }
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("entries", entries);
+                payload.put("byPayment", byPayment);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class MailLogDownloadHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Map<String, String> query = parseQueryParams(exchange.getRequestURI());
+                String filePath = Objects.toString(query.get("path"), "").trim();
+                if (filePath.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"path fehlt\"}");
+                    return;
+                }
+                Path p = Paths.get(filePath).toAbsolutePath().normalize();
+                if (!Files.exists(p) || !Files.isRegularFile(p)) {
+                    sendResponse(exchange, 404, "application/json", "{\"error\":\"Datei nicht gefunden\"}");
+                    return;
+                }
+                byte[] bytes = Files.readAllBytes(p);
+                exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
+                exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
+                exchange.getResponseHeaders().add("Content-Disposition", "attachment; filename=\"" + p.getFileName().toString().replace("\"", "") + "\"");
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (OutputStream os = exchange.getResponseBody()) { os.write(bytes); }
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
     private static class ExportPdfHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -1091,6 +1592,7 @@ public class WebUiServer {
                 JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 String paymentId = asText(body, "paymentId").trim();
                 String requestedDir = asText(body, "pdfExportPath").trim();
+                Boolean includeEInvoiceArtifactsRequest = body.has("includeEInvoiceArtifacts") ? body.get("includeEInvoiceArtifacts").asBoolean() : null;
                 if (paymentId.isEmpty()) {
                     sendResponse(exchange, 400, "application/json", "{\"error\":\"paymentId fehlt\"}");
                     return;
@@ -1133,8 +1635,17 @@ public class WebUiServer {
                 String baseFilename = "rechnungsdetails_" + sanitizeFilename(paymentId) + "_" + timestamp;
                 Path pdfPath = runExportDir.resolve(baseFilename + ".pdf");
                 Path jsonPath = runExportDir.resolve(baseFilename + ".json");
+                boolean eInvoiceAttachAndStoreEnabled = includeEInvoiceArtifactsRequest != null
+                        ? includeEInvoiceArtifactsRequest
+                        : Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
+                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("rechnung_" + sanitizeFilename(paymentId) + "_" + timestamp + ".xml") : null;
+                Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("rechnung_" + sanitizeFilename(paymentId) + "_" + timestamp + ".pdf") : null;
                 createInvoiceDetailsPdf(pdfPath, response, affiliate);
                 writeOriginalJson(jsonPath, response);
+                if (eInvoiceAttachAndStoreEnabled) {
+                    createZugferdInvoiceXml(zugferdPath, payment, affiliate, config);
+                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, payment, affiliate, config);
+                }
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
@@ -1148,10 +1659,12 @@ public class WebUiServer {
                     sendResponse(exchange, 400, "application/json", "{\"error\":\"" + escapeJson(errorText) + "\"}");
                     return;
                 }
+                String periodLabel = buildPaymentPeriodLabel(payment);
                 if (sendEmailsEnabled) {
-                    String periodLabel = buildPaymentPeriodLabel(payment);
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(targetEmail, pdfPath, jsonPath, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
+                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
+                    String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + ((affiliateNameForMail == null || affiliateNameForMail.isBlank()) ? "Beraterin" : affiliateNameForMail.trim());
+                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath);
                 }
 
                 boolean opened = false;
@@ -1175,9 +1688,13 @@ public class WebUiServer {
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
+                payload.put("zugferdFile", zugferdPath != null ? zugferdPath.toString() : "");
+                payload.put("eInvoicePdfFile", eInvoicePdfPath != null ? eInvoicePdfPath.toString() : "");
+                payload.put("eInvoiceViewPdfFile", eInvoicePdfPath != null ? eInvoicePdfPath.toString() : "");
                 payload.put("opened", opened);
                 payload.put("openMessage", openMessage);
                 payload.put("pdfExportPath", exportDir.toString());
+                payload.put("includeEInvoiceArtifacts", eInvoiceAttachAndStoreEnabled);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -1199,8 +1716,7 @@ public class WebUiServer {
                         cs.showText("Provisionsnachweis konnte nicht erstellt werden (keine Daten)");
                         cs.endText();
                     }
-                    document.save(pdfPath.toFile());
-                    return;
+                document.save(pdfPath.toFile());
                 }
 
                 List<JsonNode> txList = new ArrayList<>();
@@ -1823,13 +2339,93 @@ public class WebUiServer {
         }
     }
 
+    private static class ValidationReminderLogHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                List<Map<String, String>> entries = readReminderLogEntries(config);
+                Map<String, List<Map<String, String>>> byAdvisor = new LinkedHashMap<>();
+                for (Map<String, String> row : entries) {
+                    String advisorId = Objects.toString(row.get("advisorId"), "").trim();
+                    if (advisorId.isBlank()) continue;
+                    byAdvisor.computeIfAbsent(advisorId, k -> new ArrayList<>()).add(row);
+                }
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("entries", entries);
+                payload.put("byAdvisor", byAdvisor);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class ValidationReminderMailHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String advisorId = asText(body, "advisorId").trim();
+                String advisorName = asText(body, "advisorName").trim();
+                String advisorEmail = asText(body, "advisorEmail").trim();
+                String missingFields = asText(body, "missingFields").trim();
+                String recipientMode = asText(body, "recipientMode").trim();
+                if (!"advisor".equals(recipientMode)) recipientMode = "contact";
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
+                String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
+                String toEmail = "advisor".equals(recipientMode) ? advisorEmail : contactEmail;
+                if (sendEmailsEnabled && toEmail.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"Keine Empfänger-E-Mail vorhanden\"}");
+                    return;
+                }
+                String subject = "Bitte fehlende Stammdaten ergänzen";
+                if (sendEmailsEnabled) {
+                    String plain = buildValidationReminderMailBody(advisorName, missingFields);
+                    String html = buildValidationReminderMailHtml(advisorName, missingFields, Objects.toString(config.getProperty("validationReminderTemplateHtml"), ""));
+                    sendSimpleHtmlMail(toEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), subject, plain, html, resolveSmtpConfig(config));
+                }
+                appendReminderLogEntry(config, advisorId, advisorName, recipientMode, toEmail, subject, missingFields, sendEmailsEnabled ? "sent" : "skipped");
+                persistSettings(config);
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", sendEmailsEnabled ? "Erinnerungs-E-Mail versendet." : "E-Mail-Versand ist deaktiviert.");
+                payload.put("toEmail", toEmail);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
     private static Map<String, JsonNode> fetchAffiliatesById(String apiKey, List<String> affiliateIds) throws Exception {
         if (affiliateIds.isEmpty()) {
             return Collections.emptyMap();
         }
 
         String ids = String.join(",", affiliateIds);
-        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,email,phone,company_name,ref_code,status,address_1,address_2,city,state,zip,country,tax_identification_number,parent_id,upline_affiliate_id,upline_id,parent_affiliate_id";
+        String url = "https://api.goaffpro.com/v1/admin/affiliates?id=" + ids + "&fields=id,name,email,phone,company_name,ref_code,status,address_1,address_2,city,state,zip,country,tax_identification_number,payment_method,payment_details,parent_id,upline_affiliate_id,upline_id,parent_affiliate_id";
         JsonNode root = requestJson(url, apiKey);
         JsonNode affiliates = root.get("affiliates");
         if (affiliates == null || !affiliates.isArray()) {
@@ -1843,6 +2439,170 @@ public class WebUiServer {
         return map;
     }
 
+
+    private static Map<String, JsonNode> fetchOrdersById(String apiKey, List<String> orderIds) throws Exception {
+        if (orderIds == null || orderIds.isEmpty()) return Collections.emptyMap();
+        String ids = String.join(",", orderIds);
+        String url = "https://api.goaffpro.com/v1/admin/orders?id=" + ids + "&fields=id,number,currency,total,status,affiliate_id,created_at,line_items";
+        JsonNode root = requestJson(url, apiKey);
+        JsonNode orders = root.get("orders");
+        if (orders == null || !orders.isArray()) return Collections.emptyMap();
+        Map<String, JsonNode> map = new LinkedHashMap<>();
+        for (JsonNode order : orders) {
+            String id = asText(order, "id").trim();
+            if (!id.isBlank()) map.put(id, order);
+        }
+        return map;
+    }
+
+    private static int parseIntSafe(String value) {
+        try {
+            if (value == null || value.isBlank()) return 0;
+            return Integer.parseInt(value.trim());
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    private static void createZugferdInvoiceXml(Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config) throws IOException {
+        boolean enabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true"));
+        if (!enabled) {
+            Files.writeString(xmlPath, "<!-- ZUGFeRD deaktiviert -->", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            return;
+        }
+
+        String buyerName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
+        String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
+        String buyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
+        String buyerCity = Objects.toString(config.getProperty("eInvoiceBuyerCity"), "").trim();
+        String buyerCountry = Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE").trim();
+        String buyerVatId = Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "").trim();
+        String buyerTaxNumber = Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "").trim();
+        String paymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
+
+        String sellerName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
+        String sellerStreet = affiliate != null ? asText(affiliate, "address_1") : "";
+        String sellerCity = affiliate != null ? asText(affiliate, "city") : "";
+        String sellerZip = affiliate != null ? asText(affiliate, "zip") : "";
+        String sellerCountry = affiliate != null ? asText(affiliate, "country") : "";
+        String sellerTaxNumber = affiliate != null ? asText(affiliate, "tax_identification_number") : "";
+
+        String bankIban = parseAffiliatePaymentField(affiliate, "iban");
+        String bankBic = parseAffiliatePaymentField(affiliate, "bic");
+        String bankAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
+        if (bankAccountHolder.isBlank()) bankAccountHolder = parseAffiliatePaymentField(affiliate, "name");
+
+        String invoiceId = asText(payment, "id");
+        String issueDate = formatDateYmd(asText(payment, "created_at"));
+        String currency = asText(payment, "currency");
+        if (currency.isBlank()) currency = "EUR";
+        double amount = parseDoubleSafeStatic(asText(payment, "amount"));
+
+        String xml = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
+                                          xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100"
+                                          xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
+                  <rsm:ExchangedDocumentContext>
+                    <ram:GuidelineSpecifiedDocumentContextParameter>
+                      <ram:ID>urn:cen.eu:en16931:2017#compliant#urn:zugferd.de:2p2:basic</ram:ID>
+                    </ram:GuidelineSpecifiedDocumentContextParameter>
+                  </rsm:ExchangedDocumentContext>
+                  <rsm:ExchangedDocument>
+                    <ram:ID>{{invoiceId}}</ram:ID>
+                    <ram:TypeCode>380</ram:TypeCode>
+                    <ram:IssueDateTime><udt:DateTimeString format="102">{{issueDate}}</udt:DateTimeString></ram:IssueDateTime>
+                  </rsm:ExchangedDocument>
+                  <rsm:SupplyChainTradeTransaction>
+                    <ram:ApplicableHeaderTradeAgreement>
+                      <ram:SellerTradeParty>
+                        <ram:Name>{{sellerName}}</ram:Name>
+                        <ram:PostalTradeAddress><ram:PostcodeCode>{{sellerZip}}</ram:PostcodeCode><ram:LineOne>{{sellerStreet}}</ram:LineOne><ram:CityName>{{sellerCity}}</ram:CityName><ram:CountryID>{{sellerCountry}}</ram:CountryID></ram:PostalTradeAddress>
+                        <ram:SpecifiedTaxRegistration><ram:ID schemeID="FC">{{sellerTaxNumber}}</ram:ID></ram:SpecifiedTaxRegistration>
+                      </ram:SellerTradeParty>
+                      <ram:BuyerTradeParty>
+                        <ram:Name>{{buyerName}}</ram:Name>
+                        <ram:PostalTradeAddress><ram:PostcodeCode>{{buyerZip}}</ram:PostcodeCode><ram:LineOne>{{buyerStreet}}</ram:LineOne><ram:CityName>{{buyerCity}}</ram:CityName><ram:CountryID>{{buyerCountry}}</ram:CountryID></ram:PostalTradeAddress>
+                        <ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">{{buyerVatId}}</ram:ID></ram:SpecifiedTaxRegistration>
+                        <ram:SpecifiedTaxRegistration><ram:ID schemeID="FC">{{buyerTaxNumber}}</ram:ID></ram:SpecifiedTaxRegistration>
+                      </ram:BuyerTradeParty>
+                    </ram:ApplicableHeaderTradeAgreement>
+                    <ram:ApplicableHeaderTradeSettlement>
+                      <ram:InvoiceCurrencyCode>{{currency}}</ram:InvoiceCurrencyCode>
+                      <ram:SpecifiedTradeSettlementPaymentMeans>
+                        <ram:TypeCode>58</ram:TypeCode>
+                        <ram:PayeePartyCreditorFinancialAccount><ram:IBANID>{{bankIban}}</ram:IBANID><ram:AccountName>{{bankAccountHolder}}</ram:AccountName></ram:PayeePartyCreditorFinancialAccount>
+                        <ram:PayeeSpecifiedCreditorFinancialInstitution><ram:BICID>{{bankBic}}</ram:BICID></ram:PayeeSpecifiedCreditorFinancialInstitution>
+                      </ram:SpecifiedTradeSettlementPaymentMeans>
+                      <ram:SpecifiedTradePaymentTerms><ram:Description>{{paymentTerms}}</ram:Description></ram:SpecifiedTradePaymentTerms>
+                      <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+                        <ram:LineTotalAmount>{{amount}}</ram:LineTotalAmount>
+                        <ram:GrandTotalAmount>{{amount}}</ram:GrandTotalAmount>
+                        <ram:DuePayableAmount>{{amount}}</ram:DuePayableAmount>
+                      </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+                    </ram:ApplicableHeaderTradeSettlement>
+                  </rsm:SupplyChainTradeTransaction>
+                </rsm:CrossIndustryInvoice>
+                """;
+        xml = xml.replace("{{invoiceId}}", escapeXml(invoiceId))
+                .replace("{{issueDate}}", escapeXml(issueDate))
+                .replace("{{sellerName}}", escapeXml(sellerName))
+                .replace("{{sellerStreet}}", escapeXml(sellerStreet))
+                .replace("{{sellerZip}}", escapeXml(sellerZip))
+                .replace("{{sellerCity}}", escapeXml(sellerCity))
+                .replace("{{sellerCountry}}", escapeXml(sellerCountry))
+                .replace("{{sellerTaxNumber}}", escapeXml(sellerTaxNumber))
+                .replace("{{buyerName}}", escapeXml(buyerName))
+                .replace("{{buyerStreet}}", escapeXml(buyerStreet))
+                .replace("{{buyerZip}}", escapeXml(buyerZip))
+                .replace("{{buyerCity}}", escapeXml(buyerCity))
+                .replace("{{buyerCountry}}", escapeXml(buyerCountry))
+                .replace("{{buyerVatId}}", escapeXml(buyerVatId))
+                .replace("{{buyerTaxNumber}}", escapeXml(buyerTaxNumber))
+                .replace("{{currency}}", escapeXml(currency))
+                .replace("{{bankIban}}", escapeXml(bankIban))
+                .replace("{{bankAccountHolder}}", escapeXml(bankAccountHolder))
+                .replace("{{bankBic}}", escapeXml(bankBic))
+                .replace("{{paymentTerms}}", escapeXml(paymentTerms))
+                .replace("{{amount}}", String.format(java.util.Locale.US, "%.2f", amount));
+
+        Files.writeString(xmlPath, xml, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    private static String parseAffiliatePaymentField(JsonNode affiliate, String key) {
+        if (affiliate == null || affiliate.isMissingNode() || affiliate.isNull()) return "";
+        JsonNode paymentDetails = affiliate.get("payment_details");
+        if (paymentDetails == null || paymentDetails.isMissingNode() || paymentDetails.isNull()) return "";
+        if (paymentDetails.isObject()) {
+            return asText(paymentDetails, key).trim();
+        }
+        String raw = paymentDetails.asText("").trim();
+        if (raw.isBlank()) return "";
+        try {
+            JsonNode parsed = OBJECT_MAPPER.readTree(raw);
+            if (parsed != null && parsed.isObject()) return asText(parsed, key).trim();
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
+    private static String formatDateYmd(String isoDateTime) {
+        try {
+            OffsetDateTime dt = OffsetDateTime.parse(isoDateTime);
+            return dt.atZoneSameInstant(ZoneId.of("Europe/Berlin")).toLocalDate().format(DateTimeFormatter.BASIC_ISO_DATE);
+        } catch (Exception e) {
+            return LocalDate.now(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.BASIC_ISO_DATE);
+        }
+    }
+
+    private static String escapeXml(String value) {
+        String safe = value == null ? "" : value;
+        return safe.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&apos;");
+    }
 
     private static List<Map<String, String>> fetchAdvisorValidationRows(String apiKey) throws Exception {
         String url = "https://api.goaffpro.com/v1/admin/affiliates?fields=id,avatar,honorific,date_of_birth,gender,name,first_name,last_name,email,ref_code,company_name,ref_codes,coupon,coupons,phone,website,facebook,twitter,instagram,address_1,address_2,city,state,zip,country,phone,admin_note,extra_1,extra_2,extra_3,group_id,registration_ip,personal_message,payment_method,payment_details,commission,status,last_login,total_referral_earnings,total_network_earnings,total_amount_paid,total_amount_pending,total_other_earnings,number_of_orders,tax_identification_number,login_token,signup_page,comments,tags,approved_at,blocked_at,created_at,updated_at";
@@ -1866,6 +2626,7 @@ public class WebUiServer {
             row.put("paymentMethod", asText(a, "payment_method"));
             String iban = asText(a.path("payment_details"), "account_number").trim();
             row.put("iban", iban);
+            row.put("ibanOwner", asText(a.path("payment_details"), "account_name").trim());
             row.put("ibanValid", isValidIban(iban) ? "Ja" : "Nein");
             if (isValidationRowRelevant(row)) rows.add(row);
         }
@@ -2001,7 +2762,7 @@ public class WebUiServer {
     }
 
     private static boolean isValidationRowRelevant(Map<String, String> row) {
-        String[] keys = new String[]{"name", "email", "phone", "address", "country", "dateOfBirth", "taxNumber", "iban", "paymentMethod"};
+        String[] keys = new String[]{"name", "email", "phone", "address", "country", "dateOfBirth", "taxNumber", "iban", "ibanOwner", "paymentMethod"};
         for (String key : keys) {
             if (!Objects.toString(row.get(key), "").isBlank()) return true;
         }
@@ -2104,7 +2865,7 @@ public class WebUiServer {
         Files.writeString(jsonPath, pretty, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, Path pdfPath, Path jsonPath, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -2117,6 +2878,9 @@ public class WebUiServer {
         MimeMessage message = new MimeMessage(session);
         message.setFrom(new InternetAddress(smtpConfig.username));
         message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail, false));
+        if (bccEmail != null && !bccEmail.isBlank()) {
+            message.setRecipients(Message.RecipientType.BCC, InternetAddress.parse(bccEmail, false));
+        }
 
         String displayName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
         String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + displayName;
@@ -2152,6 +2916,21 @@ public class WebUiServer {
         multipart.addBodyPart(contentPart);
         multipart.addBodyPart(attachmentPart);
         multipart.addBodyPart(jsonAttachmentPart);
+        if (includeEInvoiceAttachments && zugferdPath != null && eInvoicePdfPath != null) {
+            MimeBodyPart zugferdAttachmentPart = new MimeBodyPart();
+            FileDataSource zugferdDs = new FileDataSource(zugferdPath.toFile());
+            zugferdAttachmentPart.setDataHandler(new DataHandler(zugferdDs));
+            zugferdAttachmentPart.setFileName(zugferdPath.getFileName().toString());
+            zugferdAttachmentPart.setHeader("Content-Type", "application/xml; charset=UTF-8");
+
+            MimeBodyPart eInvoiceViewAttachmentPart = new MimeBodyPart();
+            FileDataSource eInvoiceViewDs = new FileDataSource(eInvoicePdfPath.toFile());
+            eInvoiceViewAttachmentPart.setDataHandler(new DataHandler(eInvoiceViewDs));
+            eInvoiceViewAttachmentPart.setFileName(eInvoicePdfPath.getFileName().toString());
+
+            multipart.addBodyPart(zugferdAttachmentPart);
+            multipart.addBodyPart(eInvoiceViewAttachmentPart);
+        }
         message.setContent(multipart);
 
         Transport transport = session.getTransport("smtp");
@@ -2270,6 +3049,591 @@ public class WebUiServer {
                 """;
     }
 
+    private static List<Map<String, String>> readMailLogEntries(Properties config) {
+        String raw = Objects.toString(config.getProperty(MAIL_LOG_KEY), "").trim();
+        if (raw.isBlank()) return new ArrayList<>();
+        try {
+            List<Map<String, String>> list = OBJECT_MAPPER.readValue(raw, new TypeReference<List<Map<String, String>>>() {});
+            return list == null ? new ArrayList<>() : list;
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private static List<Map<String, String>> readReminderLogEntries(Properties config) {
+        String raw = Objects.toString(config.getProperty(REMINDER_LOG_KEY), "").trim();
+        if (raw.isBlank()) return new ArrayList<>();
+        try {
+            List<Map<String, String>> list = OBJECT_MAPPER.readValue(raw, new TypeReference<List<Map<String, String>>>() {});
+            return list == null ? new ArrayList<>() : list;
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private static void appendReminderLogEntry(Properties config,
+                                               String advisorId,
+                                               String advisorName,
+                                               String recipientMode,
+                                               String toEmail,
+                                               String subject,
+                                               String missingFields,
+                                               String status) {
+        List<Map<String, String>> entries = readReminderLogEntries(config);
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put("advisorId", Objects.toString(advisorId, ""));
+        row.put("advisorName", Objects.toString(advisorName, ""));
+        row.put("recipientMode", Objects.toString(recipientMode, "contact"));
+        row.put("toEmail", Objects.toString(toEmail, ""));
+        row.put("subject", Objects.toString(subject, ""));
+        row.put("missingFields", Objects.toString(missingFields, ""));
+        row.put("status", Objects.toString(status, "sent"));
+        row.put("sentAt", ZonedDateTime.now(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")));
+        entries.add(0, row);
+        if (entries.size() > 1000) entries = new ArrayList<>(entries.subList(0, 1000));
+        try {
+            config.setProperty(REMINDER_LOG_KEY, OBJECT_MAPPER.writeValueAsString(entries));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath) {
+        List<Map<String, String>> entries = readMailLogEntries(config);
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put("paymentId", Objects.toString(paymentId, ""));
+        row.put("recipientMode", Objects.toString(recipientMode, "contact"));
+        row.put("toEmail", Objects.toString(toEmail, ""));
+        row.put("subject", Objects.toString(subject, ""));
+        row.put("periodLabel", Objects.toString(periodLabel, ""));
+        row.put("pdfFile", pdfPath != null ? pdfPath.getFileName().toString() : "");
+        row.put("jsonFile", jsonPath != null ? jsonPath.getFileName().toString() : "");
+        row.put("pdfPath", pdfPath != null ? pdfPath.toAbsolutePath().toString() : "");
+        row.put("jsonPath", jsonPath != null ? jsonPath.toAbsolutePath().toString() : "");
+        row.put("zugferdFile", zugferdPath != null ? zugferdPath.getFileName().toString() : "");
+        row.put("zugferdPath", zugferdPath != null ? zugferdPath.toAbsolutePath().toString() : "");
+        row.put("eInvoiceViewPdfFile", eInvoiceViewPdfPath != null ? eInvoiceViewPdfPath.getFileName().toString() : "");
+        row.put("eInvoiceViewPdfPath", eInvoiceViewPdfPath != null ? eInvoiceViewPdfPath.toAbsolutePath().toString() : "");
+        row.put("sentAt", ZonedDateTime.now(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")));
+        entries.add(0, row);
+        if (entries.size() > 1000) entries = new ArrayList<>(entries.subList(0, 1000));
+        try {
+            config.setProperty(MAIL_LOG_KEY, OBJECT_MAPPER.writeValueAsString(entries));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void sendSimpleHtmlMail(String toEmail, String bccEmail, String subject, String plainTextBody, String htmlBody, SmtpConfig smtpConfig) throws Exception {
+        Properties props = new Properties();
+        props.put("mail.smtp.host", smtpConfig.host);
+        props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
+        props.put("mail.smtp.auth", "true");
+        props.put("mail.smtp.starttls.enable", String.valueOf(smtpConfig.tls));
+        props.put("mail.smtp.ssl.enable", "false");
+
+        Session session = Session.getInstance(props);
+        MimeMessage message = new MimeMessage(session);
+        message.setFrom(new InternetAddress(smtpConfig.username));
+        message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(toEmail, false));
+        if (bccEmail != null && !bccEmail.isBlank()) {
+            message.setRecipients(Message.RecipientType.BCC, InternetAddress.parse(bccEmail, false));
+        }
+        message.setSubject(subject, StandardCharsets.UTF_8.name());
+
+        MimeMultipart alternative = new MimeMultipart("alternative");
+        MimeBodyPart textPart = new MimeBodyPart();
+        textPart.setText(plainTextBody, StandardCharsets.UTF_8.name());
+        alternative.addBodyPart(textPart);
+        MimeBodyPart htmlPart = new MimeBodyPart();
+        htmlPart.setContent(htmlBody, "text/html; charset=UTF-8");
+        alternative.addBodyPart(htmlPart);
+        message.setContent(alternative);
+
+        Transport transport = session.getTransport("smtp");
+        try {
+            transport.connect(smtpConfig.host, smtpConfig.port, smtpConfig.username, smtpConfig.password);
+            transport.sendMessage(message, message.getAllRecipients());
+        } finally {
+            transport.close();
+        }
+    }
+
+    private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config) throws IOException {
+        // Extract variables
+        String advisorName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
+        String advisorAddressOneLiner = formatAffiliateAddress(affiliate);
+        String advisorEmail = affiliate != null ? asText(affiliate, "email") : "";
+        String advisorPhone = affiliate != null ? asText(affiliate, "phone") : "";
+        String advisorTaxNumber = affiliate != null ? asText(affiliate, "tax_identification_number") : "";
+        String advisorIban = parseAffiliatePaymentField(affiliate, "iban");
+        String advisorBic = parseAffiliatePaymentField(affiliate, "bic");
+        String advisorAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
+        if (advisorAccountHolder.isBlank()) advisorAccountHolder = advisorName;
+        String paymentId = payment != null ? asText(payment, "id") : "-";
+        String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
+        String amount = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
+        String buyerCompanyName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "").trim();
+        String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
+        String buyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
+        String buyerCity = Objects.toString(config.getProperty("eInvoiceBuyerCity"), "").trim();
+        String buyerCountry = Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE").trim();
+        String buyerVatId = Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "").trim();
+        String buyerTaxNumber = Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "").trim();
+        String paymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
+
+        try (PDDocument document = new PDDocument()) {
+            PDPage page = new PDPage();
+            document.addPage(page);
+            float pageWidth = page.getMediaBox().getWidth();
+            float pageHeight = page.getMediaBox().getHeight();
+            float left = 45f;
+            float right = pageWidth - 45f;
+            float usableW = right - left;
+
+            try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
+                float y = pageHeight - 38f;
+
+                // ── HEADER: advisor name + address as small letterhead line ──
+                String hdrLine = advisorName + (advisorAddressOneLiner.isBlank() ? "" : " \u00b7 " + advisorAddressOneLiner);
+                cs.setNonStrokingColor(new Color(100, 100, 100));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8f);
+                cs.newLineAtOffset(left, y);
+                cs.showText(sanitizePdfText(shortenForPdf(hdrLine, 95)));
+                cs.endText();
+                y -= 7f;
+                cs.setStrokingColor(new Color(180, 180, 180)); cs.setLineWidth(0.4f);
+                cs.moveTo(left, y); cs.lineTo(right, y); cs.stroke();
+                y -= 20f;
+
+                // ── TWO COLUMNS: Bill To (left) | Invoice Meta (right) ──
+                float colL = left;
+                float colR = left + usableW * 0.55f;
+                float startY2col = y;
+
+                // LEFT: buyer address block
+                cs.setNonStrokingColor(new Color(130, 130, 130));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8f);
+                cs.newLineAtOffset(colL, y); cs.showText("Rechnungsempf\u00e4nger"); cs.endText();
+                y -= 14f;
+                cs.setNonStrokingColor(new Color(15, 15, 15));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 12f);
+                cs.newLineAtOffset(colL, y);
+                cs.showText(sanitizePdfText(shortenForPdf(buyerCompanyName, 32))); cs.endText();
+                y -= 14f;
+                List<String> buyerLines = new ArrayList<>();
+                if (!buyerStreet.isBlank()) buyerLines.add(buyerStreet);
+                String cLine = (buyerZip + " " + buyerCity).trim();
+                if (!cLine.isBlank()) buyerLines.add(cLine);
+                if (!buyerCountry.isBlank()) buyerLines.add(buyerCountry);
+                for (String bl : buyerLines) {
+                    cs.setNonStrokingColor(new Color(40, 40, 40));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                    cs.newLineAtOffset(colL, y); cs.showText(sanitizePdfText(bl)); cs.endText();
+                    y -= 13f;
+                }
+                if (!buyerVatId.isBlank()) {
+                    cs.setNonStrokingColor(new Color(100, 100, 100));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
+                    cs.newLineAtOffset(colL, y); cs.showText("USt-IdNr: " + sanitizePdfText(buyerVatId)); cs.endText();
+                    y -= 11f;
+                }
+                if (!buyerTaxNumber.isBlank()) {
+                    cs.setNonStrokingColor(new Color(100, 100, 100));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
+                    cs.newLineAtOffset(colL, y); cs.showText("Steuernummer: " + sanitizePdfText(buyerTaxNumber)); cs.endText();
+                    y -= 11f;
+                }
+                float leftEndY = y;
+
+                // RIGHT: contact info + invoice metadata
+                float ry = startY2col;
+                List<String[]> metaRows = new ArrayList<>();
+                if (!advisorEmail.isBlank()) metaRows.add(new String[]{"E-Mail:", advisorEmail});
+                if (!advisorPhone.isBlank()) metaRows.add(new String[]{"Telefon:", advisorPhone});
+                if (!advisorTaxNumber.isBlank()) metaRows.add(new String[]{"Steuernummer:", advisorTaxNumber});
+                metaRows.add(new String[]{"Rechnungsnummer:", paymentId});
+                metaRows.add(new String[]{"Datum:", created});
+                float lblW = 82f;
+                for (String[] row : metaRows) {
+                    cs.setNonStrokingColor(new Color(130, 130, 130));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 9f);
+                    cs.newLineAtOffset(colR, ry); cs.showText(sanitizePdfText(row[0])); cs.endText();
+                    cs.setNonStrokingColor(new Color(20, 20, 20));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 9f);
+                    cs.newLineAtOffset(colR + lblW, ry); cs.showText(sanitizePdfText(shortenForPdf(row[1], 28))); cs.endText();
+                    ry -= 13f;
+                }
+                y = Math.min(leftEndY, ry) - 14f;
+
+                // ── INVOICE TITLE BOX ──
+                float boxH = 28f;
+                cs.setNonStrokingColor(new Color(235, 235, 235));
+                cs.addRect(left, y - boxH, usableW, boxH); cs.fill();
+                cs.setStrokingColor(new Color(200, 200, 200)); cs.setLineWidth(0.4f);
+                cs.addRect(left, y - boxH, usableW, boxH); cs.stroke();
+                cs.setNonStrokingColor(new Color(15, 15, 15));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 13f);
+                cs.newLineAtOffset(left + 8f, y - 19f);
+                cs.showText("RECHNUNG  Nr. " + sanitizePdfText(paymentId)); cs.endText();
+                cs.setNonStrokingColor(new Color(80, 80, 80));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 9.5f);
+                cs.newLineAtOffset(right - 135f, y - 19f);
+                cs.showText("Datum: " + sanitizePdfText(created)); cs.endText();
+                y -= boxH + 14f;
+
+                // ── ITEM TABLE ──
+                float rowH = 22f;
+                float cW0 = 28f;   // Pos
+                float cW2 = 105f;  // Betrag
+                float cW1 = usableW - cW0 - cW2; // Beschreibung
+                float[] cx = {left, left + cW0, left + cW0 + cW1};
+
+                // Table header row
+                cs.setNonStrokingColor(new Color(245, 245, 245));
+                cs.addRect(left, y - rowH, usableW, rowH); cs.fill();
+                cs.setStrokingColor(new Color(200, 200, 200)); cs.setLineWidth(0.4f);
+                cs.addRect(left, y - rowH, usableW, rowH); cs.stroke();
+                String[] hdrs = {"Pos.", "Beschreibung", "Betrag"};
+                cs.setNonStrokingColor(new Color(60, 60, 60));
+                for (int i = 0; i < 3; i++) {
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 9.5f);
+                    cs.newLineAtOffset(cx[i] + 4f, y - 15f); cs.showText(hdrs[i]); cs.endText();
+                }
+                y -= rowH;
+
+                // Data row
+                float dRowH = 24f;
+                cs.setStrokingColor(new Color(210, 210, 210)); cs.setLineWidth(0.4f);
+                cs.addRect(left, y - dRowH, usableW, dRowH); cs.stroke();
+                cs.setNonStrokingColor(new Color(30, 30, 30));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                cs.newLineAtOffset(cx[0] + 4f, y - 16f); cs.showText("1"); cs.endText();
+                String desc = "Provisionsabrechnung Zahllauf " + sanitizePdfText(paymentId);
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                cs.newLineAtOffset(cx[1] + 4f, y - 16f);
+                cs.showText(sanitizePdfText(shortenForPdf(desc, 48))); cs.endText();
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                cs.newLineAtOffset(cx[2] + 4f, y - 16f);
+                cs.showText(sanitizePdfText(amount)); cs.endText();
+                y -= dRowH + 14f;
+
+                // ── TOTALS (right-aligned) ──
+                float tX = left + usableW * 0.52f;
+                float tW = usableW * 0.48f;
+                float tLblW = tW * 0.52f;
+                float tValX = tX + tLblW;
+
+                // Nettobetrag
+                cs.setStrokingColor(new Color(200, 200, 200)); cs.setLineWidth(0.4f);
+                cs.addRect(tX, y - 20f, tW, 20f); cs.stroke();
+                cs.setNonStrokingColor(new Color(40, 40, 40));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                cs.newLineAtOffset(tX + 4f, y - 14f); cs.showText("Nettobetrag"); cs.endText();
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                cs.newLineAtOffset(tValX, y - 14f); cs.showText(sanitizePdfText(amount)); cs.endText();
+                y -= 20f;
+
+                // VAT note
+                cs.setNonStrokingColor(new Color(242, 242, 242));
+                cs.addRect(tX, y - 26f, tW, 26f); cs.fill();
+                cs.setStrokingColor(new Color(200, 200, 200));
+                cs.addRect(tX, y - 26f, tW, 26f); cs.stroke();
+                cs.setNonStrokingColor(new Color(80, 80, 80));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
+                cs.newLineAtOffset(tX + 4f, y - 11f);
+                cs.showText("Gem. \u00a7 19 UStG wird keine Umsatzsteuer"); cs.endText();
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
+                cs.newLineAtOffset(tX + 4f, y - 20f); cs.showText("berechnet."); cs.endText();
+                y -= 26f;
+
+                // Grand Total
+                cs.setNonStrokingColor(new Color(225, 225, 225));
+                cs.addRect(tX, y - 24f, tW, 24f); cs.fill();
+                cs.setStrokingColor(new Color(180, 180, 180));
+                cs.addRect(tX, y - 24f, tW, 24f); cs.stroke();
+                cs.setNonStrokingColor(new Color(15, 15, 15));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 11f);
+                cs.newLineAtOffset(tX + 4f, y - 16f); cs.showText("Gesamtbetrag"); cs.endText();
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 11f);
+                cs.newLineAtOffset(tValX, y - 16f); cs.showText(sanitizePdfText(amount)); cs.endText();
+                y -= 24f + 20f;
+
+                // ── PAYMENT TERMS ──
+                if (!paymentTerms.isBlank()) {
+                    cs.setNonStrokingColor(new Color(60, 60, 60));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 9f);
+                    cs.newLineAtOffset(left, y);
+                    cs.showText("Zahlungsbedingungen: " + sanitizePdfText(paymentTerms)); cs.endText();
+                    y -= 14f;
+                }
+
+                // ── BANK DETAILS ──
+                y -= 10f;
+                cs.setStrokingColor(new Color(180, 180, 180)); cs.setLineWidth(0.4f);
+                cs.moveTo(left, y); cs.lineTo(right, y); cs.stroke();
+                y -= 14f;
+                cs.setNonStrokingColor(new Color(40, 40, 40));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 9f);
+                cs.newLineAtOffset(left, y); cs.showText("Bankverbindung"); cs.endText();
+                y -= 12f;
+                List<String[]> bankRows = new ArrayList<>();
+                bankRows.add(new String[]{"Kontoinhaber:", advisorAccountHolder});
+                if (!advisorIban.isBlank()) bankRows.add(new String[]{"IBAN:", advisorIban});
+                if (!advisorBic.isBlank()) bankRows.add(new String[]{"BIC:", advisorBic});
+                for (String[] br : bankRows) {
+                    cs.setNonStrokingColor(new Color(100, 100, 100));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
+                    cs.newLineAtOffset(left, y); cs.showText(sanitizePdfText(br[0])); cs.endText();
+                    cs.setNonStrokingColor(new Color(30, 30, 30));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
+                    cs.newLineAtOffset(left + 55f, y); cs.showText(sanitizePdfText(br[1])); cs.endText();
+                    y -= 12f;
+                }
+
+                // ── BOTTOM FOOTER ──
+                float footerY = 35f;
+                cs.setStrokingColor(new Color(180, 180, 180)); cs.setLineWidth(0.4f);
+                cs.moveTo(left, footerY + 12f); cs.lineTo(right, footerY + 12f); cs.stroke();
+                cs.setNonStrokingColor(new Color(120, 120, 120));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
+                cs.newLineAtOffset(left, footerY);
+                cs.showText(sanitizePdfText(shortenForPdf(hdrLine, 95))); cs.endText();
+                if (!advisorTaxNumber.isBlank()) {
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
+                    cs.newLineAtOffset(left, footerY - 9f);
+                    cs.showText("Steuernummer: " + sanitizePdfText(advisorTaxNumber)); cs.endText();
+                }
+            }
+            if (xmlPath != null && Files.exists(xmlPath)) {
+                attachZugferdXmlToPdf(document, xmlPath);
+            }
+            document.save(pdfPath.toFile());
+        }
+    }
+
+
+    private static void attachZugferdXmlToPdf(PDDocument document, Path xmlPath) throws IOException {
+        byte[] xmlBytes = Files.readAllBytes(xmlPath);
+        PDComplexFileSpecification fs = new PDComplexFileSpecification();
+        fs.setFile(xmlPath.getFileName().toString());
+
+        try (java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(xmlBytes)) {
+            PDEmbeddedFile ef = new PDEmbeddedFile(document, bais);
+            ef.setSubtype("application/xml");
+            ef.setSize(xmlBytes.length);
+            ef.setCreationDate(new java.util.GregorianCalendar());
+            ef.setModDate(new java.util.GregorianCalendar());
+            fs.setEmbeddedFile(ef);
+        }
+
+        COSDictionary fsDict = fs.getCOSObject();
+        fsDict.setName(COSName.AF_RELATIONSHIP, "Alternative");
+
+        PDDocumentCatalog catalog = document.getDocumentCatalog();
+        PDDocumentNameDictionary names = catalog.getNames();
+        if (names == null) names = new PDDocumentNameDictionary(catalog);
+
+        PDEmbeddedFilesNameTreeNode efTree = names.getEmbeddedFiles();
+        if (efTree == null) efTree = new PDEmbeddedFilesNameTreeNode();
+
+        java.util.Map<String, PDComplexFileSpecification> map = efTree.getNames();
+        if (map == null) map = new java.util.HashMap<>();
+        map.put(xmlPath.getFileName().toString(), fs);
+        efTree.setNames(map);
+        names.setEmbeddedFiles(efTree);
+        catalog.setNames(names);
+
+        COSArray afArray = new COSArray();
+        afArray.add(fsDict);
+        catalog.getCOSObject().setItem(COSName.AF, afArray);
+    }
+
+    private static String sanitizePdfText(String value) {
+        if (value == null || value.isEmpty()) return "";
+        StringBuilder out = new StringBuilder(value.length());
+        value.codePoints().forEach(cp -> {
+            if (cp == '\n' || cp == '\r' || cp == '\t') {
+                out.append(' ');
+                return;
+            }
+            if (cp < 32 || (cp >= 127 && cp <= 159)) {
+                out.append(' ');
+                return;
+            }
+            if (cp > 255) {
+                out.append('?');
+                return;
+            }
+            out.append((char) cp);
+        });
+        return out.toString();
+    }
+
+    private static List<String> wrapText(String text, int maxChars) {
+        List<String> lines = new ArrayList<>();
+        if (text == null || text.isBlank()) return List.of("");
+        String[] words = text.split("\\s+");
+        StringBuilder current = new StringBuilder();
+        for (String word : words) {
+            if (current.length() == 0) {
+                current.append(word);
+                continue;
+            }
+            if (current.length() + 1 + word.length() <= maxChars) {
+                current.append(' ').append(word);
+            } else {
+                lines.add(current.toString());
+                current = new StringBuilder(word);
+            }
+        }
+        if (current.length() > 0) lines.add(current.toString());
+        return lines;
+    }
+
+    private static String renderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate, Properties config) {
+        String advisorName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
+        String advisorAddress = formatAffiliateAddress(affiliate);
+        String advisorEmail = affiliate != null ? asText(affiliate, "email") : "";
+        String advisorPhone = affiliate != null ? asText(affiliate, "phone") : "";
+        String tax = affiliate != null ? asText(affiliate, "tax_identification_number") : "";
+        String paymentId = payment != null ? asText(payment, "id") : "-";
+        String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
+        String amount = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
+        String currency = payment != null ? asText(payment, "currency") : "EUR";
+        String buyerCompanyName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
+        String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
+        String buyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
+        String buyerCity = Objects.toString(config.getProperty("eInvoiceBuyerCity"), "").trim();
+        String buyerCountry = Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE").trim();
+        String buyerVatId = Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "").trim();
+        String buyerTaxNumber = Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "").trim();
+        String buyerAddress = String.join(", ", List.of(
+                buyerStreet,
+                (buyerZip + " " + buyerCity).trim(),
+                buyerCountry
+        ).stream().filter(v -> v != null && !v.isBlank()).toList());
+        String advisorIban = parseAffiliatePaymentField(affiliate, "iban");
+        String advisorBic = parseAffiliatePaymentField(affiliate, "bic");
+        String advisorAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
+        if (advisorAccountHolder.isBlank()) advisorAccountHolder = advisorName;
+
+        return template
+                .replace("{{advisorName}}", escapeHtmlEmail(advisorName))
+                .replace("{{advisorAddress}}", escapeHtmlEmail(advisorAddress))
+                .replace("{{advisorEmail}}", escapeHtmlEmail(advisorEmail))
+                .replace("{{advisorPhone}}", escapeHtmlEmail(advisorPhone))
+                .replace("{{advisorTaxNumber}}", escapeHtmlEmail(tax))
+                .replace("{{advisorIban}}", escapeHtmlEmail(advisorIban))
+                .replace("{{advisorBic}}", escapeHtmlEmail(advisorBic))
+                .replace("{{advisorAccountHolder}}", escapeHtmlEmail(advisorAccountHolder))
+                .replace("{{buyerCompanyName}}", escapeHtmlEmail(buyerCompanyName))
+                .replace("{{buyerAddress}}", escapeHtmlEmail(buyerAddress))
+                .replace("{{buyerVatId}}", escapeHtmlEmail(buyerVatId))
+                .replace("{{buyerTaxNumber}}", escapeHtmlEmail(buyerTaxNumber))
+                .replace("{{invoiceNumber}}", escapeHtmlEmail(paymentId))
+                .replace("{{paymentId}}", escapeHtmlEmail(paymentId))
+                .replace("{{created}}", escapeHtmlEmail(created))
+                .replace("{{amount}}", escapeHtmlEmail(amount))
+                .replace("{{currency}}", escapeHtmlEmail(currency));
+    }
+
+    private static String getDefaultEInvoicePdfViewHtmlTemplate() {
+        return """
+                <!doctype html>
+                <html lang="de"><body style="font-family:Arial,sans-serif;background:#f3f4f6;color:#111827;padding:20px;">
+                <div style="max-width:900px;margin:0 auto;background:#fff;border:1px solid #d1d5db;padding:22px;">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
+                    <div>
+                      <div style="font-size:22px;font-weight:700;letter-spacing:.3px;">RECHNUNG</div>
+                      <div style="margin-top:6px;font-size:13px;color:#374151;">Rechnungsnummer: <b>{{invoiceNumber}}</b></div>
+                      <div style="font-size:13px;color:#374151;">Datum: {{created}}</div>
+                    </div>
+                    <div style="text-align:right;font-size:12px;color:#4b5563;">
+                      <div><b>Rechnungsstellerin</b></div>
+                      <div>{{advisorName}}</div>
+                      <div>{{advisorAddress}}</div>
+                      <div>E-Mail: {{advisorEmail}}</div>
+                      <div>Telefon: {{advisorPhone}}</div>
+                      <div>Steuernummer: {{advisorTaxNumber}}</div>
+                    </div>
+                  </div>
+
+                  <div style="margin-top:20px;padding:12px;border:1px solid #d1d5db;background:#fafafa;">
+                    <div style="font-size:12px;color:#6b7280;">Rechnungsempfänger</div>
+                    <div style="font-size:16px;font-weight:700;">{{buyerCompanyName}}</div>
+                    <div style="font-size:13px;">{{buyerAddress}}</div>
+                    <div style="font-size:12px;color:#6b7280;">USt-IdNr: {{buyerVatId}} | Steuernummer: {{buyerTaxNumber}}</div>
+                  </div>
+
+                  <table style="width:100%;margin-top:22px;border-collapse:collapse;font-size:13px;">
+                    <thead>
+                      <tr style="background:#f3f4f6;">
+                        <th style="text-align:left;padding:8px;border:1px solid #d1d5db;">Pos.</th>
+                        <th style="text-align:left;padding:8px;border:1px solid #d1d5db;">Beschreibung</th>
+                        <th style="text-align:right;padding:8px;border:1px solid #d1d5db;">Betrag</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style="padding:8px;border:1px solid #d1d5db;">1</td>
+                        <td style="padding:8px;border:1px solid #d1d5db;">Provisionsabrechnung Zahllauf {{paymentId}}</td>
+                        <td style="padding:8px;border:1px solid #d1d5db;text-align:right;">{{amount}} ({{currency}})</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <div style="margin-top:18px;display:flex;justify-content:flex-end;">
+                    <table style="min-width:280px;border-collapse:collapse;font-size:13px;">
+                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">Zwischensumme</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{amount}}</td></tr>
+                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">USt.</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">n. V. / laut Stammdaten</td></tr>
+                      <tr style="font-weight:700;"><td style="padding:6px 10px;border:1px solid #d1d5db;">Gesamtbetrag</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{amount}}</td></tr>
+                    </table>
+                  </div>
+
+                  <div style="margin-top:18px;font-size:12px;color:#374151;line-height:1.5;">
+                    <div><b>Bankverbindung der Rechnungsstellerin:</b> {{advisorAccountHolder}}, IBAN {{advisorIban}}, BIC {{advisorBic}}</div>
+                    <div style="margin-top:8px;">Hinweis: Diese Rechnung wird von der Beraterin an {{buyerCompanyName}} gestellt. Die App erzeugt die Unterlagen als Service.</div>
+                  </div>
+                </div>
+                </body></html>
+                """;
+    }
+
+    private static String buildValidationReminderMailBody(String advisorName, String missingFields) {
+        String name = (advisorName == null || advisorName.isBlank()) ? "liebe Beraterin" : ("liebe " + advisorName.trim());
+        String fields = (missingFields == null || missingFields.isBlank()) ? "einige Stammdaten" : missingFields;
+        return ("Hallo " + name + "\n\n" +
+                "für die vollständige Pflege Ihrer Stammdaten fehlen uns noch folgende Angaben:\n" +
+                fields + "\n\n" +
+                "Bitte senden Sie uns diese Informationen kurz per E-Mail zurück, damit wir Ihre Stammdaten vervollständigen können.\n\n" +
+                "Vielen Dank und viele Grüße\nIhr VEMMiNA Team");
+    }
+
+    private static String buildValidationReminderMailHtml(String advisorName, String missingFields, String configuredTemplateHtml) {
+        String name = (advisorName == null || advisorName.isBlank()) ? "Beraterin" : advisorName.trim();
+        String fields = (missingFields == null || missingFields.isBlank()) ? "-" : missingFields;
+        String template = (configuredTemplateHtml == null || configuredTemplateHtml.isBlank()) ? getDefaultValidationReminderHtmlTemplate() : configuredTemplateHtml;
+        return template
+                .replace("{{salutationName}}", escapeHtmlEmail(name))
+                .replace("{{missingFields}}", escapeHtmlEmail(fields).replace("\n", "<br/>"));
+    }
+
+    private static String getDefaultValidationReminderHtmlTemplate() {
+
+        return """
+                <!doctype html>
+                <html lang="de"><body style="font-family:Arial,sans-serif;background:#f8fafc;color:#1f2937;padding:18px;">
+                <div style="max-width:680px;margin:0 auto;background:#fff;border:1px solid #dbe3ef;border-radius:12px;padding:20px;">
+                  <h2 style="margin-top:0;color:#1e3a8a;">Bitte fehlende Stammdaten ergänzen</h2>
+                  <p>Hallo {{salutationName}},</p>
+                  <p>für die vollständige Pflege Ihrer Stammdaten fehlen uns noch folgende Angaben:</p>
+                  <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:10px;white-space:pre-wrap;">{{missingFields}}</div>
+                  <p>Bitte senden Sie uns diese Informationen kurz per E-Mail zurück, damit wir Ihre Stammdaten vervollständigen können.</p>
+                  <p>Vielen Dank und viele Grüße<br/><b>Ihr VEMMiNA Team</b></p>
+                </div>
+                </body></html>
+                """;
+    }
+
     private static String escapeHtmlEmail(String value) {
         String safe = value == null ? "" : value;
         return safe.replace("&", "&amp;")
@@ -2281,6 +3645,201 @@ public class WebUiServer {
 
     private static String euroStatic(double value) {
         return String.format(java.util.Locale.GERMANY, "%.2f €", value);
+    }
+
+
+    private static class SessionUser {
+        final String username;
+        final boolean isAdmin;
+        final String department;
+        SessionUser(String username, boolean isAdmin, String department) { this.username = username; this.isAdmin = isAdmin; this.department = department; }
+    }
+
+    private static class UserAccount {
+        public String username;
+        public String firstName;
+        public String lastName;
+        public String email;
+        public String phone;
+        public String department;
+        public boolean isAdmin;
+        public boolean forcePasswordChange;
+        public String passwordSalt;
+        public String passwordHash;
+    }
+
+    private static SessionUser requireSession(HttpExchange exchange) throws IOException {
+        String token = Objects.toString(exchange.getRequestHeaders().getFirst("X-Auth-Token"), "").trim();
+        SessionUser su = ACTIVE_SESSIONS.get(token);
+        if (su == null) {
+            sendResponse(exchange, 401, "application/json", "{\"error\":\"Nicht angemeldet\"}");
+            return null;
+        }
+        return su;
+    }
+
+    private static Path resolveUserStorePath(Properties config) {
+        String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH).trim();
+        if (exportDir.isBlank()) exportDir = DEFAULT_PDF_EXPORT_PATH;
+        return Paths.get(exportDir).toAbsolutePath().resolve(USER_STORE_FILENAME);
+    }
+
+    private static List<UserAccount> loadUserAccounts(Properties config) throws Exception {
+        ensureUserStoreInitialized(config);
+        Path p = resolveUserStorePath(config);
+        try {
+            byte[] enc = Files.readAllBytes(p);
+            byte[] plain = decrypt(enc, Objects.toString(config.getProperty("authSecret"), AUTH_SECRET_DEFAULT));
+            return OBJECT_MAPPER.readValue(plain, new TypeReference<List<UserAccount>>(){});
+        } catch (Exception ex) {
+            List<UserAccount> defaults = new ArrayList<>(List.of(buildDefaultAdminUser(config)));
+            saveUserAccounts(config, defaults);
+            return defaults;
+        }
+    }
+
+    private static void saveUserAccounts(Properties config, List<UserAccount> users) throws Exception {
+        Path p = resolveUserStorePath(config);
+        Files.createDirectories(p.getParent());
+        byte[] raw = OBJECT_MAPPER.writeValueAsBytes(users);
+        byte[] enc = encrypt(raw, Objects.toString(config.getProperty("authSecret"), AUTH_SECRET_DEFAULT));
+        Files.write(p, enc, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    private static void ensureUserStoreInitialized(Properties config) throws Exception {
+        if (Objects.toString(config.getProperty("adminUsername"), "").isBlank()) config.setProperty("adminUsername", "admin");
+        if (Objects.toString(config.getProperty("adminPassword"), "").isBlank()) config.setProperty("adminPassword", "admin");
+        if (Objects.toString(config.getProperty("authSecret"), "").isBlank()) config.setProperty("authSecret", AUTH_SECRET_DEFAULT);
+        Path p = resolveUserStorePath(config);
+        if (Files.exists(p)) return;
+        UserAccount admin = buildDefaultAdminUser(config);
+        saveUserAccounts(config, new ArrayList<>(List.of(admin)));
+        persistSettings(config);
+    }
+
+    private static UserAccount buildDefaultAdminUser(Properties config) {
+        UserAccount admin = new UserAccount();
+        admin.username = Objects.toString(config.getProperty("adminUsername"), "admin");
+        admin.firstName = "Admin";
+        admin.lastName = "User";
+        admin.department = "ALL";
+        admin.isAdmin = true;
+        admin.email = "";
+        admin.phone = "";
+        admin.forcePasswordChange = false;
+        String[] pw = hashPassword(Objects.toString(config.getProperty("adminPassword"), "admin"));
+        admin.passwordSalt = pw[0];
+        admin.passwordHash = pw[1];
+        return admin;
+    }
+
+    private static byte[] encrypt(byte[] plain, String secret) throws Exception {
+        byte[] key = sha256Bytes(secret.getBytes(StandardCharsets.UTF_8));
+        byte[] iv = new byte[12];
+        SECURE_RANDOM.nextBytes(iv);
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
+        byte[] enc = c.doFinal(plain);
+        byte[] out = new byte[iv.length + enc.length];
+        System.arraycopy(iv, 0, out, 0, iv.length);
+        System.arraycopy(enc, 0, out, iv.length, enc.length);
+        return out;
+    }
+
+    private static byte[] decrypt(byte[] data, String secret) throws Exception {
+        byte[] key = sha256Bytes(secret.getBytes(StandardCharsets.UTF_8));
+        byte[] iv = java.util.Arrays.copyOfRange(data, 0, 12);
+        byte[] enc = java.util.Arrays.copyOfRange(data, 12, data.length);
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
+        return c.doFinal(enc);
+    }
+
+    private static String[] hashPassword(String password) {
+        byte[] salt = new byte[16];
+        SECURE_RANDOM.nextBytes(salt);
+        String saltB64 = Base64.getEncoder().encodeToString(salt);
+        String hash = sha256Hex(saltB64 + ":" + (password == null ? "" : password));
+        return new String[]{saltB64, hash};
+    }
+
+    private static boolean verifyPassword(String password, String saltB64, String hash) {
+        return sha256Hex(Objects.toString(saltB64, "") + ":" + (password == null ? "" : password)).equals(Objects.toString(hash, ""));
+    }
+
+    private static byte[] sha256Bytes(byte[] data) throws Exception {
+        MessageDigest digest = MessageDigest.getInstance("SHA-256");
+        return digest.digest(data);
+    }
+
+    private static String generateToken() {
+        byte[] b = new byte[24];
+        SECURE_RANDOM.nextBytes(b);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+    }
+
+    private static String randomPassword() {
+        byte[] b = new byte[9];
+        SECURE_RANDOM.nextBytes(b);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+    }
+
+    private static final java.util.Set<String> VALID_DEPARTMENTS = java.util.Set.of("AS", "VEMMINA", "LT", "ALL");
+
+    private static String normalizeDepartment(String dep) {
+        if (dep == null || dep.isBlank()) return "VEMMINA";
+        String[] parts = dep.split("[,;\\s]+");
+        List<String> result = new ArrayList<>();
+        for (String p : parts) {
+            String d = p.trim().toUpperCase();
+            if (VALID_DEPARTMENTS.contains(d)) result.add(d);
+        }
+        if (result.isEmpty()) return "VEMMINA";
+        if (result.contains("ALL")) return "ALL";
+        return String.join(",", result);
+    }
+
+    private static Map<String, Object> userToMap(UserAccount u) {
+        Map<String,Object> m = new LinkedHashMap<>();
+        m.put("username", u.username);
+        m.put("firstName", u.firstName);
+        m.put("lastName", u.lastName);
+        m.put("email", u.email);
+        m.put("phone", u.phone);
+        m.put("department", u.department);
+        m.put("isAdmin", u.isAdmin);
+        m.put("forcePasswordChange", u.forcePasswordChange);
+        return m;
+    }
+
+    private static void trySendPasswordChangeMail(String to, String username, String tempPassword, Properties config) {
+        try {
+            if (to == null || to.isBlank()) return;
+            SmtpConfig smtpConfig = resolveSmtpConfig(config);
+            if (smtpConfig.username == null || smtpConfig.username.isBlank()) return;
+            String subject = "Zugang eingerichtet - Passwort bitte ändern";
+            String text = "Hallo " + username + "\n\nIhr Zugang wurde eingerichtet.\nTemporäres Passwort: " + tempPassword + "\nBitte melden Sie sich an und ändern Sie das Passwort umgehend.";
+            String html = "<p>Hallo " + escapeHtmlEmail(username) + ",</p><p>Ihr Zugang wurde eingerichtet.</p><p><b>Temporäres Passwort:</b> " + escapeHtmlEmail(tempPassword) + "</p><p>Bitte melden Sie sich an und ändern Sie das Passwort umgehend.</p>";
+            sendSimpleHtmlMail(to, Objects.toString(config.getProperty("emailBcc"), ""), subject, text, html, smtpConfig);
+        } catch (Exception ignored) {}
+    }
+
+    private static Map<String, String> parseQueryParams(URI uri) {
+        Map<String, String> query = new LinkedHashMap<>();
+        if (uri == null || uri.getRawQuery() == null || uri.getRawQuery().isBlank()) return query;
+        for (String part : uri.getRawQuery().split("&")) {
+            if (part == null || part.isBlank()) continue;
+            int i = part.indexOf('=');
+            String k = i >= 0 ? part.substring(0, i) : part;
+            String v = i >= 0 ? part.substring(i + 1) : "";
+            try {
+                k = java.net.URLDecoder.decode(k, StandardCharsets.UTF_8);
+                v = java.net.URLDecoder.decode(v, StandardCharsets.UTF_8);
+            } catch (Exception ignored) {
+            }
+            query.put(k, v);
+        }
+        return query;
     }
 
     private static double parseDoubleSafeStatic(String raw) {
@@ -2427,13 +3986,31 @@ public class WebUiServer {
         ui.setProperty("smtpHost", Objects.toString(source.getProperty("smtpHost"), ""));
         ui.setProperty("smtpPort", Objects.toString(source.getProperty("smtpPort"), "587"));
         ui.setProperty("smtpUsername", Objects.toString(source.getProperty("smtpUsername"), ""));
+        ui.setProperty("emailBcc", Objects.toString(source.getProperty("emailBcc"), ""));
         ui.setProperty("smtpPassword", Objects.toString(source.getProperty("smtpPassword"), ""));
         ui.setProperty("smtpTls", Objects.toString(source.getProperty("smtpTls"), "false"));
         ui.setProperty("sendEmailsEnabled", Objects.toString(source.getProperty("sendEmailsEnabled"), "true"));
         ui.setProperty("emailRecipientMode", Objects.toString(source.getProperty("emailRecipientMode"), "contact"));
         ui.setProperty("emailTemplateHtml", Objects.toString(source.getProperty("emailTemplateHtml"), ""));
+        ui.setProperty("validationReminderTemplateHtml", Objects.toString(source.getProperty("validationReminderTemplateHtml"), ""));
+        ui.setProperty("eInvoicePdfTemplateHtml", Objects.toString(source.getProperty("eInvoicePdfTemplateHtml"), ""));
+        ui.setProperty("eInvoiceEnabled", Objects.toString(source.getProperty("eInvoiceEnabled"), "true"));
+        ui.setProperty("eInvoiceAttachAndStoreEnabled", Objects.toString(source.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
+        ui.setProperty("eInvoiceBuyerName", Objects.toString(source.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh"));
+        ui.setProperty("eInvoiceBuyerStreet", Objects.toString(source.getProperty("eInvoiceBuyerStreet"), ""));
+        ui.setProperty("eInvoiceBuyerZip", Objects.toString(source.getProperty("eInvoiceBuyerZip"), ""));
+        ui.setProperty("eInvoiceBuyerCity", Objects.toString(source.getProperty("eInvoiceBuyerCity"), ""));
+        ui.setProperty("eInvoiceBuyerCountry", Objects.toString(source.getProperty("eInvoiceBuyerCountry"), "DE"));
+        ui.setProperty("eInvoiceBuyerVatId", Objects.toString(source.getProperty("eInvoiceBuyerVatId"), ""));
+        ui.setProperty("eInvoiceBuyerTaxNumber", Objects.toString(source.getProperty("eInvoiceBuyerTaxNumber"), ""));
+        ui.setProperty("eInvoiceBankIban", Objects.toString(source.getProperty("eInvoiceBankIban"), ""));
+        ui.setProperty("eInvoiceBankBic", Objects.toString(source.getProperty("eInvoiceBankBic"), ""));
+        ui.setProperty("eInvoiceBankAccountHolder", Objects.toString(source.getProperty("eInvoiceBankAccountHolder"), ""));
+        ui.setProperty("eInvoicePaymentTerms", Objects.toString(source.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug"));
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
         ui.setProperty(COMMISSION_HISTORY_DATES_KEY, Objects.toString(source.getProperty(COMMISSION_HISTORY_DATES_KEY), ""));
+        ui.setProperty(MAIL_LOG_KEY, Objects.toString(source.getProperty(MAIL_LOG_KEY), ""));
+        ui.setProperty(REMINDER_LOG_KEY, Objects.toString(source.getProperty(REMINDER_LOG_KEY), ""));
 
         try (OutputStream os = Files.newOutputStream(uiSettingsFile(directory))) {
             ui.store(os, "GoAffPro UI settings");
@@ -2476,6 +4053,7 @@ public class WebUiServer {
         config.setProperty("smtpHost", Objects.toString(uiSettings.getProperty("smtpHost"), Objects.toString(config.getProperty("smtpHost"), "")).trim());
         config.setProperty("smtpPort", Objects.toString(uiSettings.getProperty("smtpPort"), Objects.toString(config.getProperty("smtpPort"), "587")).trim());
         config.setProperty("smtpUsername", Objects.toString(uiSettings.getProperty("smtpUsername"), Objects.toString(config.getProperty("smtpUsername"), "")).trim());
+        config.setProperty("emailBcc", Objects.toString(uiSettings.getProperty("emailBcc"), Objects.toString(config.getProperty("emailBcc"), "")).trim());
         String uiSmtpPassword = Objects.toString(uiSettings.getProperty("smtpPassword"), "").trim();
         if (!uiSmtpPassword.isEmpty() || config.containsKey("smtpPassword")) {
             config.setProperty("smtpPassword", uiSmtpPassword);
@@ -2486,6 +4064,24 @@ public class WebUiServer {
         if (!"advisor".equals(uiEmailRecipientMode)) uiEmailRecipientMode = "contact";
         config.setProperty("emailRecipientMode", uiEmailRecipientMode);
         config.setProperty("emailTemplateHtml", Objects.toString(uiSettings.getProperty("emailTemplateHtml"), Objects.toString(config.getProperty("emailTemplateHtml"), "")));
+        config.setProperty("validationReminderTemplateHtml", Objects.toString(uiSettings.getProperty("validationReminderTemplateHtml"), Objects.toString(config.getProperty("validationReminderTemplateHtml"), "")));
+        config.setProperty("eInvoicePdfTemplateHtml", Objects.toString(uiSettings.getProperty("eInvoicePdfTemplateHtml"), Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "")));
+        config.setProperty("eInvoiceEnabled", Objects.toString(uiSettings.getProperty("eInvoiceEnabled"), Objects.toString(config.getProperty("eInvoiceEnabled"), "true")));
+        config.setProperty("eInvoiceAttachAndStoreEnabled", Objects.toString(uiSettings.getProperty("eInvoiceAttachAndStoreEnabled"), Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true")));
+        config.setProperty("eInvoiceBuyerName", Objects.toString(uiSettings.getProperty("eInvoiceBuyerName"), Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh")));
+        config.setProperty("eInvoiceBuyerStreet", Objects.toString(uiSettings.getProperty("eInvoiceBuyerStreet"), Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "")));
+        config.setProperty("eInvoiceBuyerZip", Objects.toString(uiSettings.getProperty("eInvoiceBuyerZip"), Objects.toString(config.getProperty("eInvoiceBuyerZip"), "")));
+        config.setProperty("eInvoiceBuyerCity", Objects.toString(uiSettings.getProperty("eInvoiceBuyerCity"), Objects.toString(config.getProperty("eInvoiceBuyerCity"), "")));
+        config.setProperty("eInvoiceBuyerCountry", Objects.toString(uiSettings.getProperty("eInvoiceBuyerCountry"), Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE")));
+        config.setProperty("eInvoiceBuyerVatId", Objects.toString(uiSettings.getProperty("eInvoiceBuyerVatId"), Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "")));
+        config.setProperty("eInvoiceBuyerTaxNumber", Objects.toString(uiSettings.getProperty("eInvoiceBuyerTaxNumber"), Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "")));
+        config.setProperty("eInvoiceBankIban", Objects.toString(uiSettings.getProperty("eInvoiceBankIban"), Objects.toString(config.getProperty("eInvoiceBankIban"), "")));
+        config.setProperty("eInvoiceBankBic", Objects.toString(uiSettings.getProperty("eInvoiceBankBic"), Objects.toString(config.getProperty("eInvoiceBankBic"), "")));
+        config.setProperty("eInvoiceBankAccountHolder", Objects.toString(uiSettings.getProperty("eInvoiceBankAccountHolder"), Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), "")));
+        config.setProperty("eInvoicePaymentTerms", Objects.toString(uiSettings.getProperty("eInvoicePaymentTerms"), Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug")));
+
+        config.setProperty(MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(MAIL_LOG_KEY), Objects.toString(config.getProperty(MAIL_LOG_KEY), "")));
+        config.setProperty(REMINDER_LOG_KEY, Objects.toString(uiSettings.getProperty(REMINDER_LOG_KEY), Objects.toString(config.getProperty(REMINDER_LOG_KEY), "")));
 
         ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
     }
@@ -2872,23 +4468,37 @@ private static String toGermanDate(String input) {
         String text = commitSubject.trim();
         String lower = text.toLowerCase();
 
+        String normalized = text
+                .replace("advisor", "Beraterin")
+                .replace("Advisor", "Beraterin")
+                .replace("analytics", "Auswertungen")
+                .replace("Analytics", "Auswertungen")
+                .replace("workflow", "Ablauf")
+                .replace("Workflow", "Ablauf")
+                .replace("mail-log", "Versandhistorie")
+                .replace("Mail-Log", "Versandhistorie")
+                .replace("invoice", "Rechnung")
+                .replace("Invoice", "Rechnung")
+                .replace("settings", "Einstellungen")
+                .replace("Settings", "Einstellungen");
+
         if (lower.startsWith("fix ") || lower.startsWith("fix:")) {
-            return "Fehlerbehebung: " + text.substring(text.indexOf(' ') + 1).trim();
+            return "Fehlerbehebung: " + normalized.substring(normalized.indexOf(' ') + 1).trim();
         }
         if (lower.startsWith("add ") || lower.startsWith("add:")) {
-            return "Erweiterung: " + text.substring(text.indexOf(' ') + 1).trim();
+            return "Erweiterung: " + normalized.substring(normalized.indexOf(' ') + 1).trim();
         }
         if (lower.startsWith("update ") || lower.startsWith("update:")) {
-            return "Aktualisierung: " + text.substring(text.indexOf(' ') + 1).trim();
+            return "Aktualisierung: " + normalized.substring(normalized.indexOf(' ') + 1).trim();
         }
         if (lower.startsWith("refactor ") || lower.startsWith("refactor:")) {
-            return "Umstrukturierung: " + text.substring(text.indexOf(' ') + 1).trim();
+            return "Umstrukturierung: " + normalized.substring(normalized.indexOf(' ') + 1).trim();
         }
         if (lower.startsWith("remove ") || lower.startsWith("remove:")) {
-            return "Entfernung: " + text.substring(text.indexOf(' ') + 1).trim();
+            return "Entfernung: " + normalized.substring(normalized.indexOf(' ') + 1).trim();
         }
 
-        return "Änderung: " + text;
+        return "Änderung: " + normalized;
     }
 
     private static String resolveVersionWithTimestampAndSequence() {
