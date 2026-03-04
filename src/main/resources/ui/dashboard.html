@@ -678,6 +678,7 @@
         <div id="validation-masterdata-section" class="validation-section active">
           <div class="toolbar">
             <button id="loadValidationBtn" class="secondary" type="button">Stammdaten laden / neu laden</button>
+            <button id="exportValidationExcelBtn" class="secondary" type="button">Stammdaten als Excel exportieren</button>
           </div>
           <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
           <table>
@@ -832,6 +833,48 @@
       } catch (error) {
         status.textContent = `Fehler beim Laden der Stammdaten: ${error.message}`;
       }
+    }
+
+    function exportValidationTableToExcel() {
+      const status = document.getElementById('validationStatus');
+      const table = document.querySelector('#validation-masterdata-section table');
+      if (!table) {
+        if (status) status.textContent = 'Keine Stammdatentabelle gefunden.';
+        return;
+      }
+
+      const headers = Array.from(table.querySelectorAll('thead th')).map(th => String(th.textContent || '').trim());
+      const visibleRows = Array.from(table.querySelectorAll('tbody tr')).filter(tr => {
+        const style = window.getComputedStyle(tr);
+        return style.display !== 'none' && style.visibility !== 'hidden';
+      });
+
+      if (!visibleRows.length) {
+        if (status) status.textContent = 'Keine sichtbaren Stammdaten zum Export vorhanden.';
+        return;
+      }
+
+      const htmlRows = visibleRows.map(tr => {
+        const cells = Array.from(tr.querySelectorAll('td')).map(td => `<td>${escapeHtml(String(td.textContent || '').trim())}</td>`);
+        return `<tr>${cells.join('')}</tr>`;
+      }).join('');
+
+      const now = new Date();
+      const pad = (v) => String(v).padStart(2, '0');
+      const fileName = `stammdaten_export_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.xls`;
+      const workbookHtml = `<!doctype html><html><head><meta charset="UTF-8"></head><body><table><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${htmlRows}</tbody></table></body></html>`;
+
+      const blob = new Blob(['\ufeff', workbookHtml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      if (status) status.textContent = `${visibleRows.length} sichtbare Stammdatensätze als Excel exportiert.`;
     }
 
     function rebuildValidationTreeIndex() {
@@ -2701,6 +2744,7 @@
         const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
         const fetchAdvisor360Btn = document.getElementById('fetchAdvisor360Btn');
         const loadValidationBtn = document.getElementById('loadValidationBtn');
+        const exportValidationExcelBtn = document.getElementById('exportValidationExcelBtn');
         const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
         const expandAllTreeBtn = document.getElementById('expandAllTreeBtn');
         const collapseAllTreeBtn = document.getElementById('collapseAllTreeBtn');
@@ -2720,6 +2764,7 @@
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
         if (fetchAdvisor360Btn) fetchAdvisor360Btn.addEventListener('click', fetchAdvisor360);
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
+        if (exportValidationExcelBtn) exportValidationExcelBtn.addEventListener('click', exportValidationTableToExcel);
         if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
         if (expandAllTreeBtn) expandAllTreeBtn.addEventListener('click', expandAllValidationTree);
         if (collapseAllTreeBtn) collapseAllTreeBtn.addEventListener('click', collapseAllValidationTree);
