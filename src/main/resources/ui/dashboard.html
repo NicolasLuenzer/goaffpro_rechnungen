@@ -152,7 +152,19 @@
     <nav id="sideNav" class="side-nav"></nav>
     <div id="mainContent" style="flex:1;min-width:0;padding-left:16px;">
       <div id="areaTabs" class="area-tabs" style="display:none;"></div>
-      <div id="asPanel" class="panel area-panel"><h2>AS</h2><p>Noch keine Inhalte vorhanden.</p></div>
+      <div id="asPanel" class="panel area-panel">
+        <h2>ERPNext Rechnungsimport</h2>
+        <div class="toolbar">
+          <button id="fetchErpnextSalesInvoicesBtn" class="secondary" type="button">Hole Ausgangsrechnungen</button>
+        </div>
+        <p id="erpnextSalesInvoicesStatus" class="status">Noch keine Ausgangsrechnungen geladen.</p>
+        <table>
+          <thead>
+            <tr><th>Rechnung</th><th>Buchungsdatum</th><th>Fälligkeit</th><th>Kunde</th><th>Kundin</th><th>Gesamt</th><th>Offen</th><th>Währung</th><th>Status</th><th>Firma</th></tr>
+          </thead>
+          <tbody id="erpnextSalesInvoicesBody"></tbody>
+        </table>
+      </div>
       <div id="ltPanel" class="panel area-panel"><h2>LT</h2><p>Noch keine Inhalte vorhanden.</p></div>
       <div id="vPanel" class="area-panel active"><div id="tabs" class="tabs" style="display:none;"></div><div id="panels"></div></div>
     </div>
@@ -195,6 +207,10 @@
 
     <div class="settings-group" style="background:#fff;max-width:1200px;margin-bottom:16px;">
       <h3>ERPNext</h3>
+      <div class="toolbar">
+        <label for="erpnextBaseUrl">Basis-URL:</label>
+        <input id="erpnextBaseUrl" type="text" placeholder="https://erp.example.com" style="min-width:320px;" />
+      </div>
       <div class="toolbar">
         <label for="erpnextApiKey">API-Schlüssel:</label>
         <input id="erpnextApiKey" type="text" placeholder="z. B. abc123..." style="min-width:320px;" />
@@ -832,6 +848,26 @@
         renderValidationTable();
       } catch (error) {
         status.textContent = `Fehler beim Laden der Stammdaten: ${error.message}`;
+      }
+    }
+
+    async function fetchErpnextSalesInvoices() {
+      const status = document.getElementById('erpnextSalesInvoicesStatus');
+      const body = document.getElementById('erpnextSalesInvoicesBody');
+      if (!status || !body) return;
+      status.textContent = 'Lade Ausgangsrechnungen aus ERPNext...';
+      body.innerHTML = '';
+      try {
+        const data = await apiGet('/api/erpnext/sales-invoices');
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        body.innerHTML = rows.map(r => `<tr><td>${escapeHtml(r.name || '')}</td><td>${escapeHtml(r.postingDate || '')}</td><td>${escapeHtml(r.dueDate || '')}</td><td>${escapeHtml(r.customer || '')}</td><td>${escapeHtml(r.customerName || '')}</td><td>${escapeHtml(r.grandTotal || '')}</td><td>${escapeHtml(r.outstandingAmount || '')}</td><td>${escapeHtml(r.currency || '')}</td><td>${escapeHtml(r.status || '')}</td><td>${escapeHtml(r.company || '')}</td></tr>`).join('');
+        status.textContent = `${rows.length} Ausgangsrechnungen geladen.`;
+        const table = body.closest('table');
+        ensureResizableColumns(table || document);
+        applyTableFilterAndSort(table);
+        updateEmptyTablesVisibility(document);
+      } catch (error) {
+        status.textContent = `Fehler beim Laden der Ausgangsrechnungen: ${error.message}`;
       }
     }
 
@@ -1561,6 +1597,8 @@
         const data = await apiGet('/api/settings');
         input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || '';
+        const erpnextBaseUrlInput = document.getElementById('erpnextBaseUrl');
+        if (erpnextBaseUrlInput) erpnextBaseUrlInput.value = data.erpnextBaseUrl || '';
         const erpnextApiKeyInput = document.getElementById('erpnextApiKey');
         if (erpnextApiKeyInput) erpnextApiKeyInput.value = data.erpnextApiKey || '';
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
@@ -1630,6 +1668,7 @@
           pdfExportPath: input.value,
           lastImportedComission: select.value,
           goaffproAPIKey: goaffproAPIKeyInput ? goaffproAPIKeyInput.value : '',
+          erpnextBaseUrl: document.getElementById('erpnextBaseUrl')?.value || '',
           erpnextApiKey: document.getElementById('erpnextApiKey')?.value || '',
           erpnextApiSecret: document.getElementById('erpnextApiSecret')?.value || '',
           contactEmail: contactEmailInput ? contactEmailInput.value : '',
@@ -1659,6 +1698,8 @@
         });
         input.value = data.pdfExportPath || input.value;
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
+        const erpnextBaseUrlEl = document.getElementById('erpnextBaseUrl');
+        if (erpnextBaseUrlEl && data.erpnextBaseUrl !== undefined) erpnextBaseUrlEl.value = data.erpnextBaseUrl;
         const erpnextKeyEl = document.getElementById('erpnextApiKey');
         if (erpnextKeyEl && data.erpnextApiKey !== undefined) erpnextKeyEl.value = data.erpnextApiKey;
         const erpnextSecretEl = document.getElementById('erpnextApiSecret');
@@ -1841,6 +1882,8 @@
         pdfExportPath: (document.getElementById('pdfExportPath')?.value || '').trim(),
         lastImportedComission: (document.getElementById('lastImportedSelect')?.value || '').trim(),
         goaffproAPIKey: (document.getElementById('goaffproAPIKey')?.value || '').trim(),
+        erpnextBaseUrl: (document.getElementById('erpnextBaseUrl')?.value || '').trim(),
+        erpnextApiKey: (document.getElementById('erpnextApiKey')?.value || '').trim(),
         contactEmail: (document.getElementById('contactEmail')?.value || '').trim(),
         smtpHost: (document.getElementById('smtpHost')?.value || '').trim(),
         smtpPort: String((document.getElementById('smtpPort')?.value || '587')).trim(),
@@ -1877,7 +1920,7 @@
     }
 
     function wireSettingsDirtyTracking() {
-      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
+      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','erpnextBaseUrl','erpnextApiKey','erpnextApiSecret','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
       ids.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -2743,6 +2786,7 @@
         const rebuildCommissionHistoryBtn = document.getElementById('rebuildCommissionHistoryBtn');
         const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
         const fetchAdvisor360Btn = document.getElementById('fetchAdvisor360Btn');
+        const fetchErpnextSalesInvoicesBtn = document.getElementById('fetchErpnextSalesInvoicesBtn');
         const loadValidationBtn = document.getElementById('loadValidationBtn');
         const exportValidationExcelBtn = document.getElementById('exportValidationExcelBtn');
         const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
@@ -2763,6 +2807,7 @@
         if (rebuildCommissionHistoryBtn) rebuildCommissionHistoryBtn.addEventListener('click', rebuildCommissionHistoryFromPayments);
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
         if (fetchAdvisor360Btn) fetchAdvisor360Btn.addEventListener('click', fetchAdvisor360);
+        if (fetchErpnextSalesInvoicesBtn) fetchErpnextSalesInvoicesBtn.addEventListener('click', fetchErpnextSalesInvoices);
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
         if (exportValidationExcelBtn) exportValidationExcelBtn.addEventListener('click', exportValidationTableToExcel);
         if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);

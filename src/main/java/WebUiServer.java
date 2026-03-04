@@ -36,6 +36,7 @@ import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -144,6 +145,7 @@ public class WebUiServer {
         server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
         server.createContext("/api/validation/send-reminder", new ValidationReminderMailHandler());
         server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
+        server.createContext("/api/erpnext/sales-invoices", new ErpnextSalesInvoicesHandler());
         server.createContext("/api/auth/login", new AuthLoginHandler());
         server.createContext("/api/auth/me", new AuthMeHandler());
         server.createContext("/api/auth/logout", new AuthLogoutHandler());
@@ -494,6 +496,7 @@ public class WebUiServer {
                 String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH);
                 String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
                 String goaffproAPIKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
+                String erpnextBaseUrl = Objects.toString(config.getProperty("erpnextBaseUrl"), "").trim();
                 String erpnextApiKey = Objects.toString(config.getProperty("erpnextApiKey"), "").trim();
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 String smtpHost = Objects.toString(config.getProperty("smtpHost"), "").trim();
@@ -528,6 +531,7 @@ public class WebUiServer {
                 payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 payload.put("lastImportedComission", activeCommission);
                 payload.put("goaffproAPIKey", goaffproAPIKey);
+                payload.put("erpnextBaseUrl", erpnextBaseUrl);
                 payload.put("erpnextApiKey", erpnextApiKey);
                 payload.put("contactEmail", contactEmail);
                 payload.put("smtpHost", smtpHost);
@@ -557,6 +561,7 @@ public class WebUiServer {
                     String newPath = asText(body, "pdfExportPath").trim();
                     String selectedCommission = asText(body, "lastImportedComission").trim();
                     String goaffproAPIKey = asText(body, "goaffproAPIKey").trim();
+                    String erpnextBaseUrl = asText(body, "erpnextBaseUrl").trim();
                     String erpnextApiKey = asText(body, "erpnextApiKey").trim();
                     String erpnextApiSecret = asText(body, "erpnextApiSecret").trim();
                     String contactEmail = asText(body, "contactEmail").trim();
@@ -594,6 +599,7 @@ public class WebUiServer {
                     if (!goaffproAPIKey.isEmpty()) {
                         config.setProperty("goaffproAPIKey", goaffproAPIKey);
                     }
+                    config.setProperty("erpnextBaseUrl", erpnextBaseUrl);
                     config.setProperty("erpnextApiKey", erpnextApiKey);
                     if (!erpnextApiSecret.isBlank()) {
                         config.setProperty("erpnextApiSecret", erpnextApiSecret);
@@ -650,6 +656,7 @@ public class WebUiServer {
                     payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                     payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
                     payload.put("goaffproAPIKey", Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY));
+                    payload.put("erpnextBaseUrl", Objects.toString(config.getProperty("erpnextBaseUrl"), ""));
                     payload.put("erpnextApiKey", Objects.toString(config.getProperty("erpnextApiKey"), ""));
                     payload.put("contactEmail", Objects.toString(config.getProperty("contactEmail"), ""));
                     payload.put("smtpHost", Objects.toString(config.getProperty("smtpHost"), ""));
@@ -690,6 +697,44 @@ public class WebUiServer {
             }
 
             sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+        }
+    }
+
+    private static class ErpnextSalesInvoicesHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+
+                String baseUrl = Objects.toString(config.getProperty("erpnextBaseUrl"), "").trim();
+                String apiKey = Objects.toString(config.getProperty("erpnextApiKey"), "").trim();
+                String apiSecret = Objects.toString(config.getProperty("erpnextApiSecret"), "").trim();
+                if (baseUrl.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"ERPNext Basis-URL fehlt. Bitte in den Einstellungen hinterlegen.\"}");
+                    return;
+                }
+                if (apiKey.isBlank() || apiSecret.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"ERPNext API-Zugangsdaten fehlen.\"}");
+                    return;
+                }
+
+                Map<String, Object> payload = fetchErpnextSalesInvoices(baseUrl, apiKey, apiSecret);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
         }
     }
 
@@ -3937,6 +3982,52 @@ public class WebUiServer {
         return OBJECT_MAPPER.readTree(body);
     }
 
+    private static Map<String, Object> fetchErpnextSalesInvoices(String baseUrl, String apiKey, String apiSecret) throws Exception {
+        String normalizedBase = baseUrl.replaceAll("/+$", "");
+        String fields = "[\"name\",\"posting_date\",\"customer\",\"customer_name\",\"grand_total\",\"outstanding_amount\",\"status\",\"currency\",\"due_date\",\"company\"]";
+        String query = "fields=" + URLEncoder.encode(fields, StandardCharsets.UTF_8)
+                + "&limit_page_length=200"
+                + "&order_by=" + URLEncoder.encode("posting_date desc", StandardCharsets.UTF_8);
+        String endpoint = normalizedBase + "/api/resource/Sales%20Invoice?" + query;
+
+        HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
+        connection.setRequestMethod("GET");
+        connection.setRequestProperty("Authorization", "token " + apiKey + ":" + apiSecret);
+        connection.setRequestProperty("Accept", "application/json");
+
+        int code = connection.getResponseCode();
+        InputStream bodyStream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+        String body = bodyStream == null ? "" : new String(bodyStream.readAllBytes(), StandardCharsets.UTF_8);
+        if (code < 200 || code >= 300) {
+            throw new IOException("ERPNext API Fehler (" + code + "): " + body);
+        }
+
+        JsonNode root = OBJECT_MAPPER.readTree(body);
+        JsonNode dataNode = root.path("data");
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (dataNode.isArray()) {
+            for (JsonNode row : dataNode) {
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("name", asText(row, "name"));
+                out.put("postingDate", asText(row, "posting_date"));
+                out.put("dueDate", asText(row, "due_date"));
+                out.put("customer", asText(row, "customer"));
+                out.put("customerName", asText(row, "customer_name"));
+                out.put("grandTotal", asText(row, "grand_total"));
+                out.put("outstandingAmount", asText(row, "outstanding_amount"));
+                out.put("currency", asText(row, "currency"));
+                out.put("status", asText(row, "status"));
+                out.put("company", asText(row, "company"));
+                rows.add(out);
+            }
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("rows", rows);
+        payload.put("count", rows.size());
+        return payload;
+    }
+
     private static Properties loadConfig() throws IOException {
         Properties properties = new Properties();
         try (InputStream is = Files.newInputStream(CONFIG_PATH)) {
@@ -3982,6 +4073,7 @@ public class WebUiServer {
         ui.setProperty("pdfExportPath", Objects.toString(source.getProperty("pdfExportPath"), directory.toString()));
         ui.setProperty("lastImportedComission", Objects.toString(source.getProperty("lastImportedComission"), "0"));
         ui.setProperty("goaffproAPIKey", Objects.toString(source.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY));
+        ui.setProperty("erpnextBaseUrl", Objects.toString(source.getProperty("erpnextBaseUrl"), ""));
         ui.setProperty("contactEmail", Objects.toString(source.getProperty("contactEmail"), ""));
         ui.setProperty("smtpHost", Objects.toString(source.getProperty("smtpHost"), ""));
         ui.setProperty("smtpPort", Objects.toString(source.getProperty("smtpPort"), "587"));
@@ -4044,6 +4136,8 @@ public class WebUiServer {
         if (!uiApiKey.isEmpty()) {
             config.setProperty("goaffproAPIKey", uiApiKey);
         }
+
+        config.setProperty("erpnextBaseUrl", Objects.toString(uiSettings.getProperty("erpnextBaseUrl"), Objects.toString(config.getProperty("erpnextBaseUrl"), "")).trim());
 
         String uiContactEmail = Objects.toString(uiSettings.getProperty("contactEmail"), "").trim();
         if (!uiContactEmail.isEmpty() || config.containsKey("contactEmail")) {
