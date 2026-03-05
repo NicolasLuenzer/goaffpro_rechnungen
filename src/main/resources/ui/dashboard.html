@@ -169,11 +169,12 @@
         </table>
         <div class="toolbar" style="margin-top:16px;">
           <button id="fetchErpnextPurchaseOrdersBtn" class="secondary" type="button">Hole Lieferantenaufträge</button>
+          <button id="mapSupplierPaymentsBtn" class="secondary" type="button">Zahlungen Lieferantenaufträgen zuordnen</button>
         </div>
         <p id="erpnextPurchaseOrdersStatus" class="status">Noch keine Lieferantenaufträge geladen.</p>
         <table>
           <thead>
-            <tr><th>Auftrag</th><th>Datum</th><th>Lieferdatum</th><th>Lieferant</th><th>Lieferantenname</th><th>Gesamt</th><th>Erhalten %</th><th>Abgerechnet %</th><th>Währung</th><th>Status</th><th>Firma</th></tr>
+            <tr><th>Auftrag</th><th>Datum</th><th>Lieferdatum</th><th>Lieferant</th><th>Lieferantenname</th><th>Gesamt</th><th>Erhalten %</th><th>Abgerechnet %</th><th>Status</th><th>Vorgeschl. Buchungsdatum</th><th>Vorgeschl. Betrag</th><th>Vorgeschl. Gegenpartei</th><th>Vorgeschl. Referenz</th><th>Match-Info</th></tr>
           </thead>
           <tbody id="erpnextPurchaseOrdersBody"></tbody>
         </table>
@@ -185,7 +186,6 @@
           <label for="mt940BankAccountSelect">Bankkonto:</label>
           <select id="mt940BankAccountSelect" style="min-width:320px"></select>
           <button id="loadBankTransactionsBtn" class="secondary" type="button">Transaktionen laden</button>
-          <button id="mapSupplierPaymentsBtn" class="secondary" type="button">Zahlungen Lieferantenaufträgen zuordnen</button>
         </div>
         <div class="toolbar">
           <label>Name:</label><input id="newBankAccountName" type="text" placeholder="z. B. Hauptkonto" style="min-width:180px" />
@@ -200,7 +200,7 @@
         <p id="mt940Status" class="status">Noch kein Import durchgeführt.</p>
         <table>
           <thead>
-            <tr><th>Buchungsdatum</th><th>Wertstellung</th><th>Betrag</th><th>Währung</th><th>Gegenpartei</th><th>Verwendungszweck</th><th>Referenz</th><th>Lieferauftrag-Match</th><th>Match-Info</th><th>Importiert am</th><th>Datei</th></tr>
+            <tr><th>Buchungsdatum</th><th>Wertstellung</th><th>Betrag</th><th>Währung</th><th>Gegenpartei</th><th>Verwendungszweck</th><th>Referenz</th><th>Importiert am</th><th>Datei</th></tr>
           </thead>
           <tbody id="bankTransactionsBody"></tbody>
         </table>
@@ -344,7 +344,7 @@
     let validationTreeRowsCache = [];
     let erpnextPurchaseOrdersCache = [];
     let bankTransactionsCache = [];
-    let bankTransactionMappings = [];
+    let purchaseOrderMappings = [];
     let validationTreeChildrenByParent = new Map();
     let validationTreeById = new Map();
     let validationTreeExpanded = new Set();
@@ -924,7 +924,8 @@
         const data = await apiGet('/api/erpnext/purchase-orders');
         const rows = Array.isArray(data.rows) ? data.rows : [];
         erpnextPurchaseOrdersCache = rows;
-        body.innerHTML = rows.map(r => `<tr><td>${escapeHtml(r.name || '')}</td><td>${escapeHtml(r.transactionDate || '')}</td><td>${escapeHtml(r.scheduleDate || '')}</td><td>${escapeHtml(r.supplier || '')}</td><td>${escapeHtml(r.supplierName || '')}</td><td>${escapeHtml(r.grandTotal || '')}</td><td>${escapeHtml(r.perReceived || '')}</td><td>${escapeHtml(r.perBilled || '')}</td><td>${escapeHtml(r.currency || '')}</td><td>${escapeHtml(r.status || '')}</td><td>${escapeHtml(r.company || '')}</td></tr>`).join('');
+        purchaseOrderMappings = [];
+        renderPurchaseOrders();
         status.textContent = `${rows.length} Lieferantenaufträge geladen.`;
         const table = body.closest('table');
         ensureResizableColumns(table || document);
@@ -970,75 +971,69 @@
       return null;
     }
 
-    function matchBankTransactionsToPurchaseOrders(transactions, purchaseOrders) {
-      return (Array.isArray(transactions) ? transactions : []).map(tx => {
-        const txAmount = Math.abs(parseAmount(tx.amount));
-        const txCurrency = String(tx.currency || '').trim().toUpperCase();
-        const txDate = parseIsoDate(tx.bookingDate) || parseIsoDate(tx.valueDate);
-        const txText = normalizeForMatch(`${tx.purpose || ''} ${tx.reference || ''} ${tx.counterparty || ''} ${tx.bankReference || ''}`);
+    function buildTransactionCandidate(po, tx) {
+      const txAmount = Math.abs(parseAmount(tx.amount));
+      const poAmount = Math.abs(parseAmount(po.grandTotal));
+      const txCurrency = String(tx.currency || '').trim().toUpperCase();
+      const poCurrency = String(po.currency || '').trim().toUpperCase();
+      const txDate = parseIsoDate(tx.bookingDate) || parseIsoDate(tx.valueDate);
+      const poDate = parseIsoDate(po.transactionDate) || parseIsoDate(po.scheduleDate);
+      const txText = normalizeForMatch(`${tx.purpose || ''} ${tx.reference || ''} ${tx.counterparty || ''} ${tx.bankReference || ''}`);
+      const poName = normalizeForMatch(po.name);
+      const supplier = normalizeForMatch(po.supplier);
+      const supplierName = normalizeForMatch(po.supplierName);
 
-        const candidates = (Array.isArray(purchaseOrders) ? purchaseOrders : []).map(po => {
-          const poAmount = Math.abs(parseAmount(po.grandTotal));
-          const poCurrency = String(po.currency || '').trim().toUpperCase();
-          const poDate = parseIsoDate(po.transactionDate) || parseIsoDate(po.scheduleDate);
-          const poName = normalizeForMatch(po.name);
-          const supplier = normalizeForMatch(po.supplier);
-          const supplierName = normalizeForMatch(po.supplierName);
+      let score = 0;
+      const reasons = [];
 
-          let score = 0;
-          const reasons = [];
+      if (!Number.isNaN(txAmount) && !Number.isNaN(poAmount)) {
+        const amountDiff = Math.abs(txAmount - poAmount);
+        const strictTolerance = Math.max(0.01, poAmount * 0.02);
+        const softTolerance = Math.max(0.05, poAmount * 0.10);
+        if (amountDiff <= strictTolerance) {
+          score += 45;
+          reasons.push(`Betrag passt exakt (${txAmount.toFixed(2)} ≈ ${poAmount.toFixed(2)})`);
+        } else if (amountDiff <= softTolerance) {
+          score += 20;
+          reasons.push(`Betrag ähnlich (Abweichung ${amountDiff.toFixed(2)})`);
+        }
+      }
 
-          if (!Number.isNaN(txAmount) && !Number.isNaN(poAmount)) {
-            const amountDiff = Math.abs(txAmount - poAmount);
-            const strictTolerance = Math.max(0.01, poAmount * 0.02);
-            const softTolerance = Math.max(0.05, poAmount * 0.10);
-            if (amountDiff <= strictTolerance) {
-              score += 45;
-              reasons.push(`Betrag passt exakt (${txAmount.toFixed(2)} ≈ ${poAmount.toFixed(2)})`);
-            } else if (amountDiff <= softTolerance) {
-              score += 20;
-              reasons.push(`Betrag ähnlich (Abweichung ${amountDiff.toFixed(2)})`);
-            }
-          }
+      if (poName && txText.includes(poName)) {
+        score += 35;
+        reasons.push(`Auftragsnummer ${po.name} gefunden`);
+      }
+      if ((supplier && txText.includes(supplier)) || (supplierName && txText.includes(supplierName))) {
+        score += 20;
+        reasons.push('Lieferant in Transaktionsdaten gefunden');
+      }
+      if (txCurrency && poCurrency && txCurrency === poCurrency) {
+        score += 5;
+        reasons.push(`Währung passt (${txCurrency})`);
+      }
+      if (txDate && poDate) {
+        const diffDays = Math.abs(Math.round((txDate.getTime() - poDate.getTime()) / (1000 * 60 * 60 * 24)));
+        if (diffDays <= 14) {
+          score += 10;
+          reasons.push(`Datum nah (${diffDays} Tage)`);
+        } else if (diffDays <= 45) {
+          score += 5;
+          reasons.push(`Datum plausibel (${diffDays} Tage)`);
+        }
+      }
+      return { tx, score, reasons };
+    }
 
-          if (poName && txText.includes(poName)) {
-            score += 35;
-            reasons.push(`Auftragsnummer ${po.name} gefunden`);
-          }
-
-          if ((supplier && txText.includes(supplier)) || (supplierName && txText.includes(supplierName))) {
-            score += 20;
-            reasons.push('Lieferant in Transaktionsdaten gefunden');
-          }
-
-          if (txCurrency && poCurrency && txCurrency === poCurrency) {
-            score += 5;
-            reasons.push(`Währung passt (${txCurrency})`);
-          }
-
-          if (txDate && poDate) {
-            const diffDays = Math.abs(Math.round((txDate.getTime() - poDate.getTime()) / (1000 * 60 * 60 * 24)));
-            if (diffDays <= 14) {
-              score += 10;
-              reasons.push(`Datum nah (${diffDays} Tage)`);
-            } else if (diffDays <= 45) {
-              score += 5;
-              reasons.push(`Datum plausibel (${diffDays} Tage)`);
-            }
-          }
-
-          return { po, score, reasons };
-        }).sort((a, b) => b.score - a.score);
+    function mapPurchaseOrdersToBankTransactions(purchaseOrders, transactions) {
+      return (Array.isArray(purchaseOrders) ? purchaseOrders : []).map(po => {
+        const candidates = (Array.isArray(transactions) ? transactions : [])
+          .map(tx => buildTransactionCandidate(po, tx))
+          .sort((a, b) => b.score - a.score);
 
         const best = candidates[0];
         const second = candidates[1];
         if (!best || best.score < 45) {
-          return {
-            status: 'red',
-            label: 'Kein Treffer',
-            reason: 'Kein Lieferauftrag mit ausreichend passenden Werten (Betrag/Referenz/Lieferant) gefunden.',
-            purchaseOrderName: ''
-          };
+          return { status: 'red', reason: 'Keine ausreichende Übereinstimmung zu einer Banktransaktion gefunden.' };
         }
 
         const hasStrongAmount = best.reasons.some(r => r.startsWith('Betrag passt exakt'));
@@ -1046,37 +1041,38 @@
         const ambiguous = second && (best.score - second.score) < 8 && second.score >= 45;
 
         let status = 'yellow';
-        let label = 'Unsicher';
         if (!ambiguous && best.score >= 75 && hasStrongAmount && hasOrderRef) {
           status = 'green';
-          label = 'Sicher';
         }
-        if (ambiguous) {
-          best.reasons.push('Mehrere ähnlich gute Treffer vorhanden');
-        }
+        if (ambiguous) best.reasons.push('Mehrere ähnlich gute Treffer vorhanden');
 
         return {
           status,
-          label,
           reason: best.reasons.join('; '),
-          purchaseOrderName: best.po?.name || ''
+          tx: best.tx
         };
       });
+    }
+
+    function renderPurchaseOrders() {
+      const body = document.getElementById('erpnextPurchaseOrdersBody');
+      if (!body) return;
+      body.innerHTML = erpnextPurchaseOrdersCache.map((r, idx) => {
+        const match = purchaseOrderMappings[idx] || { status: '', reason: '', tx: null };
+        const rowClass = match.status ? `tx-match-${match.status}` : '';
+        const tx = match.tx || {};
+        return `<tr class="${escapeHtml(rowClass)}"><td>${escapeHtml(r.name || '')}</td><td>${escapeHtml(r.transactionDate || '')}</td><td>${escapeHtml(r.scheduleDate || '')}</td><td>${escapeHtml(r.supplier || '')}</td><td>${escapeHtml(r.supplierName || '')}</td><td>${escapeHtml(r.grandTotal || '')}</td><td>${escapeHtml(r.perReceived || '')}</td><td>${escapeHtml(r.perBilled || '')}</td><td>${escapeHtml(r.status || '')}</td><td>${escapeHtml(tx.bookingDate || tx.valueDate || '')}</td><td>${escapeHtml(tx.amount || '')}</td><td>${escapeHtml(tx.counterparty || '')}</td><td>${escapeHtml(tx.reference || '')}</td><td>${escapeHtml(match.reason || 'Nicht bewertet')}</td></tr>`;
+      }).join('');
     }
 
     function renderBankTransactions() {
       const body = document.getElementById('bankTransactionsBody');
       if (!body) return;
-      body.innerHTML = bankTransactionsCache.map((r, idx) => {
-        const match = bankTransactionMappings[idx] || { status: '', label: '', reason: '', purchaseOrderName: '' };
-        const rowClass = match.status ? `tx-match-${match.status}` : '';
-        const matchLabel = match.purchaseOrderName ? `${match.label} · ${match.purchaseOrderName}` : (match.label || 'Nicht bewertet');
-        return `<tr class="${escapeHtml(rowClass)}"><td>${escapeHtml(r.bookingDate || '')}</td><td>${escapeHtml(r.valueDate || '')}</td><td>${escapeHtml(r.amount || '')}</td><td>${escapeHtml(r.currency || '')}</td><td>${escapeHtml(r.counterparty || '')}</td><td>${escapeHtml(r.purpose || '')}</td><td>${escapeHtml(r.reference || '')}</td><td>${escapeHtml(matchLabel)}</td><td>${escapeHtml(match.reason || '')}</td><td>${escapeHtml(r.importedAt || '')}</td><td>${escapeHtml(r.sourceFileName || '')}</td></tr>`;
-      }).join('');
+      body.innerHTML = bankTransactionsCache.map(r => `<tr><td>${escapeHtml(r.bookingDate || '')}</td><td>${escapeHtml(r.valueDate || '')}</td><td>${escapeHtml(r.amount || '')}</td><td>${escapeHtml(r.currency || '')}</td><td>${escapeHtml(r.counterparty || '')}</td><td>${escapeHtml(r.purpose || '')}</td><td>${escapeHtml(r.reference || '')}</td><td>${escapeHtml(r.importedAt || '')}</td><td>${escapeHtml(r.sourceFileName || '')}</td></tr>`).join('');
     }
 
     async function mapSupplierPayments() {
-      const status = document.getElementById('mt940Status');
+      const status = document.getElementById('erpnextPurchaseOrdersStatus');
       if (!bankTransactionsCache.length) {
         if (status) status.textContent = 'Bitte zuerst Banktransaktionen laden.';
         return;
@@ -1088,13 +1084,13 @@
         if (status) status.textContent = 'Keine Lieferantenaufträge verfügbar; Zuordnung nicht möglich.';
         return;
       }
-      bankTransactionMappings = matchBankTransactionsToPurchaseOrders(bankTransactionsCache, erpnextPurchaseOrdersCache);
-      renderBankTransactions();
-      const green = bankTransactionMappings.filter(m => m.status === 'green').length;
-      const yellow = bankTransactionMappings.filter(m => m.status === 'yellow').length;
-      const red = bankTransactionMappings.filter(m => m.status === 'red').length;
+      purchaseOrderMappings = mapPurchaseOrdersToBankTransactions(erpnextPurchaseOrdersCache, bankTransactionsCache);
+      renderPurchaseOrders();
+      const green = purchaseOrderMappings.filter(m => m.status === 'green').length;
+      const yellow = purchaseOrderMappings.filter(m => m.status === 'yellow').length;
+      const red = purchaseOrderMappings.filter(m => m.status === 'red').length;
       if (status) status.textContent = `Zuordnung abgeschlossen. Grün: ${green}, Gelb: ${yellow}, Rot: ${red}.`;
-      const body = document.getElementById('bankTransactionsBody');
+      const body = document.getElementById('erpnextPurchaseOrdersBody');
       const table = body?.closest('table');
       ensureResizableColumns(table || document);
       applyTableFilterAndSort(table);
@@ -1159,8 +1155,9 @@
       const bankAccountId = select.value || '';
       if (!bankAccountId) {
         bankTransactionsCache = [];
-        bankTransactionMappings = [];
+        purchaseOrderMappings = [];
         body.innerHTML = '';
+        renderPurchaseOrders();
         if (status) status.textContent = 'Bitte Bankkonto auswählen.';
         return;
       }
@@ -1168,8 +1165,9 @@
         const data = await apiGet(`/api/as/bank-transactions?bankAccountId=${encodeURIComponent(bankAccountId)}`);
         const rows = Array.isArray(data.rows) ? data.rows : [];
         bankTransactionsCache = rows;
-        bankTransactionMappings = [];
+        purchaseOrderMappings = [];
         renderBankTransactions();
+        renderPurchaseOrders();
         if (status) status.textContent = `${rows.length} Banktransaktionen geladen.`;
         const table = body.closest('table');
         ensureResizableColumns(table || document);
