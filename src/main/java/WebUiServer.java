@@ -146,6 +146,7 @@ public class WebUiServer {
         server.createContext("/api/validation/send-reminder", new ValidationReminderMailHandler());
         server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
         server.createContext("/api/erpnext/sales-invoices", new ErpnextSalesInvoicesHandler());
+        server.createContext("/api/erpnext/purchase-orders", new ErpnextPurchaseOrdersHandler());
         server.createContext("/api/auth/login", new AuthLoginHandler());
         server.createContext("/api/auth/me", new AuthMeHandler());
         server.createContext("/api/auth/logout", new AuthLogoutHandler());
@@ -731,6 +732,44 @@ public class WebUiServer {
                 }
 
                 Map<String, Object> payload = fetchErpnextSalesInvoices(baseUrl, apiKey, apiSecret);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class ErpnextPurchaseOrdersHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+
+                String baseUrl = Objects.toString(config.getProperty("erpnextBaseUrl"), "").trim();
+                String apiKey = Objects.toString(config.getProperty("erpnextApiKey"), "").trim();
+                String apiSecret = Objects.toString(config.getProperty("erpnextApiSecret"), "").trim();
+                if (baseUrl.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"ERPNext Basis-URL fehlt. Bitte in den Einstellungen hinterlegen.\"}");
+                    return;
+                }
+                if (apiKey.isBlank() || apiSecret.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"ERPNext API-Zugangsdaten fehlen.\"}");
+                    return;
+                }
+
+                Map<String, Object> payload = fetchErpnextPurchaseOrders(baseUrl, apiKey, apiSecret);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -4015,6 +4054,53 @@ public class WebUiServer {
                 out.put("customerName", asText(row, "customer_name"));
                 out.put("grandTotal", asText(row, "grand_total"));
                 out.put("outstandingAmount", asText(row, "outstanding_amount"));
+                out.put("currency", asText(row, "currency"));
+                out.put("status", asText(row, "status"));
+                out.put("company", asText(row, "company"));
+                rows.add(out);
+            }
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("rows", rows);
+        payload.put("count", rows.size());
+        return payload;
+    }
+
+    private static Map<String, Object> fetchErpnextPurchaseOrders(String baseUrl, String apiKey, String apiSecret) throws Exception {
+        String normalizedBase = baseUrl.replaceAll("/+$", "");
+        String fields = "[\"name\",\"transaction_date\",\"schedule_date\",\"supplier\",\"supplier_name\",\"grand_total\",\"per_received\",\"per_billed\",\"status\",\"company\",\"currency\"]";
+        String query = "fields=" + URLEncoder.encode(fields, StandardCharsets.UTF_8)
+                + "&limit_page_length=200"
+                + "&order_by=" + URLEncoder.encode("transaction_date desc", StandardCharsets.UTF_8);
+        String endpoint = normalizedBase + "/api/resource/Purchase%20Order?" + query;
+
+        HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
+        connection.setRequestMethod("GET");
+        connection.setRequestProperty("Authorization", "token " + apiKey + ":" + apiSecret);
+        connection.setRequestProperty("Accept", "application/json");
+
+        int code = connection.getResponseCode();
+        InputStream bodyStream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+        String body = bodyStream == null ? "" : new String(bodyStream.readAllBytes(), StandardCharsets.UTF_8);
+        if (code < 200 || code >= 300) {
+            throw new IOException("ERPNext API Fehler (" + code + "): " + body);
+        }
+
+        JsonNode root = OBJECT_MAPPER.readTree(body);
+        JsonNode dataNode = root.path("data");
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (dataNode.isArray()) {
+            for (JsonNode row : dataNode) {
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("name", asText(row, "name"));
+                out.put("transactionDate", asText(row, "transaction_date"));
+                out.put("scheduleDate", asText(row, "schedule_date"));
+                out.put("supplier", asText(row, "supplier"));
+                out.put("supplierName", asText(row, "supplier_name"));
+                out.put("grandTotal", asText(row, "grand_total"));
+                out.put("perReceived", asText(row, "per_received"));
+                out.put("perBilled", asText(row, "per_billed"));
                 out.put("currency", asText(row, "currency"));
                 out.put("status", asText(row, "status"));
                 out.put("company", asText(row, "company"));
