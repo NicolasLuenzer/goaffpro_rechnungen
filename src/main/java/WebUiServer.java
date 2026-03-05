@@ -4768,9 +4768,15 @@ private static String toGermanDate(String input) {
                 continue;
             }
             if (line.startsWith(":86:") && current != null) {
-                String purpose = line.substring(4).trim();
-                current.purpose = current.purpose == null || current.purpose.isBlank() ? purpose : (current.purpose + " " + purpose).trim();
-                fillCounterpartyFromPurpose(current);
+                Tag86Data tag86 = parseMt940Tag86(line.substring(4).trim());
+                if (!tag86.purpose.isBlank()) {
+                    current.purpose = current.purpose == null || current.purpose.isBlank()
+                            ? tag86.purpose
+                            : (current.purpose + " " + tag86.purpose).trim();
+                }
+                if (!tag86.counterparty.isBlank()) {
+                    current.counterparty = tag86.counterparty;
+                }
                 continue;
             }
         }
@@ -4795,11 +4801,15 @@ private static String toGermanDate(String input) {
 
         if (idx >= value.length()) return tx;
         char dc = value.charAt(idx);
-        if (dc == 'R' && idx + 1 < value.length()) {
-            idx++;
-            dc = value.charAt(idx);
-        }
         idx++;
+
+        // optional funds code (e.g. R)
+        if (idx < value.length()) {
+            char fundsCode = value.charAt(idx);
+            if (Character.isLetter(fundsCode) && fundsCode != 'N' && fundsCode != 'F' && fundsCode != 'S') {
+                idx++;
+            }
+        }
 
         StringBuilder amount = new StringBuilder();
         while (idx < value.length()) {
@@ -4815,8 +4825,25 @@ private static String toGermanDate(String input) {
                 tx.amount = String.format(java.util.Locale.US, "%.2f", val);
             } catch (Exception ignored) {}
         }
+        if (idx < value.length()) {
+            // transaction code starts often with N/F/S + 3-char code
+            char marker = value.charAt(idx);
+            if ((marker == 'N' || marker == 'F' || marker == 'S') && idx + 3 < value.length()) {
+                tx.transactionCode = value.substring(idx + 1, Math.min(idx + 4, value.length()));
+                idx += 4;
+            }
+        }
+
         String trailing = idx < value.length() ? value.substring(idx).trim() : "";
-        if (!trailing.isBlank()) tx.reference = trailing;
+        if (!trailing.isBlank()) {
+            int bankRefIdx = trailing.indexOf("//");
+            if (bankRefIdx >= 0) {
+                tx.reference = trailing.substring(0, bankRefIdx).trim();
+                tx.bankReference = trailing.substring(bankRefIdx + 2).trim();
+            } else {
+                tx.reference = trailing;
+            }
+        }
         return tx;
     }
 
@@ -4840,11 +4867,61 @@ private static String toGermanDate(String input) {
         return "";
     }
 
-    private static void fillCounterpartyFromPurpose(BankTransactionRecord tx) {
-        String p = Objects.toString(tx.purpose, "").trim();
-        if (p.isBlank()) return;
-        String[] parts = p.split("\\?");
-        if (parts.length > 0 && (tx.counterparty == null || tx.counterparty.isBlank())) tx.counterparty = parts[0].trim();
+    private static Tag86Data parseMt940Tag86(String raw) {
+        Tag86Data out = new Tag86Data();
+        String value = Objects.toString(raw, "").trim();
+        if (value.isBlank()) return out;
+
+        // leading numeric token (e.g. 808/166) is not business content
+        if (value.length() >= 3 && Character.isDigit(value.charAt(0)) && Character.isDigit(value.charAt(1)) && Character.isDigit(value.charAt(2))) {
+            value = value.substring(3).trim();
+        }
+
+        Map<String, StringBuilder> segments = new LinkedHashMap<>();
+        String currentKey = "00";
+        segments.put(currentKey, new StringBuilder());
+        int i = 0;
+        while (i < value.length()) {
+            char c = value.charAt(i);
+            if (c == '?' && i + 2 < value.length() && Character.isDigit(value.charAt(i + 1)) && Character.isDigit(value.charAt(i + 2))) {
+                currentKey = "" + value.charAt(i + 1) + value.charAt(i + 2);
+                segments.putIfAbsent(currentKey, new StringBuilder());
+                i += 3;
+                continue;
+            }
+            segments.get(currentKey).append(c);
+            i++;
+        }
+
+        StringBuilder purpose = new StringBuilder();
+        for (int k = 20; k <= 29; k++) {
+            String key = String.format("%02d", k);
+            if (segments.containsKey(key)) {
+                if (purpose.length() > 0) purpose.append(' ');
+                purpose.append(segments.get(key).toString().trim());
+            }
+        }
+        if (purpose.length() == 0 && segments.containsKey("00")) {
+            purpose.append(segments.get("00").toString().trim());
+        }
+        String p = purpose.toString().replace("SVWZ+", "").replaceAll("\\s+", " ").trim();
+        out.purpose = p;
+
+        StringBuilder cp = new StringBuilder();
+        for (int k = 32; k <= 33; k++) {
+            String key = String.format("%02d", k);
+            if (segments.containsKey(key)) {
+                if (cp.length() > 0) cp.append(' ');
+                cp.append(segments.get(key).toString().trim());
+            }
+        }
+        out.counterparty = cp.toString().replaceAll("\\s+", " ").trim();
+        return out;
+    }
+
+    private static class Tag86Data {
+        String purpose = "";
+        String counterparty = "";
     }
 
     private static String buildTransactionFingerprint(BankTransactionRecord tx) {
