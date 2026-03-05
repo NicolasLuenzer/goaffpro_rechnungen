@@ -174,7 +174,7 @@
         <p id="erpnextPurchaseOrdersStatus" class="status">Noch keine Lieferantenaufträge geladen.</p>
         <table>
           <thead>
-            <tr><th>Auftrag</th><th>Datum</th><th>Lieferdatum</th><th>Lieferant</th><th>Lieferantenname</th><th>Gesamt</th><th>Erhalten %</th><th>Abgerechnet %</th><th>Status</th><th>Vorgeschl. Buchungsdatum</th><th>Vorgeschl. Betrag</th><th>Vorgeschl. Gegenpartei</th><th>Vorgeschl. Referenz</th><th>Match-Info</th></tr>
+            <tr><th>Auftrag</th><th>Datum</th><th>Lieferant</th><th>Lieferantenname</th><th>Gesamt</th><th>Erhalten %</th><th>Abgerechnet %</th><th>Status</th><th>Vorgeschl. Buchungsdatum</th><th>Vorgeschl. Betrag</th><th>Vorgeschl. Gegenpartei</th><th>Vorgeschl. Referenz</th><th>Match-Info</th></tr>
           </thead>
           <tbody id="erpnextPurchaseOrdersBody"></tbody>
         </table>
@@ -1082,7 +1082,7 @@
         const match = purchaseOrderMappings[idx] || { status: '', reason: '', tx: null };
         const rowClass = match.status ? `tx-match-${match.status}` : '';
         const tx = match.tx || {};
-        return `<tr class="${escapeHtml(rowClass)}"><td>${escapeHtml(r.name || '')}</td><td>${escapeHtml(r.transactionDate || '')}</td><td>${escapeHtml(r.scheduleDate || '')}</td><td>${escapeHtml(r.supplier || '')}</td><td>${escapeHtml(r.supplierName || '')}</td><td>${escapeHtml(r.grandTotal || '')}</td><td>${escapeHtml(r.perReceived || '')}</td><td>${escapeHtml(r.perBilled || '')}</td><td>${escapeHtml(r.status || '')}</td><td>${escapeHtml(tx.bookingDate || tx.valueDate || '')}</td><td>${escapeHtml(tx.amount || '')}</td><td>${escapeHtml(tx.counterparty || '')}</td><td>${escapeHtml(tx.reference || '')}</td><td>${escapeHtml(match.reason || 'Nicht bewertet')}</td></tr>`;
+        return `<tr class="${escapeHtml(rowClass)}"><td>${escapeHtml(r.name || '')}</td><td>${escapeHtml(r.transactionDate || '')}</td><td>${escapeHtml(r.supplier || '')}</td><td>${escapeHtml(r.supplierName || '')}</td><td>${escapeHtml(r.grandTotal || '')}</td><td>${escapeHtml(r.perReceived || '')}</td><td>${escapeHtml(r.perBilled || '')}</td><td>${escapeHtml(r.status || '')}</td><td>${escapeHtml(tx.bookingDate || tx.valueDate || '')}</td><td>${escapeHtml(tx.amount || '')}</td><td>${escapeHtml(tx.counterparty || '')}</td><td>${escapeHtml(tx.reference || '')}</td><td>${escapeHtml(match.reason || 'Nicht bewertet')}</td></tr>`;
       }).join('');
     }
 
