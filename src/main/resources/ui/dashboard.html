@@ -190,10 +190,10 @@
           <button id="createBankAccountBtn" class="secondary" type="button">Bankkonto anlegen</button>
         </div>
         <div class="toolbar">
-          <input id="mt940FileInput" type="file" accept=".sta,.mt940,.txt" />
-          <button id="importMt940Btn" class="secondary" type="button">MT940 importieren</button>
+          <input id="mt940FileInput" type="file" accept=".sta,.mt940,.txt,.csv,.mta" />
+          <button id="importMt940Btn" class="secondary" type="button">Datei importieren (MT940/CSV)</button>
         </div>
-        <p id="mt940Status" class="status">Noch kein MT940-Import durchgeführt.</p>
+        <p id="mt940Status" class="status">Noch kein Import durchgeführt.</p>
         <table>
           <thead>
             <tr><th>Buchungsdatum</th><th>Wertstellung</th><th>Betrag</th><th>Währung</th><th>Gegenpartei</th><th>Verwendungszweck</th><th>Referenz</th><th>Importiert am</th><th>Datei</th></tr>
@@ -966,14 +966,14 @@
       const bankAccountId = select?.value || '';
       const file = input?.files?.[0];
       if (!bankAccountId) { if (status) status.textContent = 'Bitte ein Bankkonto auswählen.'; return; }
-      if (!file) { if (status) status.textContent = 'Bitte eine MT940-Datei auswählen.'; return; }
+      if (!file) { if (status) status.textContent = 'Bitte eine MT940- oder CSV-Datei auswählen.'; return; }
       try {
         const content = await file.text();
         const res = await apiPost('/api/as/mt940/import', { bankAccountId, fileName: file.name || '', content });
         if (status) status.textContent = `${res.message || 'Import abgeschlossen.'} Gelesen: ${res.totalParsed || 0}, neu: ${res.inserted || 0}, Duplikate: ${res.duplicates || 0}.`;
         await loadBankTransactions();
       } catch (error) {
-        if (status) status.textContent = `Fehler beim MT940-Import: ${error.message}`;
+        if (status) status.textContent = `Fehler beim Datei-Import: ${error.message}`;
       }
     }
 

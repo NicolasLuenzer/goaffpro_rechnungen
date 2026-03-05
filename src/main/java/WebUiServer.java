@@ -854,7 +854,7 @@ public class WebUiServer {
                         .filter(v -> !v.isBlank())
                         .collect(Collectors.toCollection(LinkedHashSet::new));
 
-                List<BankTransactionRecord> parsed = parseMt940Transactions(content, bankAccountId, fileName);
+                List<BankTransactionRecord> parsed = parseImportedTransactions(content, bankAccountId, fileName);
                 int duplicates = 0;
                 int inserted = 0;
                 int ignored = 0;
@@ -868,7 +868,7 @@ public class WebUiServer {
                 if (inserted > 0) saveBankTransactions(config, existing);
 
                 Map<String, Object> payload = new LinkedHashMap<>();
-                payload.put("message", "MT940 Import abgeschlossen.");
+                payload.put("message", "Import abgeschlossen.");
                 payload.put("totalParsed", parsed.size());
                 payload.put("inserted", inserted);
                 payload.put("duplicates", duplicates);
@@ -4783,6 +4783,120 @@ private static String toGermanDate(String input) {
 
         for (BankTransactionRecord tx : result) tx.fingerprint = buildTransactionFingerprint(tx);
         return result;
+    }
+
+    private static List<BankTransactionRecord> parseImportedTransactions(String content, String bankAccountId, String sourceFileName) {
+        String normalized = Objects.toString(content, "");
+        String firstChunk = normalized.stripLeading();
+        if (sourceFileName != null && sourceFileName.toLowerCase().endsWith(".csv")) {
+            return parseBankCsvTransactions(normalized, bankAccountId, sourceFileName);
+        }
+        if (firstChunk.startsWith("Bezeichnung Auftragskonto;") || firstChunk.startsWith("\uFEFFBezeichnung Auftragskonto;")) {
+            return parseBankCsvTransactions(normalized, bankAccountId, sourceFileName);
+        }
+        return parseMt940Transactions(normalized, bankAccountId, sourceFileName);
+    }
+
+    private static List<BankTransactionRecord> parseBankCsvTransactions(String content, String bankAccountId, String sourceFileName) {
+        List<BankTransactionRecord> rows = new ArrayList<>();
+        if (content == null || content.isBlank()) return rows;
+        String normalized = content.replace("\r", "");
+        String[] lines = normalized.split("\n");
+        if (lines.length < 2) return rows;
+
+        List<String> headers = splitCsvSemicolonLine(lines[0]);
+        if (!headers.isEmpty() && headers.get(0).startsWith("\uFEFF")) {
+            headers.set(0, headers.get(0).substring(1));
+        }
+        Map<String, Integer> idx = new HashMap<>();
+        for (int i = 0; i < headers.size(); i++) idx.put(headers.get(i).trim(), i);
+
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i];
+            if (line == null || line.trim().isEmpty()) continue;
+            List<String> cells = splitCsvSemicolonLine(line);
+            BankTransactionRecord tx = new BankTransactionRecord();
+            tx.bankAccountId = bankAccountId;
+            tx.sourceFileName = Objects.toString(sourceFileName, "");
+            tx.importedAt = Instant.now().toString();
+
+            tx.bookingDate = parseGermanDateIso(getCsvCell(cells, idx, "Buchungstag"));
+            tx.valueDate = parseGermanDateIso(getCsvCell(cells, idx, "Valutadatum"));
+            tx.counterparty = getCsvCell(cells, idx, "Name Zahlungsbeteiligter").trim();
+            tx.purpose = getCsvCell(cells, idx, "Verwendungszweck").trim();
+            tx.transactionCode = getCsvCell(cells, idx, "Buchungstext").trim();
+            tx.currency = getCsvCell(cells, idx, "Waehrung").trim();
+            tx.amount = parseGermanAmount(getCsvCell(cells, idx, "Betrag"));
+            tx.balanceAfter = parseGermanAmount(getCsvCell(cells, idx, "Saldo nach Buchung"));
+            String mandatsreferenz = getCsvCell(cells, idx, "Mandatsreferenz").trim();
+            String glaeubigerId = getCsvCell(cells, idx, "Glaeubiger ID").trim();
+            String remark = getCsvCell(cells, idx, "Bemerkung").trim();
+            tx.reference = !mandatsreferenz.isBlank() ? mandatsreferenz : (!glaeubigerId.isBlank() ? glaeubigerId : tx.transactionCode);
+            tx.bankReference = remark;
+
+            if (tx.currency.isBlank()) tx.currency = "EUR";
+            if (tx.valueDate.isBlank()) tx.valueDate = tx.bookingDate;
+            if (tx.bookingDate.isBlank() && tx.valueDate.isBlank()) continue;
+            tx.fingerprint = buildTransactionFingerprint(tx);
+            rows.add(tx);
+        }
+        return rows;
+    }
+
+    private static List<String> splitCsvSemicolonLine(String line) {
+        List<String> out = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"') {
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    current.append('"');
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+                continue;
+            }
+            if (c == ';' && !inQuotes) {
+                out.add(current.toString());
+                current.setLength(0);
+                continue;
+            }
+            current.append(c);
+        }
+        out.add(current.toString());
+        return out;
+    }
+
+    private static String getCsvCell(List<String> cells, Map<String, Integer> idx, String header) {
+        Integer i = idx.get(header);
+        if (i == null || i < 0 || i >= cells.size()) return "";
+        return Objects.toString(cells.get(i), "");
+    }
+
+    private static String parseGermanDateIso(String input) {
+        String raw = Objects.toString(input, "").trim();
+        if (raw.isBlank()) return "";
+        try {
+            LocalDate d = LocalDate.parse(raw, DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+            return d.toString();
+        } catch (Exception ignored) {
+            return raw;
+        }
+    }
+
+    private static String parseGermanAmount(String input) {
+        String raw = Objects.toString(input, "").trim();
+        if (raw.isBlank()) return "";
+        String normalized = raw.replace(".", "").replace(',', '.').replaceAll("[^0-9+\-.]", "");
+        if (normalized.isBlank()) return "";
+        try {
+            double value = Double.parseDouble(normalized);
+            return String.format(java.util.Locale.US, "%.2f", value);
+        } catch (Exception ignored) {
+            return normalized;
+        }
     }
 
     private static BankTransactionRecord parseMt940Line61(String raw) {
