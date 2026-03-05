@@ -948,12 +948,30 @@
     function parseAmount(value) {
       const raw = String(value || '').trim();
       if (!raw) return NaN;
-      const normalized = raw
-        .replace(/\s/g, '')
-        .replace(/\./g, '')
-        .replace(',', '.')
-        .replace(/[^0-9.-]/g, '');
-      return Number(normalized);
+      const cleaned = raw.replace(/\s/g, '').replace(/[^0-9,.-]/g, '');
+      const lastComma = cleaned.lastIndexOf(',');
+      const lastDot = cleaned.lastIndexOf('.');
+
+      let decimalSep = '';
+      if (lastComma >= 0 && lastDot >= 0) {
+        decimalSep = lastComma > lastDot ? ',' : '.';
+      } else if (lastComma >= 0) {
+        decimalSep = ',';
+      } else if (lastDot >= 0) {
+        decimalSep = '.';
+      }
+
+      let normalized = cleaned;
+      if (decimalSep) {
+        const thousandsSep = decimalSep === ',' ? '.' : ',';
+        normalized = normalized.replace(new RegExp(`\\${thousandsSep}`, 'g'), '');
+        if (decimalSep === ',') normalized = normalized.replace(/,/g, '.');
+      } else {
+        normalized = normalized.replace(/[.,]/g, '');
+      }
+
+      const parsed = Number(normalized);
+      return Number.isFinite(parsed) ? parsed : NaN;
     }
 
     function parseIsoDate(value) {
@@ -987,14 +1005,17 @@
       const reasons = [];
 
       if (!Number.isNaN(txAmount) && !Number.isNaN(poAmount)) {
-        const amountDiff = Math.abs(txAmount - poAmount);
-        const strictTolerance = Math.max(0.01, poAmount * 0.02);
-        const softTolerance = Math.max(0.05, poAmount * 0.10);
-        if (amountDiff <= strictTolerance) {
-          score += 45;
-          reasons.push(`Betrag passt exakt (${txAmount.toFixed(2)} ≈ ${poAmount.toFixed(2)})`);
-        } else if (amountDiff <= softTolerance) {
-          score += 20;
+        const txCents = Math.round(txAmount * 100);
+        const poCents = Math.round(poAmount * 100);
+        const diffCents = Math.abs(txCents - poCents);
+        const amountDiff = diffCents / 100;
+        const nearTolerance = Math.max(1.0, poAmount * 0.01);
+
+        if (diffCents === 0) {
+          score += 55;
+          reasons.push(`Betrag 1:1 identisch (${txAmount.toFixed(2)} = ${poAmount.toFixed(2)})`);
+        } else if (amountDiff <= nearTolerance) {
+          score += 18;
           reasons.push(`Betrag ähnlich (Abweichung ${amountDiff.toFixed(2)})`);
         }
       }
@@ -1036,12 +1057,12 @@
           return { status: 'red', reason: 'Keine ausreichende Übereinstimmung zu einer Banktransaktion gefunden.' };
         }
 
-        const hasStrongAmount = best.reasons.some(r => r.startsWith('Betrag passt exakt'));
+        const hasStrongAmount = best.reasons.some(r => r.startsWith('Betrag 1:1 identisch'));
         const hasOrderRef = best.reasons.some(r => r.startsWith('Auftragsnummer'));
         const ambiguous = second && (best.score - second.score) < 8 && second.score >= 45;
 
         let status = 'yellow';
-        if (!ambiguous && best.score >= 75 && hasStrongAmount && hasOrderRef) {
+        if (!ambiguous && best.score >= 80 && hasStrongAmount && hasOrderRef) {
           status = 'green';
         }
         if (ambiguous) best.reasons.push('Mehrere ähnlich gute Treffer vorhanden');
