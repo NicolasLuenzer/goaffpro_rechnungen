@@ -5007,6 +5007,8 @@ private static String toGermanDate(String input) {
             i++;
         }
 
+        String typeText = Objects.toString(segments.getOrDefault("00", new StringBuilder()), "").trim();
+
         StringBuilder purpose = new StringBuilder();
         for (int k = 20; k <= 29; k++) {
             String key = String.format("%02d", k);
@@ -5015,10 +5017,32 @@ private static String toGermanDate(String input) {
                 purpose.append(segments.get(key).toString().trim());
             }
         }
-        if (purpose.length() == 0 && segments.containsKey("00")) {
-            purpose.append(segments.get("00").toString().trim());
+
+        // Some banks (e.g. Vivid) put human readable detail in ?60, while ?00 is only a category.
+        StringBuilder detailText = new StringBuilder();
+        for (int k = 60; k <= 63; k++) {
+            String key = String.format("%02d", k);
+            if (segments.containsKey(key)) {
+                if (detailText.length() > 0) detailText.append(' ');
+                detailText.append(segments.get(key).toString().trim());
+            }
         }
+
+        if (purpose.length() == 0 && detailText.length() > 0) {
+            purpose.append(detailText);
+        }
+        if (purpose.length() == 0 && !typeText.isBlank()) {
+            purpose.append(typeText);
+        }
+
         String p = purpose.toString().replace("SVWZ+", "").replaceAll("\\s+", " ").trim();
+        String d = detailText.toString().replace("SVWZ+", "").replaceAll("\\s+", " ").trim();
+        if (!d.isBlank() && !p.toLowerCase().contains(d.toLowerCase())) {
+            p = p.isBlank() ? d : (p + " | " + d);
+        }
+        if (!typeText.isBlank() && !p.toLowerCase().contains(typeText.toLowerCase())) {
+            p = p.isBlank() ? typeText : (typeText + " | " + p);
+        }
         out.purpose = p;
 
         StringBuilder cp = new StringBuilder();
@@ -5030,6 +5054,13 @@ private static String toGermanDate(String input) {
             }
         }
         out.counterparty = cp.toString().replaceAll("\\s+", " ").trim();
+
+        // Fallback for counterpart if 32/33 is missing
+        if (out.counterparty.isBlank()) {
+            String fallback = Objects.toString(segments.getOrDefault("31", new StringBuilder()), "").trim();
+            if (fallback.isBlank()) fallback = Objects.toString(segments.getOrDefault("30", new StringBuilder()), "").trim();
+            out.counterparty = fallback;
+        }
         return out;
     }
 
