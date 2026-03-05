@@ -36,6 +36,7 @@ import java.net.HttpURLConnection;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -144,6 +145,11 @@ public class WebUiServer {
         server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
         server.createContext("/api/validation/send-reminder", new ValidationReminderMailHandler());
         server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
+        server.createContext("/api/erpnext/sales-invoices", new ErpnextSalesInvoicesHandler());
+        server.createContext("/api/erpnext/purchase-orders", new ErpnextPurchaseOrdersHandler());
+        server.createContext("/api/as/bank-accounts", new AsBankAccountsHandler());
+        server.createContext("/api/as/mt940/import", new AsMt940ImportHandler());
+        server.createContext("/api/as/bank-transactions", new AsBankTransactionsHandler());
         server.createContext("/api/auth/login", new AuthLoginHandler());
         server.createContext("/api/auth/me", new AuthMeHandler());
         server.createContext("/api/auth/logout", new AuthLogoutHandler());
@@ -494,6 +500,7 @@ public class WebUiServer {
                 String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH);
                 String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
                 String goaffproAPIKey = Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY).trim();
+                String erpnextBaseUrl = Objects.toString(config.getProperty("erpnextBaseUrl"), "").trim();
                 String erpnextApiKey = Objects.toString(config.getProperty("erpnextApiKey"), "").trim();
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 String smtpHost = Objects.toString(config.getProperty("smtpHost"), "").trim();
@@ -528,6 +535,7 @@ public class WebUiServer {
                 payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 payload.put("lastImportedComission", activeCommission);
                 payload.put("goaffproAPIKey", goaffproAPIKey);
+                payload.put("erpnextBaseUrl", erpnextBaseUrl);
                 payload.put("erpnextApiKey", erpnextApiKey);
                 payload.put("contactEmail", contactEmail);
                 payload.put("smtpHost", smtpHost);
@@ -557,6 +565,7 @@ public class WebUiServer {
                     String newPath = asText(body, "pdfExportPath").trim();
                     String selectedCommission = asText(body, "lastImportedComission").trim();
                     String goaffproAPIKey = asText(body, "goaffproAPIKey").trim();
+                    String erpnextBaseUrl = asText(body, "erpnextBaseUrl").trim();
                     String erpnextApiKey = asText(body, "erpnextApiKey").trim();
                     String erpnextApiSecret = asText(body, "erpnextApiSecret").trim();
                     String contactEmail = asText(body, "contactEmail").trim();
@@ -594,6 +603,7 @@ public class WebUiServer {
                     if (!goaffproAPIKey.isEmpty()) {
                         config.setProperty("goaffproAPIKey", goaffproAPIKey);
                     }
+                    config.setProperty("erpnextBaseUrl", erpnextBaseUrl);
                     config.setProperty("erpnextApiKey", erpnextApiKey);
                     if (!erpnextApiSecret.isBlank()) {
                         config.setProperty("erpnextApiSecret", erpnextApiSecret);
@@ -650,6 +660,7 @@ public class WebUiServer {
                     payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                     payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
                     payload.put("goaffproAPIKey", Objects.toString(config.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY));
+                    payload.put("erpnextBaseUrl", Objects.toString(config.getProperty("erpnextBaseUrl"), ""));
                     payload.put("erpnextApiKey", Objects.toString(config.getProperty("erpnextApiKey"), ""));
                     payload.put("contactEmail", Objects.toString(config.getProperty("contactEmail"), ""));
                     payload.put("smtpHost", Objects.toString(config.getProperty("smtpHost"), ""));
@@ -690,6 +701,213 @@ public class WebUiServer {
             }
 
             sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+        }
+    }
+
+    private static class ErpnextSalesInvoicesHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+
+                String baseUrl = Objects.toString(config.getProperty("erpnextBaseUrl"), "").trim();
+                String apiKey = Objects.toString(config.getProperty("erpnextApiKey"), "").trim();
+                String apiSecret = Objects.toString(config.getProperty("erpnextApiSecret"), "").trim();
+                if (baseUrl.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"ERPNext Basis-URL fehlt. Bitte in den Einstellungen hinterlegen.\"}");
+                    return;
+                }
+                if (apiKey.isBlank() || apiSecret.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"ERPNext API-Zugangsdaten fehlen.\"}");
+                    return;
+                }
+
+                Map<String, Object> payload = fetchErpnextSalesInvoices(baseUrl, apiKey, apiSecret);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class ErpnextPurchaseOrdersHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+
+                String baseUrl = Objects.toString(config.getProperty("erpnextBaseUrl"), "").trim();
+                String apiKey = Objects.toString(config.getProperty("erpnextApiKey"), "").trim();
+                String apiSecret = Objects.toString(config.getProperty("erpnextApiSecret"), "").trim();
+                if (baseUrl.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"ERPNext Basis-URL fehlt. Bitte in den Einstellungen hinterlegen.\"}");
+                    return;
+                }
+                if (apiKey.isBlank() || apiSecret.isBlank()) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"ERPNext API-Zugangsdaten fehlen.\"}");
+                    return;
+                }
+
+                Map<String, Object> payload = fetchErpnextPurchaseOrders(baseUrl, apiKey, apiSecret);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class AsBankAccountsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            if (!canAccessDepartment(su, "AS")) { sendResponse(exchange, 403, "application/json", "{\"error\":\"Kein Zugriff auf Bereich AS\"}"); return; }
+            try {
+                Properties config = loadConfig();
+                List<BankAccountRecord> accounts = loadBankAccounts(config);
+                if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                    Map<String, Object> payload = new LinkedHashMap<>();
+                    payload.put("rows", accounts);
+                    payload.put("count", accounts.size());
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+                    return;
+                }
+                if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String name = asText(body, "name").trim();
+                String ibanOrAccountNo = asText(body, "ibanOrAccountNo").trim();
+                if (name.isBlank() || ibanOrAccountNo.isBlank()) { sendResponse(exchange, 400, "application/json", "{\"error\":\"name und ibanOrAccountNo sind Pflichtfelder\"}"); return; }
+                String normalizedIban = normalizeToken(ibanOrAccountNo);
+                boolean exists = accounts.stream().anyMatch(a -> normalizeToken(a.ibanOrAccountNo).equals(normalizedIban));
+                if (exists) { sendResponse(exchange, 400, "application/json", "{\"error\":\"Bankkonto existiert bereits\"}"); return; }
+                BankAccountRecord account = new BankAccountRecord();
+                account.id = java.util.UUID.randomUUID().toString();
+                account.name = name;
+                account.ibanOrAccountNo = ibanOrAccountNo;
+                account.bic = asText(body, "bic").trim();
+                account.bankName = asText(body, "bankName").trim();
+                account.currency = asText(body, "currency").trim();
+                account.createdAt = Instant.now().toString();
+                accounts.add(account);
+                saveBankAccounts(config, accounts);
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", "Bankkonto angelegt.");
+                payload.put("account", account);
+                payload.put("rows", accounts);
+                payload.put("count", accounts.size());
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class AsMt940ImportHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            if (!canAccessDepartment(su, "AS")) { sendResponse(exchange, 403, "application/json", "{\"error\":\"Kein Zugriff auf Bereich AS\"}"); return; }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String bankAccountId = asText(body, "bankAccountId").trim();
+                String fileName = asText(body, "fileName").trim();
+                String content = asText(body, "content");
+                if (bankAccountId.isBlank() || content.isBlank()) { sendResponse(exchange, 400, "application/json", "{\"error\":\"bankAccountId und content sind Pflichtfelder\"}"); return; }
+
+                Properties config = loadConfig();
+                List<BankAccountRecord> accounts = loadBankAccounts(config);
+                BankAccountRecord account = accounts.stream().filter(a -> bankAccountId.equals(a.id)).findFirst().orElse(null);
+                if (account == null) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Bankkonto nicht gefunden\"}"); return; }
+
+                List<BankTransactionRecord> existing = loadBankTransactions(config);
+                Set<String> existingFingerprints = existing.stream()
+                        .filter(t -> bankAccountId.equals(t.bankAccountId))
+                        .map(t -> Objects.toString(t.fingerprint, ""))
+                        .filter(v -> !v.isBlank())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+
+                List<BankTransactionRecord> parsed = parseImportedTransactions(content, bankAccountId, fileName);
+                int duplicates = 0;
+                int inserted = 0;
+                int ignored = 0;
+                for (BankTransactionRecord tx : parsed) {
+                    if (tx.fingerprint == null || tx.fingerprint.isBlank()) { ignored++; continue; }
+                    if (existingFingerprints.contains(tx.fingerprint)) { duplicates++; continue; }
+                    existingFingerprints.add(tx.fingerprint);
+                    existing.add(tx);
+                    inserted++;
+                }
+                if (inserted > 0) saveBankTransactions(config, existing);
+
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", "Import abgeschlossen.");
+                payload.put("totalParsed", parsed.size());
+                payload.put("inserted", inserted);
+                payload.put("duplicates", duplicates);
+                payload.put("ignored", ignored);
+                payload.put("bankAccountId", bankAccountId);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class AsBankTransactionsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            if (!canAccessDepartment(su, "AS")) { sendResponse(exchange, 403, "application/json", "{\"error\":\"Kein Zugriff auf Bereich AS\"}"); return; }
+            try {
+                Properties config = loadConfig();
+                String query = Objects.toString(exchange.getRequestURI().getQuery(), "");
+                Map<String, String> params = parseQueryParams(query);
+                String bankAccountId = Objects.toString(params.get("bankAccountId"), "").trim();
+                if (bankAccountId.isBlank()) { sendResponse(exchange, 400, "application/json", "{\"error\":\"bankAccountId fehlt\"}"); return; }
+                String q = Objects.toString(params.get("q"), "").trim().toLowerCase();
+                List<BankTransactionRecord> rows = loadBankTransactions(config).stream()
+                        .filter(t -> bankAccountId.equals(Objects.toString(t.bankAccountId, "")))
+                        .filter(t -> q.isBlank() || (Objects.toString(t.purpose, "") + " " + Objects.toString(t.counterparty, "") + " " + Objects.toString(t.reference, "")).toLowerCase().contains(q))
+                        .sorted((a,b) -> Objects.toString(b.bookingDate, "").compareTo(Objects.toString(a.bookingDate, "")))
+                        .collect(Collectors.toList());
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("rows", rows);
+                payload.put("count", rows.size());
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
         }
     }
 
@@ -3937,6 +4155,99 @@ public class WebUiServer {
         return OBJECT_MAPPER.readTree(body);
     }
 
+    private static Map<String, Object> fetchErpnextSalesInvoices(String baseUrl, String apiKey, String apiSecret) throws Exception {
+        String normalizedBase = baseUrl.replaceAll("/+$", "");
+        String fields = "[\"name\",\"posting_date\",\"customer\",\"customer_name\",\"grand_total\",\"outstanding_amount\",\"status\",\"currency\",\"due_date\",\"company\"]";
+        String query = "fields=" + URLEncoder.encode(fields, StandardCharsets.UTF_8)
+                + "&limit_page_length=200"
+                + "&order_by=" + URLEncoder.encode("posting_date desc", StandardCharsets.UTF_8);
+        String endpoint = normalizedBase + "/api/resource/Sales%20Invoice?" + query;
+
+        HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
+        connection.setRequestMethod("GET");
+        connection.setRequestProperty("Authorization", "token " + apiKey + ":" + apiSecret);
+        connection.setRequestProperty("Accept", "application/json");
+
+        int code = connection.getResponseCode();
+        InputStream bodyStream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+        String body = bodyStream == null ? "" : new String(bodyStream.readAllBytes(), StandardCharsets.UTF_8);
+        if (code < 200 || code >= 300) {
+            throw new IOException("ERPNext API Fehler (" + code + "): " + body);
+        }
+
+        JsonNode root = OBJECT_MAPPER.readTree(body);
+        JsonNode dataNode = root.path("data");
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (dataNode.isArray()) {
+            for (JsonNode row : dataNode) {
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("name", asText(row, "name"));
+                out.put("postingDate", asText(row, "posting_date"));
+                out.put("dueDate", asText(row, "due_date"));
+                out.put("customer", asText(row, "customer"));
+                out.put("customerName", asText(row, "customer_name"));
+                out.put("grandTotal", asText(row, "grand_total"));
+                out.put("outstandingAmount", asText(row, "outstanding_amount"));
+                out.put("currency", asText(row, "currency"));
+                out.put("status", asText(row, "status"));
+                out.put("company", asText(row, "company"));
+                rows.add(out);
+            }
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("rows", rows);
+        payload.put("count", rows.size());
+        return payload;
+    }
+
+    private static Map<String, Object> fetchErpnextPurchaseOrders(String baseUrl, String apiKey, String apiSecret) throws Exception {
+        String normalizedBase = baseUrl.replaceAll("/+$", "");
+        String fields = "[\"name\",\"transaction_date\",\"schedule_date\",\"supplier\",\"supplier_name\",\"grand_total\",\"per_received\",\"per_billed\",\"status\",\"company\",\"currency\"]";
+        String query = "fields=" + URLEncoder.encode(fields, StandardCharsets.UTF_8)
+                + "&limit_page_length=200"
+                + "&order_by=" + URLEncoder.encode("transaction_date desc", StandardCharsets.UTF_8);
+        String endpoint = normalizedBase + "/api/resource/Purchase%20Order?" + query;
+
+        HttpURLConnection connection = (HttpURLConnection) new URL(endpoint).openConnection();
+        connection.setRequestMethod("GET");
+        connection.setRequestProperty("Authorization", "token " + apiKey + ":" + apiSecret);
+        connection.setRequestProperty("Accept", "application/json");
+
+        int code = connection.getResponseCode();
+        InputStream bodyStream = code >= 200 && code < 300 ? connection.getInputStream() : connection.getErrorStream();
+        String body = bodyStream == null ? "" : new String(bodyStream.readAllBytes(), StandardCharsets.UTF_8);
+        if (code < 200 || code >= 300) {
+            throw new IOException("ERPNext API Fehler (" + code + "): " + body);
+        }
+
+        JsonNode root = OBJECT_MAPPER.readTree(body);
+        JsonNode dataNode = root.path("data");
+        List<Map<String, Object>> rows = new ArrayList<>();
+        if (dataNode.isArray()) {
+            for (JsonNode row : dataNode) {
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("name", asText(row, "name"));
+                out.put("transactionDate", asText(row, "transaction_date"));
+                out.put("scheduleDate", asText(row, "schedule_date"));
+                out.put("supplier", asText(row, "supplier"));
+                out.put("supplierName", asText(row, "supplier_name"));
+                out.put("grandTotal", asText(row, "grand_total"));
+                out.put("perReceived", asText(row, "per_received"));
+                out.put("perBilled", asText(row, "per_billed"));
+                out.put("currency", asText(row, "currency"));
+                out.put("status", asText(row, "status"));
+                out.put("company", asText(row, "company"));
+                rows.add(out);
+            }
+        }
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("rows", rows);
+        payload.put("count", rows.size());
+        return payload;
+    }
+
     private static Properties loadConfig() throws IOException {
         Properties properties = new Properties();
         try (InputStream is = Files.newInputStream(CONFIG_PATH)) {
@@ -3982,6 +4293,7 @@ public class WebUiServer {
         ui.setProperty("pdfExportPath", Objects.toString(source.getProperty("pdfExportPath"), directory.toString()));
         ui.setProperty("lastImportedComission", Objects.toString(source.getProperty("lastImportedComission"), "0"));
         ui.setProperty("goaffproAPIKey", Objects.toString(source.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY));
+        ui.setProperty("erpnextBaseUrl", Objects.toString(source.getProperty("erpnextBaseUrl"), ""));
         ui.setProperty("contactEmail", Objects.toString(source.getProperty("contactEmail"), ""));
         ui.setProperty("smtpHost", Objects.toString(source.getProperty("smtpHost"), ""));
         ui.setProperty("smtpPort", Objects.toString(source.getProperty("smtpPort"), "587"));
@@ -4044,6 +4356,8 @@ public class WebUiServer {
         if (!uiApiKey.isEmpty()) {
             config.setProperty("goaffproAPIKey", uiApiKey);
         }
+
+        config.setProperty("erpnextBaseUrl", Objects.toString(uiSettings.getProperty("erpnextBaseUrl"), Objects.toString(config.getProperty("erpnextBaseUrl"), "")).trim());
 
         String uiContactEmail = Objects.toString(uiSettings.getProperty("contactEmail"), "").trim();
         if (!uiContactEmail.isEmpty() || config.containsKey("contactEmail")) {
@@ -4357,6 +4671,448 @@ private static String toGermanDate(String input) {
         } catch (Exception e) {
             return value.compareTo(compareTo) > 0;
         }
+    }
+
+    private static boolean canAccessDepartment(SessionUser su, String required) {
+        if (su == null) return false;
+        if (su.isAdmin) return true;
+        String dep = Objects.toString(su.department, "").toUpperCase();
+        if (dep.contains("ALL")) return true;
+        String req = Objects.toString(required, "").toUpperCase();
+        if (req.isBlank()) return true;
+        for (String part : dep.split("[,;\\s]+")) {
+            if (part.trim().equals(req)) return true;
+        }
+        return false;
+    }
+
+    private static Map<String, String> parseQueryParams(String query) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (query == null || query.isBlank()) return out;
+        for (String part : query.split("&")) {
+            if (part.isBlank()) continue;
+            String[] kv = part.split("=", 2);
+            String key = java.net.URLDecoder.decode(kv[0], StandardCharsets.UTF_8);
+            String val = kv.length > 1 ? java.net.URLDecoder.decode(kv[1], StandardCharsets.UTF_8) : "";
+            out.put(key, val);
+        }
+        return out;
+    }
+
+    private static Path bankAccountsFile(Path settingsDir) { return settingsDir.resolve("bank_accounts.json"); }
+    private static Path bankTransactionsFile(Path settingsDir) { return settingsDir.resolve("bank_transactions.json"); }
+
+    private static List<BankAccountRecord> loadBankAccounts(Properties config) {
+        try {
+            Path settingsDir = resolveSettingsDirectory(config);
+            Files.createDirectories(settingsDir);
+            Path file = bankAccountsFile(settingsDir);
+            if (!Files.exists(file)) return new ArrayList<>();
+            String raw = Files.readString(file, StandardCharsets.UTF_8);
+            if (raw.isBlank()) return new ArrayList<>();
+            return OBJECT_MAPPER.readValue(raw, new TypeReference<List<BankAccountRecord>>(){});
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private static void saveBankAccounts(Properties config, List<BankAccountRecord> rows) throws IOException {
+        Path settingsDir = resolveSettingsDirectory(config);
+        Files.createDirectories(settingsDir);
+        String json = OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(rows == null ? new ArrayList<>() : rows);
+        Files.writeString(bankAccountsFile(settingsDir), json, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    private static List<BankTransactionRecord> loadBankTransactions(Properties config) {
+        try {
+            Path settingsDir = resolveSettingsDirectory(config);
+            Files.createDirectories(settingsDir);
+            Path file = bankTransactionsFile(settingsDir);
+            if (!Files.exists(file)) return new ArrayList<>();
+            String raw = Files.readString(file, StandardCharsets.UTF_8);
+            if (raw.isBlank()) return new ArrayList<>();
+            return OBJECT_MAPPER.readValue(raw, new TypeReference<List<BankTransactionRecord>>(){});
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private static void saveBankTransactions(Properties config, List<BankTransactionRecord> rows) throws IOException {
+        Path settingsDir = resolveSettingsDirectory(config);
+        Files.createDirectories(settingsDir);
+        String json = OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(rows == null ? new ArrayList<>() : rows);
+        Files.writeString(bankTransactionsFile(settingsDir), json, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    private static List<BankTransactionRecord> parseMt940Transactions(String content, String bankAccountId, String sourceFileName) {
+        List<BankTransactionRecord> result = new ArrayList<>();
+        if (content == null || content.isBlank()) return result;
+
+        String[] lines = content.replace("\r", "").split("\n");
+        List<String> logical = new ArrayList<>();
+        for (String line : lines) {
+            String ln = Objects.toString(line, "");
+            if (ln.startsWith(":")) logical.add(ln);
+            else if (!logical.isEmpty()) logical.set(logical.size() - 1, logical.get(logical.size() - 1) + " " + ln.trim());
+        }
+
+        BankTransactionRecord current = null;
+        for (String line : logical) {
+            if (line.startsWith(":61:")) {
+                current = parseMt940Line61(line.substring(4));
+                if (current == null) continue;
+                current.bankAccountId = bankAccountId;
+                current.importedAt = Instant.now().toString();
+                current.sourceFileName = Objects.toString(sourceFileName, "");
+                result.add(current);
+                continue;
+            }
+            if (line.startsWith(":86:") && current != null) {
+                Tag86Data tag86 = parseMt940Tag86(line.substring(4).trim());
+                if (!tag86.purpose.isBlank()) {
+                    current.purpose = current.purpose == null || current.purpose.isBlank()
+                            ? tag86.purpose
+                            : (current.purpose + " " + tag86.purpose).trim();
+                }
+                if (!tag86.counterparty.isBlank()) {
+                    current.counterparty = tag86.counterparty;
+                }
+                continue;
+            }
+        }
+
+        for (BankTransactionRecord tx : result) tx.fingerprint = buildTransactionFingerprint(tx);
+        return result;
+    }
+
+    private static List<BankTransactionRecord> parseImportedTransactions(String content, String bankAccountId, String sourceFileName) {
+        String normalized = Objects.toString(content, "");
+        String firstChunk = normalized.stripLeading();
+        if (sourceFileName != null && sourceFileName.toLowerCase().endsWith(".csv")) {
+            return parseBankCsvTransactions(normalized, bankAccountId, sourceFileName);
+        }
+        if (firstChunk.startsWith("Bezeichnung Auftragskonto;") || firstChunk.startsWith("\uFEFFBezeichnung Auftragskonto;")) {
+            return parseBankCsvTransactions(normalized, bankAccountId, sourceFileName);
+        }
+        return parseMt940Transactions(normalized, bankAccountId, sourceFileName);
+    }
+
+    private static List<BankTransactionRecord> parseBankCsvTransactions(String content, String bankAccountId, String sourceFileName) {
+        List<BankTransactionRecord> rows = new ArrayList<>();
+        if (content == null || content.isBlank()) return rows;
+        String normalized = content.replace("\r", "");
+        String[] lines = normalized.split("\n");
+        if (lines.length < 2) return rows;
+
+        List<String> headers = splitCsvSemicolonLine(lines[0]);
+        if (!headers.isEmpty() && headers.get(0).startsWith("\uFEFF")) {
+            headers.set(0, headers.get(0).substring(1));
+        }
+        Map<String, Integer> idx = new HashMap<>();
+        for (int i = 0; i < headers.size(); i++) idx.put(headers.get(i).trim(), i);
+
+        for (int i = 1; i < lines.length; i++) {
+            String line = lines[i];
+            if (line == null || line.trim().isEmpty()) continue;
+            List<String> cells = splitCsvSemicolonLine(line);
+            BankTransactionRecord tx = new BankTransactionRecord();
+            tx.bankAccountId = bankAccountId;
+            tx.sourceFileName = Objects.toString(sourceFileName, "");
+            tx.importedAt = Instant.now().toString();
+
+            tx.bookingDate = parseGermanDateIso(getCsvCell(cells, idx, "Buchungstag"));
+            tx.valueDate = parseGermanDateIso(getCsvCell(cells, idx, "Valutadatum"));
+            tx.counterparty = getCsvCell(cells, idx, "Name Zahlungsbeteiligter").trim();
+            tx.purpose = getCsvCell(cells, idx, "Verwendungszweck").trim();
+            tx.transactionCode = getCsvCell(cells, idx, "Buchungstext").trim();
+            tx.currency = getCsvCell(cells, idx, "Waehrung").trim();
+            tx.amount = parseGermanAmount(getCsvCell(cells, idx, "Betrag"));
+            tx.balanceAfter = parseGermanAmount(getCsvCell(cells, idx, "Saldo nach Buchung"));
+            String mandatsreferenz = getCsvCell(cells, idx, "Mandatsreferenz").trim();
+            String glaeubigerId = getCsvCell(cells, idx, "Glaeubiger ID").trim();
+            String remark = getCsvCell(cells, idx, "Bemerkung").trim();
+            tx.reference = !mandatsreferenz.isBlank() ? mandatsreferenz : (!glaeubigerId.isBlank() ? glaeubigerId : tx.transactionCode);
+            tx.bankReference = remark;
+
+            if (tx.currency.isBlank()) tx.currency = "EUR";
+            if (tx.valueDate.isBlank()) tx.valueDate = tx.bookingDate;
+            if (tx.bookingDate.isBlank() && tx.valueDate.isBlank()) continue;
+            tx.fingerprint = buildTransactionFingerprint(tx);
+            rows.add(tx);
+        }
+        return rows;
+    }
+
+    private static List<String> splitCsvSemicolonLine(String line) {
+        List<String> out = new ArrayList<>();
+        StringBuilder current = new StringBuilder();
+        boolean inQuotes = false;
+        for (int i = 0; i < line.length(); i++) {
+            char c = line.charAt(i);
+            if (c == '"') {
+                if (inQuotes && i + 1 < line.length() && line.charAt(i + 1) == '"') {
+                    current.append('"');
+                    i++;
+                } else {
+                    inQuotes = !inQuotes;
+                }
+                continue;
+            }
+            if (c == ';' && !inQuotes) {
+                out.add(current.toString());
+                current.setLength(0);
+                continue;
+            }
+            current.append(c);
+        }
+        out.add(current.toString());
+        return out;
+    }
+
+    private static String getCsvCell(List<String> cells, Map<String, Integer> idx, String header) {
+        Integer i = idx.get(header);
+        if (i == null || i < 0 || i >= cells.size()) return "";
+        return Objects.toString(cells.get(i), "");
+    }
+
+    private static String parseGermanDateIso(String input) {
+        String raw = Objects.toString(input, "").trim();
+        if (raw.isBlank()) return "";
+        try {
+            LocalDate d = LocalDate.parse(raw, DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+            return d.toString();
+        } catch (Exception ignored) {
+            return raw;
+        }
+    }
+
+    private static String parseGermanAmount(String input) {
+        String raw = Objects.toString(input, "").trim();
+        if (raw.isBlank()) return "";
+        String normalized = raw.replace(".", "").replace(',', '.').replaceAll("[^0-9+.-]", "");
+        if (normalized.isBlank()) return "";
+        try {
+            double value = Double.parseDouble(normalized);
+            return String.format(java.util.Locale.US, "%.2f", value);
+        } catch (Exception ignored) {
+            return normalized;
+        }
+    }
+
+    private static BankTransactionRecord parseMt940Line61(String raw) {
+        if (raw == null) return null;
+        String value = raw.trim();
+        if (value.length() < 7) return null;
+        BankTransactionRecord tx = new BankTransactionRecord();
+        tx.currency = "EUR";
+        tx.bookingDate = parseMt940Date(value.substring(0, 6));
+
+        int idx = 6;
+        if (value.length() >= 10 && Character.isDigit(value.charAt(6)) && Character.isDigit(value.charAt(7)) && Character.isDigit(value.charAt(8)) && Character.isDigit(value.charAt(9))) {
+            tx.valueDate = parseMt940Date(value.substring(0, 2) + value.substring(6, 10));
+            idx = 10;
+        } else tx.valueDate = tx.bookingDate;
+
+        if (idx >= value.length()) return tx;
+        char dc = value.charAt(idx);
+        idx++;
+
+        // optional funds code (e.g. R)
+        if (idx < value.length()) {
+            char fundsCode = value.charAt(idx);
+            if (Character.isLetter(fundsCode) && fundsCode != 'N' && fundsCode != 'F' && fundsCode != 'S') {
+                idx++;
+            }
+        }
+
+        StringBuilder amount = new StringBuilder();
+        while (idx < value.length()) {
+            char c = value.charAt(idx);
+            if ((c >= '0' && c <= '9') || c == ',' || c == '.') { amount.append(c); idx++; }
+            else break;
+        }
+        String amountStr = amount.toString().replace(',', '.');
+        if (!amountStr.isBlank()) {
+            try {
+                double val = Double.parseDouble(amountStr);
+                if (dc == 'D') val = -val;
+                tx.amount = String.format(java.util.Locale.US, "%.2f", val);
+            } catch (Exception ignored) {}
+        }
+        if (idx < value.length()) {
+            // transaction code starts often with N/F/S + 3-char code
+            char marker = value.charAt(idx);
+            if ((marker == 'N' || marker == 'F' || marker == 'S') && idx + 3 < value.length()) {
+                tx.transactionCode = value.substring(idx + 1, Math.min(idx + 4, value.length()));
+                idx += 4;
+            }
+        }
+
+        String trailing = idx < value.length() ? value.substring(idx).trim() : "";
+        if (!trailing.isBlank()) {
+            int bankRefIdx = trailing.indexOf("//");
+            if (bankRefIdx >= 0) {
+                tx.reference = trailing.substring(0, bankRefIdx).trim();
+                tx.bankReference = trailing.substring(bankRefIdx + 2).trim();
+            } else {
+                tx.reference = trailing;
+            }
+        }
+        return tx;
+    }
+
+    private static String parseMt940Date(String yyMMddOrMMdd) {
+        try {
+            if (yyMMddOrMMdd == null) return "";
+            if (yyMMddOrMMdd.length() == 6) {
+                int yy = Integer.parseInt(yyMMddOrMMdd.substring(0,2));
+                int year = yy >= 70 ? 1900 + yy : 2000 + yy;
+                int month = Integer.parseInt(yyMMddOrMMdd.substring(2,4));
+                int day = Integer.parseInt(yyMMddOrMMdd.substring(4,6));
+                return String.format("%04d-%02d-%02d", year, month, day);
+            }
+            if (yyMMddOrMMdd.length() == 4) {
+                LocalDate now = LocalDate.now();
+                int month = Integer.parseInt(yyMMddOrMMdd.substring(0,2));
+                int day = Integer.parseInt(yyMMddOrMMdd.substring(2,4));
+                return String.format("%04d-%02d-%02d", now.getYear(), month, day);
+            }
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    private static Tag86Data parseMt940Tag86(String raw) {
+        Tag86Data out = new Tag86Data();
+        String value = Objects.toString(raw, "").trim();
+        if (value.isBlank()) return out;
+
+        // leading numeric token (e.g. 808/166) is not business content
+        if (value.length() >= 3 && Character.isDigit(value.charAt(0)) && Character.isDigit(value.charAt(1)) && Character.isDigit(value.charAt(2))) {
+            value = value.substring(3).trim();
+        }
+
+        Map<String, StringBuilder> segments = new LinkedHashMap<>();
+        String currentKey = "00";
+        segments.put(currentKey, new StringBuilder());
+        int i = 0;
+        while (i < value.length()) {
+            char c = value.charAt(i);
+            if (c == '?' && i + 2 < value.length() && Character.isDigit(value.charAt(i + 1)) && Character.isDigit(value.charAt(i + 2))) {
+                currentKey = "" + value.charAt(i + 1) + value.charAt(i + 2);
+                segments.putIfAbsent(currentKey, new StringBuilder());
+                i += 3;
+                continue;
+            }
+            segments.get(currentKey).append(c);
+            i++;
+        }
+
+        String typeText = Objects.toString(segments.getOrDefault("00", new StringBuilder()), "").trim();
+
+        StringBuilder purpose = new StringBuilder();
+        for (int k = 20; k <= 29; k++) {
+            String key = String.format("%02d", k);
+            if (segments.containsKey(key)) {
+                if (purpose.length() > 0) purpose.append(' ');
+                purpose.append(segments.get(key).toString().trim());
+            }
+        }
+
+        // Some banks (e.g. Vivid) put human readable detail in ?60, while ?00 is only a category.
+        StringBuilder detailText = new StringBuilder();
+        for (int k = 60; k <= 63; k++) {
+            String key = String.format("%02d", k);
+            if (segments.containsKey(key)) {
+                if (detailText.length() > 0) detailText.append(' ');
+                detailText.append(segments.get(key).toString().trim());
+            }
+        }
+
+        if (purpose.length() == 0 && detailText.length() > 0) {
+            purpose.append(detailText);
+        }
+        if (purpose.length() == 0 && !typeText.isBlank()) {
+            purpose.append(typeText);
+        }
+
+        String p = purpose.toString().replace("SVWZ+", "").replaceAll("\\s+", " ").trim();
+        String d = detailText.toString().replace("SVWZ+", "").replaceAll("\\s+", " ").trim();
+        if (!d.isBlank() && !p.toLowerCase().contains(d.toLowerCase())) {
+            p = p.isBlank() ? d : (p + " | " + d);
+        }
+        if (!typeText.isBlank() && !p.toLowerCase().contains(typeText.toLowerCase())) {
+            p = p.isBlank() ? typeText : (typeText + " | " + p);
+        }
+        out.purpose = p;
+
+        StringBuilder cp = new StringBuilder();
+        for (int k = 32; k <= 33; k++) {
+            String key = String.format("%02d", k);
+            if (segments.containsKey(key)) {
+                if (cp.length() > 0) cp.append(' ');
+                cp.append(segments.get(key).toString().trim());
+            }
+        }
+        out.counterparty = cp.toString().replaceAll("\\s+", " ").trim();
+
+        // Fallback for counterpart if 32/33 is missing
+        if (out.counterparty.isBlank()) {
+            String fallback = Objects.toString(segments.getOrDefault("31", new StringBuilder()), "").trim();
+            if (fallback.isBlank()) fallback = Objects.toString(segments.getOrDefault("30", new StringBuilder()), "").trim();
+            out.counterparty = fallback;
+        }
+        return out;
+    }
+
+    private static class Tag86Data {
+        String purpose = "";
+        String counterparty = "";
+    }
+
+    private static String buildTransactionFingerprint(BankTransactionRecord tx) {
+        String raw = String.join("|",
+                normalizeToken(tx.bankAccountId),
+                normalizeToken(tx.bookingDate),
+                normalizeToken(tx.valueDate),
+                normalizeToken(tx.amount),
+                normalizeToken(tx.currency),
+                normalizeToken(tx.counterparty),
+                normalizeToken(tx.purpose),
+                normalizeToken(tx.reference),
+                normalizeToken(tx.bankReference));
+        return sha256Hex(raw);
+    }
+
+    private static String normalizeToken(String input) {
+        return Objects.toString(input, "").replaceAll("\\s+", " ").trim().toLowerCase();
+    }
+
+    private static class BankAccountRecord {
+        public String id;
+        public String name;
+        public String ibanOrAccountNo;
+        public String bic;
+        public String bankName;
+        public String currency;
+        public String createdAt;
+    }
+
+    private static class BankTransactionRecord {
+        public String id = java.util.UUID.randomUUID().toString();
+        public String bankAccountId;
+        public String bookingDate;
+        public String valueDate;
+        public String amount;
+        public String currency;
+        public String counterparty;
+        public String purpose;
+        public String reference;
+        public String bankReference;
+        public String transactionCode;
+        public String balanceAfter;
+        public String fingerprint;
+        public String importedAt;
+        public String sourceFileName;
     }
 
     private static void sendResponse(HttpExchange exchange, int status, String contentType, String body) throws IOException {

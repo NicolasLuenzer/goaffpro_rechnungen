@@ -46,6 +46,9 @@
     .warning-banner { margin: 10px 0; padding: 10px 12px; border: 1px solid #fecaca; background: #fee2e2; color: #991b1b; border-radius: 8px; font-weight: 600; }
     .recipient-advisor-label { color: #b91c1c; font-weight: 700; }
     tr.row-warning td { background: #fef2f2; }
+    tr.tx-match-red td { background: #fee2e2; }
+    tr.tx-match-yellow td { background: #fef9c3; }
+    tr.tx-match-green td { background: #dcfce7; }
     .app-version { position: fixed; top: 12px; right: 16px; background: #111827; color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 12px; z-index: 1000; cursor: pointer; }
     .version-popup { position: fixed; top: 42px; right: 16px; width: 460px; max-height: 360px; overflow: auto; background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; box-shadow: 0 8px 30px rgba(0,0,0,0.18); z-index: 1001; padding: 8px; }
     .version-popup-header { font-weight: bold; margin-bottom: 6px; }
@@ -152,7 +155,56 @@
     <nav id="sideNav" class="side-nav"></nav>
     <div id="mainContent" style="flex:1;min-width:0;padding-left:16px;">
       <div id="areaTabs" class="area-tabs" style="display:none;"></div>
-      <div id="asPanel" class="panel area-panel"><h2>AS</h2><p>Noch keine Inhalte vorhanden.</p></div>
+      <div id="asPanel" class="panel area-panel">
+        <h2>ERPNext Rechnungsimport</h2>
+        <div class="toolbar">
+          <button id="fetchErpnextSalesInvoicesBtn" class="secondary" type="button">Hole Ausgangsrechnungen</button>
+        </div>
+        <p id="erpnextSalesInvoicesStatus" class="status">Noch keine Ausgangsrechnungen geladen.</p>
+        <table>
+          <thead>
+            <tr><th>Rechnung</th><th>Buchungsdatum</th><th>Fälligkeit</th><th>Kunde</th><th>Kundin</th><th>Gesamt</th><th>Offen</th><th>Währung</th><th>Status</th><th>Firma</th></tr>
+          </thead>
+          <tbody id="erpnextSalesInvoicesBody"></tbody>
+        </table>
+        <div class="toolbar" style="margin-top:16px;">
+          <button id="fetchErpnextPurchaseOrdersBtn" class="secondary" type="button">Hole Lieferantenaufträge</button>
+          <button id="mapSupplierPaymentsBtn" class="secondary" type="button">Zahlungen Lieferantenaufträgen zuordnen</button>
+        </div>
+        <p id="erpnextPurchaseOrdersStatus" class="status">Noch keine Lieferantenaufträge geladen.</p>
+        <table>
+          <thead>
+            <tr><th>Auftrag</th><th>Datum</th><th>Lieferant</th><th>Lieferantenname</th><th>Gesamt</th><th>Erhalten %</th><th>Abgerechnet %</th><th>Status</th><th>Vorgeschl. Buchungsdatum</th><th>Vorgeschl. Betrag</th><th>Vorgeschl. Gegenpartei</th><th>Vorgeschl. Referenz</th><th>Match-Info</th></tr>
+          </thead>
+          <tbody id="erpnextPurchaseOrdersBody"></tbody>
+        </table>
+
+        <div class="toolbar" style="margin-top:18px;border-top:1px solid #e5e7eb;padding-top:14px;">
+          <strong>Banktransaktionen (MT940)</strong>
+        </div>
+        <div class="toolbar">
+          <label for="mt940BankAccountSelect">Bankkonto:</label>
+          <select id="mt940BankAccountSelect" style="min-width:320px"></select>
+          <button id="loadBankTransactionsBtn" class="secondary" type="button">Transaktionen laden</button>
+        </div>
+        <div class="toolbar">
+          <label>Name:</label><input id="newBankAccountName" type="text" placeholder="z. B. Hauptkonto" style="min-width:180px" />
+          <label>IBAN/Konto:</label><input id="newBankAccountIban" type="text" placeholder="DE.." style="min-width:220px" />
+          <label>BIC:</label><input id="newBankAccountBic" type="text" placeholder="optional" style="min-width:140px" />
+          <button id="createBankAccountBtn" class="secondary" type="button">Bankkonto anlegen</button>
+        </div>
+        <div class="toolbar">
+          <input id="mt940FileInput" type="file" accept=".sta,.mt940,.txt,.csv,.mta" />
+          <button id="importMt940Btn" class="secondary" type="button">Datei importieren (MT940/CSV)</button>
+        </div>
+        <p id="mt940Status" class="status">Noch kein Import durchgeführt.</p>
+        <table>
+          <thead>
+            <tr><th>Buchungsdatum</th><th>Wertstellung</th><th>Betrag</th><th>Währung</th><th>Gegenpartei</th><th>Verwendungszweck</th><th>Referenz</th><th>Importiert am</th><th>Datei</th></tr>
+          </thead>
+          <tbody id="bankTransactionsBody"></tbody>
+        </table>
+      </div>
       <div id="ltPanel" class="panel area-panel"><h2>LT</h2><p>Noch keine Inhalte vorhanden.</p></div>
       <div id="vPanel" class="area-panel active"><div id="tabs" class="tabs" style="display:none;"></div><div id="panels"></div></div>
     </div>
@@ -195,6 +247,10 @@
 
     <div class="settings-group" style="background:#fff;max-width:1200px;margin-bottom:16px;">
       <h3>ERPNext</h3>
+      <div class="toolbar">
+        <label for="erpnextBaseUrl">Basis-URL:</label>
+        <input id="erpnextBaseUrl" type="text" placeholder="https://erp.example.com" style="min-width:320px;" />
+      </div>
       <div class="toolbar">
         <label for="erpnextApiKey">API-Schlüssel:</label>
         <input id="erpnextApiKey" type="text" placeholder="z. B. abc123..." style="min-width:320px;" />
@@ -286,6 +342,9 @@
     let advisorHoverCardEl = null;
     let validationRowsCache = [];
     let validationTreeRowsCache = [];
+    let erpnextPurchaseOrdersCache = [];
+    let bankTransactionsCache = [];
+    let purchaseOrderMappings = [];
     let validationTreeChildrenByParent = new Map();
     let validationTreeById = new Map();
     let validationTreeExpanded = new Set();
@@ -678,6 +737,7 @@
         <div id="validation-masterdata-section" class="validation-section active">
           <div class="toolbar">
             <button id="loadValidationBtn" class="secondary" type="button">Stammdaten laden / neu laden</button>
+            <button id="exportValidationExcelBtn" class="secondary" type="button">Stammdaten als Excel exportieren</button>
           </div>
           <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
           <table>
@@ -832,6 +892,353 @@
       } catch (error) {
         status.textContent = `Fehler beim Laden der Stammdaten: ${error.message}`;
       }
+    }
+
+    async function fetchErpnextSalesInvoices() {
+      const status = document.getElementById('erpnextSalesInvoicesStatus');
+      const body = document.getElementById('erpnextSalesInvoicesBody');
+      if (!status || !body) return;
+      status.textContent = 'Lade Ausgangsrechnungen aus ERPNext...';
+      body.innerHTML = '';
+      try {
+        const data = await apiGet('/api/erpnext/sales-invoices');
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        body.innerHTML = rows.map(r => `<tr><td>${escapeHtml(r.name || '')}</td><td>${escapeHtml(r.postingDate || '')}</td><td>${escapeHtml(r.dueDate || '')}</td><td>${escapeHtml(r.customer || '')}</td><td>${escapeHtml(r.customerName || '')}</td><td>${escapeHtml(r.grandTotal || '')}</td><td>${escapeHtml(r.outstandingAmount || '')}</td><td>${escapeHtml(r.currency || '')}</td><td>${escapeHtml(r.status || '')}</td><td>${escapeHtml(r.company || '')}</td></tr>`).join('');
+        status.textContent = `${rows.length} Ausgangsrechnungen geladen.`;
+        const table = body.closest('table');
+        ensureResizableColumns(table || document);
+        applyTableFilterAndSort(table);
+        updateEmptyTablesVisibility(document);
+      } catch (error) {
+        status.textContent = `Fehler beim Laden der Ausgangsrechnungen: ${error.message}`;
+      }
+    }
+
+    async function fetchErpnextPurchaseOrders() {
+      const status = document.getElementById('erpnextPurchaseOrdersStatus');
+      const body = document.getElementById('erpnextPurchaseOrdersBody');
+      if (!status || !body) return;
+      status.textContent = 'Lade Lieferantenaufträge aus ERPNext...';
+      body.innerHTML = '';
+      try {
+        const data = await apiGet('/api/erpnext/purchase-orders');
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        erpnextPurchaseOrdersCache = rows;
+        purchaseOrderMappings = [];
+        renderPurchaseOrders();
+        status.textContent = `${rows.length} Lieferantenaufträge geladen.`;
+        const table = body.closest('table');
+        ensureResizableColumns(table || document);
+        applyTableFilterAndSort(table);
+        updateEmptyTablesVisibility(document);
+      } catch (error) {
+        status.textContent = `Fehler beim Laden der Lieferantenaufträge: ${error.message}`;
+      }
+    }
+
+    function normalizeForMatch(value) {
+      return String(value || '')
+        .toLowerCase()
+        .normalize('NFKD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, ' ')
+        .trim();
+    }
+
+    function parseAmount(value) {
+      const raw = String(value || '').trim();
+      if (!raw) return NaN;
+      const cleaned = raw.replace(/\s/g, '').replace(/[^0-9,.-]/g, '');
+      const lastComma = cleaned.lastIndexOf(',');
+      const lastDot = cleaned.lastIndexOf('.');
+
+      let decimalSep = '';
+      if (lastComma >= 0 && lastDot >= 0) {
+        decimalSep = lastComma > lastDot ? ',' : '.';
+      } else if (lastComma >= 0) {
+        decimalSep = ',';
+      } else if (lastDot >= 0) {
+        decimalSep = '.';
+      }
+
+      let normalized = cleaned;
+      if (decimalSep) {
+        const thousandsSep = decimalSep === ',' ? '.' : ',';
+        normalized = normalized.replace(new RegExp(`\\${thousandsSep}`, 'g'), '');
+        if (decimalSep === ',') normalized = normalized.replace(/,/g, '.');
+      } else {
+        normalized = normalized.replace(/[.,]/g, '');
+      }
+
+      const parsed = Number(normalized);
+      return Number.isFinite(parsed) ? parsed : NaN;
+    }
+
+    function parseIsoDate(value) {
+      const s = String(value || '').trim();
+      if (!s) return null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+        const d = new Date(`${s}T00:00:00Z`);
+        return Number.isNaN(d.getTime()) ? null : d;
+      }
+      if (/^\d{2}\.\d{2}\.\d{4}$/.test(s)) {
+        const [dd, mm, yyyy] = s.split('.');
+        const d = new Date(`${yyyy}-${mm}-${dd}T00:00:00Z`);
+        return Number.isNaN(d.getTime()) ? null : d;
+      }
+      return null;
+    }
+
+    function buildTransactionCandidate(po, tx) {
+      const txAmount = Math.abs(parseAmount(tx.amount));
+      const poAmount = Math.abs(parseAmount(po.grandTotal));
+      const txCurrency = String(tx.currency || '').trim().toUpperCase();
+      const poCurrency = String(po.currency || '').trim().toUpperCase();
+      const txDate = parseIsoDate(tx.bookingDate) || parseIsoDate(tx.valueDate);
+      const poDate = parseIsoDate(po.transactionDate) || parseIsoDate(po.scheduleDate);
+      const txText = normalizeForMatch(`${tx.purpose || ''} ${tx.reference || ''} ${tx.counterparty || ''} ${tx.bankReference || ''}`);
+      const poName = normalizeForMatch(po.name);
+      const supplier = normalizeForMatch(po.supplier);
+      const supplierName = normalizeForMatch(po.supplierName);
+
+      let score = 0;
+      const reasons = [];
+
+      if (!Number.isNaN(txAmount) && !Number.isNaN(poAmount)) {
+        const txCents = Math.round(txAmount * 100);
+        const poCents = Math.round(poAmount * 100);
+        const diffCents = Math.abs(txCents - poCents);
+        const amountDiff = diffCents / 100;
+        const nearTolerance = Math.max(1.0, poAmount * 0.01);
+
+        if (diffCents === 0) {
+          score += 55;
+          reasons.push(`Betrag 1:1 identisch (${txAmount.toFixed(2)} = ${poAmount.toFixed(2)})`);
+        } else if (amountDiff <= nearTolerance) {
+          score += 18;
+          reasons.push(`Betrag ähnlich (Abweichung ${amountDiff.toFixed(2)})`);
+        }
+      }
+
+      if (poName && txText.includes(poName)) {
+        score += 35;
+        reasons.push(`Auftragsnummer ${po.name} gefunden`);
+      }
+      if ((supplier && txText.includes(supplier)) || (supplierName && txText.includes(supplierName))) {
+        score += 20;
+        reasons.push('Lieferant in Transaktionsdaten gefunden');
+      }
+      if (txCurrency && poCurrency && txCurrency === poCurrency) {
+        score += 5;
+        reasons.push(`Währung passt (${txCurrency})`);
+      }
+      if (txDate && poDate) {
+        const diffDays = Math.abs(Math.round((txDate.getTime() - poDate.getTime()) / (1000 * 60 * 60 * 24)));
+        if (diffDays <= 14) {
+          score += 10;
+          reasons.push(`Datum nah (${diffDays} Tage)`);
+        } else if (diffDays <= 45) {
+          score += 5;
+          reasons.push(`Datum plausibel (${diffDays} Tage)`);
+        }
+      }
+      return { tx, score, reasons };
+    }
+
+    function mapPurchaseOrdersToBankTransactions(purchaseOrders, transactions) {
+      return (Array.isArray(purchaseOrders) ? purchaseOrders : []).map(po => {
+        const candidates = (Array.isArray(transactions) ? transactions : [])
+          .map(tx => buildTransactionCandidate(po, tx))
+          .sort((a, b) => b.score - a.score);
+
+        const best = candidates[0];
+        const second = candidates[1];
+        if (!best || best.score < 45) {
+          return { status: 'red', reason: 'Keine ausreichende Übereinstimmung zu einer Banktransaktion gefunden.' };
+        }
+
+        const hasStrongAmount = best.reasons.some(r => r.startsWith('Betrag 1:1 identisch'));
+        const hasOrderRef = best.reasons.some(r => r.startsWith('Auftragsnummer'));
+        const ambiguous = second && (best.score - second.score) < 8 && second.score >= 45;
+
+        let status = 'yellow';
+        if (!ambiguous && best.score >= 80 && hasStrongAmount && hasOrderRef) {
+          status = 'green';
+        }
+        if (ambiguous) best.reasons.push('Mehrere ähnlich gute Treffer vorhanden');
+
+        return {
+          status,
+          reason: best.reasons.join('; '),
+          tx: best.tx
+        };
+      });
+    }
+
+    function renderPurchaseOrders() {
+      const body = document.getElementById('erpnextPurchaseOrdersBody');
+      if (!body) return;
+      body.innerHTML = erpnextPurchaseOrdersCache.map((r, idx) => {
+        const match = purchaseOrderMappings[idx] || { status: '', reason: '', tx: null };
+        const rowClass = match.status ? `tx-match-${match.status}` : '';
+        const tx = match.tx || {};
+        return `<tr class="${escapeHtml(rowClass)}"><td>${escapeHtml(r.name || '')}</td><td>${escapeHtml(r.transactionDate || '')}</td><td>${escapeHtml(r.supplier || '')}</td><td>${escapeHtml(r.supplierName || '')}</td><td>${escapeHtml(r.grandTotal || '')}</td><td>${escapeHtml(r.perReceived || '')}</td><td>${escapeHtml(r.perBilled || '')}</td><td>${escapeHtml(r.status || '')}</td><td>${escapeHtml(tx.bookingDate || tx.valueDate || '')}</td><td>${escapeHtml(tx.amount || '')}</td><td>${escapeHtml(tx.counterparty || '')}</td><td>${escapeHtml(tx.reference || '')}</td><td>${escapeHtml(match.reason || 'Nicht bewertet')}</td></tr>`;
+      }).join('');
+    }
+
+    function renderBankTransactions() {
+      const body = document.getElementById('bankTransactionsBody');
+      if (!body) return;
+      body.innerHTML = bankTransactionsCache.map(r => `<tr><td>${escapeHtml(r.bookingDate || '')}</td><td>${escapeHtml(r.valueDate || '')}</td><td>${escapeHtml(r.amount || '')}</td><td>${escapeHtml(r.currency || '')}</td><td>${escapeHtml(r.counterparty || '')}</td><td>${escapeHtml(r.purpose || '')}</td><td>${escapeHtml(r.reference || '')}</td><td>${escapeHtml(r.importedAt || '')}</td><td>${escapeHtml(r.sourceFileName || '')}</td></tr>`).join('');
+    }
+
+    async function mapSupplierPayments() {
+      const status = document.getElementById('erpnextPurchaseOrdersStatus');
+      if (!bankTransactionsCache.length) {
+        if (status) status.textContent = 'Bitte zuerst Banktransaktionen laden.';
+        return;
+      }
+      if (!erpnextPurchaseOrdersCache.length) {
+        await fetchErpnextPurchaseOrders();
+      }
+      if (!erpnextPurchaseOrdersCache.length) {
+        if (status) status.textContent = 'Keine Lieferantenaufträge verfügbar; Zuordnung nicht möglich.';
+        return;
+      }
+      purchaseOrderMappings = mapPurchaseOrdersToBankTransactions(erpnextPurchaseOrdersCache, bankTransactionsCache);
+      renderPurchaseOrders();
+      const green = purchaseOrderMappings.filter(m => m.status === 'green').length;
+      const yellow = purchaseOrderMappings.filter(m => m.status === 'yellow').length;
+      const red = purchaseOrderMappings.filter(m => m.status === 'red').length;
+      if (status) status.textContent = `Zuordnung abgeschlossen. Grün: ${green}, Gelb: ${yellow}, Rot: ${red}.`;
+      const body = document.getElementById('erpnextPurchaseOrdersBody');
+      const table = body?.closest('table');
+      ensureResizableColumns(table || document);
+      applyTableFilterAndSort(table);
+      updateEmptyTablesVisibility(document);
+    }
+
+    async function loadBankAccounts() {
+      const select = document.getElementById('mt940BankAccountSelect');
+      const status = document.getElementById('mt940Status');
+      if (!select) return;
+      try {
+        const data = await apiGet('/api/as/bank-accounts');
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        select.innerHTML = rows.map(r => `<option value="${escapeHtml(r.id || '')}">${escapeHtml(r.name || '')} (${escapeHtml(r.ibanOrAccountNo || '')})</option>`).join('');
+        if (!rows.length) select.innerHTML = '<option value="">Bitte zuerst Bankkonto anlegen</option>';
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Laden der Bankkonten: ${error.message}`;
+      }
+    }
+
+    async function createBankAccount() {
+      const status = document.getElementById('mt940Status');
+      const name = document.getElementById('newBankAccountName')?.value || '';
+      const ibanOrAccountNo = document.getElementById('newBankAccountIban')?.value || '';
+      const bic = document.getElementById('newBankAccountBic')?.value || '';
+      if (!name.trim() || !ibanOrAccountNo.trim()) {
+        if (status) status.textContent = 'Bitte Name und IBAN/Konto ausfüllen.';
+        return;
+      }
+      try {
+        await apiPost('/api/as/bank-accounts', { name, ibanOrAccountNo, bic });
+        if (status) status.textContent = 'Bankkonto angelegt.';
+        await loadBankAccounts();
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Anlegen des Bankkontos: ${error.message}`;
+      }
+    }
+
+    async function importMt940() {
+      const status = document.getElementById('mt940Status');
+      const select = document.getElementById('mt940BankAccountSelect');
+      const input = document.getElementById('mt940FileInput');
+      const bankAccountId = select?.value || '';
+      const file = input?.files?.[0];
+      if (!bankAccountId) { if (status) status.textContent = 'Bitte ein Bankkonto auswählen.'; return; }
+      if (!file) { if (status) status.textContent = 'Bitte eine MT940- oder CSV-Datei auswählen.'; return; }
+      try {
+        const content = await file.text();
+        const res = await apiPost('/api/as/mt940/import', { bankAccountId, fileName: file.name || '', content });
+        if (status) status.textContent = `${res.message || 'Import abgeschlossen.'} Gelesen: ${res.totalParsed || 0}, neu: ${res.inserted || 0}, Duplikate: ${res.duplicates || 0}.`;
+        await loadBankTransactions();
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Datei-Import: ${error.message}`;
+      }
+    }
+
+    async function loadBankTransactions() {
+      const status = document.getElementById('mt940Status');
+      const select = document.getElementById('mt940BankAccountSelect');
+      const body = document.getElementById('bankTransactionsBody');
+      if (!select || !body) return;
+      const bankAccountId = select.value || '';
+      if (!bankAccountId) {
+        bankTransactionsCache = [];
+        purchaseOrderMappings = [];
+        body.innerHTML = '';
+        renderPurchaseOrders();
+        if (status) status.textContent = 'Bitte Bankkonto auswählen.';
+        return;
+      }
+      try {
+        const data = await apiGet(`/api/as/bank-transactions?bankAccountId=${encodeURIComponent(bankAccountId)}`);
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        bankTransactionsCache = rows;
+        purchaseOrderMappings = [];
+        renderBankTransactions();
+        renderPurchaseOrders();
+        if (status) status.textContent = `${rows.length} Banktransaktionen geladen.`;
+        const table = body.closest('table');
+        ensureResizableColumns(table || document);
+        applyTableFilterAndSort(table);
+        updateEmptyTablesVisibility(document);
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Laden der Banktransaktionen: ${error.message}`;
+      }
+    }
+
+    function exportValidationTableToExcel() {
+      const status = document.getElementById('validationStatus');
+      const table = document.querySelector('#validation-masterdata-section table');
+      if (!table) {
+        if (status) status.textContent = 'Keine Stammdatentabelle gefunden.';
+        return;
+      }
+
+      const headers = Array.from(table.querySelectorAll('thead th')).map(th => String(th.textContent || '').trim());
+      const visibleRows = Array.from(table.querySelectorAll('tbody tr')).filter(tr => {
+        const style = window.getComputedStyle(tr);
+        return style.display !== 'none' && style.visibility !== 'hidden';
+      });
+
+      if (!visibleRows.length) {
+        if (status) status.textContent = 'Keine sichtbaren Stammdaten zum Export vorhanden.';
+        return;
+      }
+
+      const htmlRows = visibleRows.map(tr => {
+        const cells = Array.from(tr.querySelectorAll('td')).map(td => `<td>${escapeHtml(String(td.textContent || '').trim())}</td>`);
+        return `<tr>${cells.join('')}</tr>`;
+      }).join('');
+
+      const now = new Date();
+      const pad = (v) => String(v).padStart(2, '0');
+      const fileName = `stammdaten_export_${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.xls`;
+      const workbookHtml = `<!doctype html><html><head><meta charset="UTF-8"></head><body><table><thead><tr>${headers.map(h => `<th>${escapeHtml(h)}</th>`).join('')}</tr></thead><tbody>${htmlRows}</tbody></table></body></html>`;
+
+      const blob = new Blob(['\ufeff', workbookHtml], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = fileName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      if (status) status.textContent = `${visibleRows.length} sichtbare Stammdatensätze als Excel exportiert.`;
     }
 
     function rebuildValidationTreeIndex() {
@@ -1518,6 +1925,8 @@
         const data = await apiGet('/api/settings');
         input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || '';
+        const erpnextBaseUrlInput = document.getElementById('erpnextBaseUrl');
+        if (erpnextBaseUrlInput) erpnextBaseUrlInput.value = data.erpnextBaseUrl || '';
         const erpnextApiKeyInput = document.getElementById('erpnextApiKey');
         if (erpnextApiKeyInput) erpnextApiKeyInput.value = data.erpnextApiKey || '';
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
@@ -1587,6 +1996,7 @@
           pdfExportPath: input.value,
           lastImportedComission: select.value,
           goaffproAPIKey: goaffproAPIKeyInput ? goaffproAPIKeyInput.value : '',
+          erpnextBaseUrl: document.getElementById('erpnextBaseUrl')?.value || '',
           erpnextApiKey: document.getElementById('erpnextApiKey')?.value || '',
           erpnextApiSecret: document.getElementById('erpnextApiSecret')?.value || '',
           contactEmail: contactEmailInput ? contactEmailInput.value : '',
@@ -1616,6 +2026,8 @@
         });
         input.value = data.pdfExportPath || input.value;
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
+        const erpnextBaseUrlEl = document.getElementById('erpnextBaseUrl');
+        if (erpnextBaseUrlEl && data.erpnextBaseUrl !== undefined) erpnextBaseUrlEl.value = data.erpnextBaseUrl;
         const erpnextKeyEl = document.getElementById('erpnextApiKey');
         if (erpnextKeyEl && data.erpnextApiKey !== undefined) erpnextKeyEl.value = data.erpnextApiKey;
         const erpnextSecretEl = document.getElementById('erpnextApiSecret');
@@ -1798,6 +2210,8 @@
         pdfExportPath: (document.getElementById('pdfExportPath')?.value || '').trim(),
         lastImportedComission: (document.getElementById('lastImportedSelect')?.value || '').trim(),
         goaffproAPIKey: (document.getElementById('goaffproAPIKey')?.value || '').trim(),
+        erpnextBaseUrl: (document.getElementById('erpnextBaseUrl')?.value || '').trim(),
+        erpnextApiKey: (document.getElementById('erpnextApiKey')?.value || '').trim(),
         contactEmail: (document.getElementById('contactEmail')?.value || '').trim(),
         smtpHost: (document.getElementById('smtpHost')?.value || '').trim(),
         smtpPort: String((document.getElementById('smtpPort')?.value || '587')).trim(),
@@ -1834,7 +2248,7 @@
     }
 
     function wireSettingsDirtyTracking() {
-      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
+      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','erpnextBaseUrl','erpnextApiKey','erpnextApiSecret','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
       ids.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -2700,7 +3114,15 @@
         const rebuildCommissionHistoryBtn = document.getElementById('rebuildCommissionHistoryBtn');
         const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
         const fetchAdvisor360Btn = document.getElementById('fetchAdvisor360Btn');
+        const fetchErpnextSalesInvoicesBtn = document.getElementById('fetchErpnextSalesInvoicesBtn');
+        const fetchErpnextPurchaseOrdersBtn = document.getElementById('fetchErpnextPurchaseOrdersBtn');
+        const createBankAccountBtn = document.getElementById('createBankAccountBtn');
+        const importMt940Btn = document.getElementById('importMt940Btn');
+        const loadBankTransactionsBtn = document.getElementById('loadBankTransactionsBtn');
+        const mapSupplierPaymentsBtn = document.getElementById('mapSupplierPaymentsBtn');
+        const mt940BankAccountSelect = document.getElementById('mt940BankAccountSelect');
         const loadValidationBtn = document.getElementById('loadValidationBtn');
+        const exportValidationExcelBtn = document.getElementById('exportValidationExcelBtn');
         const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
         const expandAllTreeBtn = document.getElementById('expandAllTreeBtn');
         const collapseAllTreeBtn = document.getElementById('collapseAllTreeBtn');
@@ -2719,7 +3141,15 @@
         if (rebuildCommissionHistoryBtn) rebuildCommissionHistoryBtn.addEventListener('click', rebuildCommissionHistoryFromPayments);
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
         if (fetchAdvisor360Btn) fetchAdvisor360Btn.addEventListener('click', fetchAdvisor360);
+        if (fetchErpnextSalesInvoicesBtn) fetchErpnextSalesInvoicesBtn.addEventListener('click', fetchErpnextSalesInvoices);
+        if (fetchErpnextPurchaseOrdersBtn) fetchErpnextPurchaseOrdersBtn.addEventListener('click', fetchErpnextPurchaseOrders);
+        if (createBankAccountBtn) createBankAccountBtn.addEventListener('click', createBankAccount);
+        if (importMt940Btn) importMt940Btn.addEventListener('click', importMt940);
+        if (loadBankTransactionsBtn) loadBankTransactionsBtn.addEventListener('click', loadBankTransactions);
+        if (mapSupplierPaymentsBtn) mapSupplierPaymentsBtn.addEventListener('click', mapSupplierPayments);
+        if (mt940BankAccountSelect) mt940BankAccountSelect.addEventListener('change', loadBankTransactions);
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
+        if (exportValidationExcelBtn) exportValidationExcelBtn.addEventListener('click', exportValidationTableToExcel);
         if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
         if (expandAllTreeBtn) expandAllTreeBtn.addEventListener('click', expandAllValidationTree);
         if (collapseAllTreeBtn) collapseAllTreeBtn.addEventListener('click', collapseAllValidationTree);
@@ -2750,6 +3180,8 @@
         renderTable();
         setPollingButtonState(false);
         await loadSettings();
+        await loadBankAccounts();
+        await loadBankTransactions();
         await loadMailLog();
         await loadReminderLog();
         if (!currentUser?.isAdmin) {
