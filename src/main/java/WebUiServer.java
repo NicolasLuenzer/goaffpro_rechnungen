@@ -147,6 +147,9 @@ public class WebUiServer {
         server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
         server.createContext("/api/erpnext/sales-invoices", new ErpnextSalesInvoicesHandler());
         server.createContext("/api/erpnext/purchase-orders", new ErpnextPurchaseOrdersHandler());
+        server.createContext("/api/as/bank-accounts", new AsBankAccountsHandler());
+        server.createContext("/api/as/mt940/import", new AsMt940ImportHandler());
+        server.createContext("/api/as/bank-transactions", new AsBankTransactionsHandler());
         server.createContext("/api/auth/login", new AuthLoginHandler());
         server.createContext("/api/auth/me", new AuthMeHandler());
         server.createContext("/api/auth/logout", new AuthLogoutHandler());
@@ -770,6 +773,137 @@ public class WebUiServer {
                 }
 
                 Map<String, Object> payload = fetchErpnextPurchaseOrders(baseUrl, apiKey, apiSecret);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class AsBankAccountsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            if (!canAccessDepartment(su, "AS")) { sendResponse(exchange, 403, "application/json", "{\"error\":\"Kein Zugriff auf Bereich AS\"}"); return; }
+            try {
+                Properties config = loadConfig();
+                List<BankAccountRecord> accounts = loadBankAccounts(config);
+                if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                    Map<String, Object> payload = new LinkedHashMap<>();
+                    payload.put("rows", accounts);
+                    payload.put("count", accounts.size());
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+                    return;
+                }
+                if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String name = asText(body, "name").trim();
+                String ibanOrAccountNo = asText(body, "ibanOrAccountNo").trim();
+                if (name.isBlank() || ibanOrAccountNo.isBlank()) { sendResponse(exchange, 400, "application/json", "{\"error\":\"name und ibanOrAccountNo sind Pflichtfelder\"}"); return; }
+                String normalizedIban = normalizeToken(ibanOrAccountNo);
+                boolean exists = accounts.stream().anyMatch(a -> normalizeToken(a.ibanOrAccountNo).equals(normalizedIban));
+                if (exists) { sendResponse(exchange, 400, "application/json", "{\"error\":\"Bankkonto existiert bereits\"}"); return; }
+                BankAccountRecord account = new BankAccountRecord();
+                account.id = java.util.UUID.randomUUID().toString();
+                account.name = name;
+                account.ibanOrAccountNo = ibanOrAccountNo;
+                account.bic = asText(body, "bic").trim();
+                account.bankName = asText(body, "bankName").trim();
+                account.currency = asText(body, "currency").trim();
+                account.createdAt = Instant.now().toString();
+                accounts.add(account);
+                saveBankAccounts(config, accounts);
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", "Bankkonto angelegt.");
+                payload.put("account", account);
+                payload.put("rows", accounts);
+                payload.put("count", accounts.size());
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class AsMt940ImportHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            if (!canAccessDepartment(su, "AS")) { sendResponse(exchange, 403, "application/json", "{\"error\":\"Kein Zugriff auf Bereich AS\"}"); return; }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String bankAccountId = asText(body, "bankAccountId").trim();
+                String fileName = asText(body, "fileName").trim();
+                String content = asText(body, "content");
+                if (bankAccountId.isBlank() || content.isBlank()) { sendResponse(exchange, 400, "application/json", "{\"error\":\"bankAccountId und content sind Pflichtfelder\"}"); return; }
+
+                Properties config = loadConfig();
+                List<BankAccountRecord> accounts = loadBankAccounts(config);
+                BankAccountRecord account = accounts.stream().filter(a -> bankAccountId.equals(a.id)).findFirst().orElse(null);
+                if (account == null) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Bankkonto nicht gefunden\"}"); return; }
+
+                List<BankTransactionRecord> existing = loadBankTransactions(config);
+                Set<String> existingFingerprints = existing.stream()
+                        .filter(t -> bankAccountId.equals(t.bankAccountId))
+                        .map(t -> Objects.toString(t.fingerprint, ""))
+                        .filter(v -> !v.isBlank())
+                        .collect(Collectors.toCollection(LinkedHashSet::new));
+
+                List<BankTransactionRecord> parsed = parseMt940Transactions(content, bankAccountId, fileName);
+                int duplicates = 0;
+                int inserted = 0;
+                int ignored = 0;
+                for (BankTransactionRecord tx : parsed) {
+                    if (tx.fingerprint == null || tx.fingerprint.isBlank()) { ignored++; continue; }
+                    if (existingFingerprints.contains(tx.fingerprint)) { duplicates++; continue; }
+                    existingFingerprints.add(tx.fingerprint);
+                    existing.add(tx);
+                    inserted++;
+                }
+                if (inserted > 0) saveBankTransactions(config, existing);
+
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("message", "MT940 Import abgeschlossen.");
+                payload.put("totalParsed", parsed.size());
+                payload.put("inserted", inserted);
+                payload.put("duplicates", duplicates);
+                payload.put("ignored", ignored);
+                payload.put("bankAccountId", bankAccountId);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class AsBankTransactionsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
+            SessionUser su = requireSession(exchange);
+            if (su == null) return;
+            if (!canAccessDepartment(su, "AS")) { sendResponse(exchange, 403, "application/json", "{\"error\":\"Kein Zugriff auf Bereich AS\"}"); return; }
+            try {
+                Properties config = loadConfig();
+                String query = Objects.toString(exchange.getRequestURI().getQuery(), "");
+                Map<String, String> params = parseQueryParams(query);
+                String bankAccountId = Objects.toString(params.get("bankAccountId"), "").trim();
+                if (bankAccountId.isBlank()) { sendResponse(exchange, 400, "application/json", "{\"error\":\"bankAccountId fehlt\"}"); return; }
+                String q = Objects.toString(params.get("q"), "").trim().toLowerCase();
+                List<BankTransactionRecord> rows = loadBankTransactions(config).stream()
+                        .filter(t -> bankAccountId.equals(Objects.toString(t.bankAccountId, "")))
+                        .filter(t -> q.isBlank() || (Objects.toString(t.purpose, "") + " " + Objects.toString(t.counterparty, "") + " " + Objects.toString(t.reference, "")).toLowerCase().contains(q))
+                        .sorted((a,b) -> Objects.toString(b.bookingDate, "").compareTo(Objects.toString(a.bookingDate, "")))
+                        .collect(Collectors.toList());
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("rows", rows);
+                payload.put("count", rows.size());
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -4537,6 +4671,226 @@ private static String toGermanDate(String input) {
         } catch (Exception e) {
             return value.compareTo(compareTo) > 0;
         }
+    }
+
+    private static boolean canAccessDepartment(SessionUser su, String required) {
+        if (su == null) return false;
+        if (su.isAdmin) return true;
+        String dep = Objects.toString(su.department, "").toUpperCase();
+        if (dep.contains("ALL")) return true;
+        String req = Objects.toString(required, "").toUpperCase();
+        if (req.isBlank()) return true;
+        for (String part : dep.split("[,;\\s]+")) {
+            if (part.trim().equals(req)) return true;
+        }
+        return false;
+    }
+
+    private static Map<String, String> parseQueryParams(String query) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (query == null || query.isBlank()) return out;
+        for (String part : query.split("&")) {
+            if (part.isBlank()) continue;
+            String[] kv = part.split("=", 2);
+            String key = java.net.URLDecoder.decode(kv[0], StandardCharsets.UTF_8);
+            String val = kv.length > 1 ? java.net.URLDecoder.decode(kv[1], StandardCharsets.UTF_8) : "";
+            out.put(key, val);
+        }
+        return out;
+    }
+
+    private static Path bankAccountsFile(Path settingsDir) { return settingsDir.resolve("bank_accounts.json"); }
+    private static Path bankTransactionsFile(Path settingsDir) { return settingsDir.resolve("bank_transactions.json"); }
+
+    private static List<BankAccountRecord> loadBankAccounts(Properties config) {
+        try {
+            Path settingsDir = resolveSettingsDirectory(config);
+            Files.createDirectories(settingsDir);
+            Path file = bankAccountsFile(settingsDir);
+            if (!Files.exists(file)) return new ArrayList<>();
+            String raw = Files.readString(file, StandardCharsets.UTF_8);
+            if (raw.isBlank()) return new ArrayList<>();
+            return OBJECT_MAPPER.readValue(raw, new TypeReference<List<BankAccountRecord>>(){});
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private static void saveBankAccounts(Properties config, List<BankAccountRecord> rows) throws IOException {
+        Path settingsDir = resolveSettingsDirectory(config);
+        Files.createDirectories(settingsDir);
+        String json = OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(rows == null ? new ArrayList<>() : rows);
+        Files.writeString(bankAccountsFile(settingsDir), json, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    private static List<BankTransactionRecord> loadBankTransactions(Properties config) {
+        try {
+            Path settingsDir = resolveSettingsDirectory(config);
+            Files.createDirectories(settingsDir);
+            Path file = bankTransactionsFile(settingsDir);
+            if (!Files.exists(file)) return new ArrayList<>();
+            String raw = Files.readString(file, StandardCharsets.UTF_8);
+            if (raw.isBlank()) return new ArrayList<>();
+            return OBJECT_MAPPER.readValue(raw, new TypeReference<List<BankTransactionRecord>>(){});
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
+    private static void saveBankTransactions(Properties config, List<BankTransactionRecord> rows) throws IOException {
+        Path settingsDir = resolveSettingsDirectory(config);
+        Files.createDirectories(settingsDir);
+        String json = OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(rows == null ? new ArrayList<>() : rows);
+        Files.writeString(bankTransactionsFile(settingsDir), json, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+    }
+
+    private static List<BankTransactionRecord> parseMt940Transactions(String content, String bankAccountId, String sourceFileName) {
+        List<BankTransactionRecord> result = new ArrayList<>();
+        if (content == null || content.isBlank()) return result;
+
+        String[] lines = content.replace("\r", "").split("\n");
+        List<String> logical = new ArrayList<>();
+        for (String line : lines) {
+            String ln = Objects.toString(line, "");
+            if (ln.startsWith(":")) logical.add(ln);
+            else if (!logical.isEmpty()) logical.set(logical.size() - 1, logical.get(logical.size() - 1) + " " + ln.trim());
+        }
+
+        BankTransactionRecord current = null;
+        for (String line : logical) {
+            if (line.startsWith(":61:")) {
+                current = parseMt940Line61(line.substring(4));
+                if (current == null) continue;
+                current.bankAccountId = bankAccountId;
+                current.importedAt = Instant.now().toString();
+                current.sourceFileName = Objects.toString(sourceFileName, "");
+                result.add(current);
+                continue;
+            }
+            if (line.startsWith(":86:") && current != null) {
+                String purpose = line.substring(4).trim();
+                current.purpose = current.purpose == null || current.purpose.isBlank() ? purpose : (current.purpose + " " + purpose).trim();
+                fillCounterpartyFromPurpose(current);
+                continue;
+            }
+        }
+
+        for (BankTransactionRecord tx : result) tx.fingerprint = buildTransactionFingerprint(tx);
+        return result;
+    }
+
+    private static BankTransactionRecord parseMt940Line61(String raw) {
+        if (raw == null) return null;
+        String value = raw.trim();
+        if (value.length() < 7) return null;
+        BankTransactionRecord tx = new BankTransactionRecord();
+        tx.currency = "EUR";
+        tx.bookingDate = parseMt940Date(value.substring(0, 6));
+
+        int idx = 6;
+        if (value.length() >= 10 && Character.isDigit(value.charAt(6)) && Character.isDigit(value.charAt(7)) && Character.isDigit(value.charAt(8)) && Character.isDigit(value.charAt(9))) {
+            tx.valueDate = parseMt940Date(value.substring(0, 2) + value.substring(6, 10));
+            idx = 10;
+        } else tx.valueDate = tx.bookingDate;
+
+        if (idx >= value.length()) return tx;
+        char dc = value.charAt(idx);
+        if (dc == 'R' && idx + 1 < value.length()) {
+            idx++;
+            dc = value.charAt(idx);
+        }
+        idx++;
+
+        StringBuilder amount = new StringBuilder();
+        while (idx < value.length()) {
+            char c = value.charAt(idx);
+            if ((c >= '0' && c <= '9') || c == ',' || c == '.') { amount.append(c); idx++; }
+            else break;
+        }
+        String amountStr = amount.toString().replace(',', '.');
+        if (!amountStr.isBlank()) {
+            try {
+                double val = Double.parseDouble(amountStr);
+                if (dc == 'D') val = -val;
+                tx.amount = String.format(java.util.Locale.US, "%.2f", val);
+            } catch (Exception ignored) {}
+        }
+        String trailing = idx < value.length() ? value.substring(idx).trim() : "";
+        if (!trailing.isBlank()) tx.reference = trailing;
+        return tx;
+    }
+
+    private static String parseMt940Date(String yyMMddOrMMdd) {
+        try {
+            if (yyMMddOrMMdd == null) return "";
+            if (yyMMddOrMMdd.length() == 6) {
+                int yy = Integer.parseInt(yyMMddOrMMdd.substring(0,2));
+                int year = yy >= 70 ? 1900 + yy : 2000 + yy;
+                int month = Integer.parseInt(yyMMddOrMMdd.substring(2,4));
+                int day = Integer.parseInt(yyMMddOrMMdd.substring(4,6));
+                return String.format("%04d-%02d-%02d", year, month, day);
+            }
+            if (yyMMddOrMMdd.length() == 4) {
+                LocalDate now = LocalDate.now();
+                int month = Integer.parseInt(yyMMddOrMMdd.substring(0,2));
+                int day = Integer.parseInt(yyMMddOrMMdd.substring(2,4));
+                return String.format("%04d-%02d-%02d", now.getYear(), month, day);
+            }
+        } catch (Exception ignored) {}
+        return "";
+    }
+
+    private static void fillCounterpartyFromPurpose(BankTransactionRecord tx) {
+        String p = Objects.toString(tx.purpose, "").trim();
+        if (p.isBlank()) return;
+        String[] parts = p.split("\\?");
+        if (parts.length > 0 && (tx.counterparty == null || tx.counterparty.isBlank())) tx.counterparty = parts[0].trim();
+    }
+
+    private static String buildTransactionFingerprint(BankTransactionRecord tx) {
+        String raw = String.join("|",
+                normalizeToken(tx.bankAccountId),
+                normalizeToken(tx.bookingDate),
+                normalizeToken(tx.valueDate),
+                normalizeToken(tx.amount),
+                normalizeToken(tx.currency),
+                normalizeToken(tx.counterparty),
+                normalizeToken(tx.purpose),
+                normalizeToken(tx.reference),
+                normalizeToken(tx.bankReference));
+        return sha256Hex(raw);
+    }
+
+    private static String normalizeToken(String input) {
+        return Objects.toString(input, "").replaceAll("\\s+", " ").trim().toLowerCase();
+    }
+
+    private static class BankAccountRecord {
+        public String id;
+        public String name;
+        public String ibanOrAccountNo;
+        public String bic;
+        public String bankName;
+        public String currency;
+        public String createdAt;
+    }
+
+    private static class BankTransactionRecord {
+        public String id = java.util.UUID.randomUUID().toString();
+        public String bankAccountId;
+        public String bookingDate;
+        public String valueDate;
+        public String amount;
+        public String currency;
+        public String counterparty;
+        public String purpose;
+        public String reference;
+        public String bankReference;
+        public String transactionCode;
+        public String balanceAfter;
+        public String fingerprint;
+        public String importedAt;
+        public String sourceFileName;
     }
 
     private static void sendResponse(HttpExchange exchange, int status, String contentType, String body) throws IOException {

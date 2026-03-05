@@ -174,6 +174,32 @@
           </thead>
           <tbody id="erpnextPurchaseOrdersBody"></tbody>
         </table>
+
+        <div class="toolbar" style="margin-top:18px;border-top:1px solid #e5e7eb;padding-top:14px;">
+          <strong>Banktransaktionen (MT940)</strong>
+        </div>
+        <div class="toolbar">
+          <label for="mt940BankAccountSelect">Bankkonto:</label>
+          <select id="mt940BankAccountSelect" style="min-width:320px"></select>
+          <button id="loadBankTransactionsBtn" class="secondary" type="button">Transaktionen laden</button>
+        </div>
+        <div class="toolbar">
+          <label>Name:</label><input id="newBankAccountName" type="text" placeholder="z. B. Hauptkonto" style="min-width:180px" />
+          <label>IBAN/Konto:</label><input id="newBankAccountIban" type="text" placeholder="DE.." style="min-width:220px" />
+          <label>BIC:</label><input id="newBankAccountBic" type="text" placeholder="optional" style="min-width:140px" />
+          <button id="createBankAccountBtn" class="secondary" type="button">Bankkonto anlegen</button>
+        </div>
+        <div class="toolbar">
+          <input id="mt940FileInput" type="file" accept=".sta,.mt940,.txt" />
+          <button id="importMt940Btn" class="secondary" type="button">MT940 importieren</button>
+        </div>
+        <p id="mt940Status" class="status">Noch kein MT940-Import durchgeführt.</p>
+        <table>
+          <thead>
+            <tr><th>Buchungsdatum</th><th>Wertstellung</th><th>Betrag</th><th>Währung</th><th>Gegenpartei</th><th>Verwendungszweck</th><th>Referenz</th><th>Importiert am</th><th>Datei</th></tr>
+          </thead>
+          <tbody id="bankTransactionsBody"></tbody>
+        </table>
       </div>
       <div id="ltPanel" class="panel area-panel"><h2>LT</h2><p>Noch keine Inhalte vorhanden.</p></div>
       <div id="vPanel" class="area-panel active"><div id="tabs" class="tabs" style="display:none;"></div><div id="panels"></div></div>
@@ -898,6 +924,81 @@
         updateEmptyTablesVisibility(document);
       } catch (error) {
         status.textContent = `Fehler beim Laden der Lieferantenaufträge: ${error.message}`;
+      }
+    }
+
+    async function loadBankAccounts() {
+      const select = document.getElementById('mt940BankAccountSelect');
+      const status = document.getElementById('mt940Status');
+      if (!select) return;
+      try {
+        const data = await apiGet('/api/as/bank-accounts');
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        select.innerHTML = rows.map(r => `<option value="${escapeHtml(r.id || '')}">${escapeHtml(r.name || '')} (${escapeHtml(r.ibanOrAccountNo || '')})</option>`).join('');
+        if (!rows.length) select.innerHTML = '<option value="">Bitte zuerst Bankkonto anlegen</option>';
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Laden der Bankkonten: ${error.message}`;
+      }
+    }
+
+    async function createBankAccount() {
+      const status = document.getElementById('mt940Status');
+      const name = document.getElementById('newBankAccountName')?.value || '';
+      const ibanOrAccountNo = document.getElementById('newBankAccountIban')?.value || '';
+      const bic = document.getElementById('newBankAccountBic')?.value || '';
+      if (!name.trim() || !ibanOrAccountNo.trim()) {
+        if (status) status.textContent = 'Bitte Name und IBAN/Konto ausfüllen.';
+        return;
+      }
+      try {
+        await apiPost('/api/as/bank-accounts', { name, ibanOrAccountNo, bic });
+        if (status) status.textContent = 'Bankkonto angelegt.';
+        await loadBankAccounts();
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Anlegen des Bankkontos: ${error.message}`;
+      }
+    }
+
+    async function importMt940() {
+      const status = document.getElementById('mt940Status');
+      const select = document.getElementById('mt940BankAccountSelect');
+      const input = document.getElementById('mt940FileInput');
+      const bankAccountId = select?.value || '';
+      const file = input?.files?.[0];
+      if (!bankAccountId) { if (status) status.textContent = 'Bitte ein Bankkonto auswählen.'; return; }
+      if (!file) { if (status) status.textContent = 'Bitte eine MT940-Datei auswählen.'; return; }
+      try {
+        const content = await file.text();
+        const res = await apiPost('/api/as/mt940/import', { bankAccountId, fileName: file.name || '', content });
+        if (status) status.textContent = `${res.message || 'Import abgeschlossen.'} Gelesen: ${res.totalParsed || 0}, neu: ${res.inserted || 0}, Duplikate: ${res.duplicates || 0}.`;
+        await loadBankTransactions();
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim MT940-Import: ${error.message}`;
+      }
+    }
+
+    async function loadBankTransactions() {
+      const status = document.getElementById('mt940Status');
+      const select = document.getElementById('mt940BankAccountSelect');
+      const body = document.getElementById('bankTransactionsBody');
+      if (!select || !body) return;
+      const bankAccountId = select.value || '';
+      if (!bankAccountId) {
+        body.innerHTML = '';
+        if (status) status.textContent = 'Bitte Bankkonto auswählen.';
+        return;
+      }
+      try {
+        const data = await apiGet(`/api/as/bank-transactions?bankAccountId=${encodeURIComponent(bankAccountId)}`);
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        body.innerHTML = rows.map(r => `<tr><td>${escapeHtml(r.bookingDate || '')}</td><td>${escapeHtml(r.valueDate || '')}</td><td>${escapeHtml(r.amount || '')}</td><td>${escapeHtml(r.currency || '')}</td><td>${escapeHtml(r.counterparty || '')}</td><td>${escapeHtml(r.purpose || '')}</td><td>${escapeHtml(r.reference || '')}</td><td>${escapeHtml(r.importedAt || '')}</td><td>${escapeHtml(r.sourceFileName || '')}</td></tr>`).join('');
+        if (status) status.textContent = `${rows.length} Banktransaktionen geladen.`;
+        const table = body.closest('table');
+        ensureResizableColumns(table || document);
+        applyTableFilterAndSort(table);
+        updateEmptyTablesVisibility(document);
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Laden der Banktransaktionen: ${error.message}`;
       }
     }
 
@@ -2818,6 +2919,10 @@
         const fetchAdvisor360Btn = document.getElementById('fetchAdvisor360Btn');
         const fetchErpnextSalesInvoicesBtn = document.getElementById('fetchErpnextSalesInvoicesBtn');
         const fetchErpnextPurchaseOrdersBtn = document.getElementById('fetchErpnextPurchaseOrdersBtn');
+        const createBankAccountBtn = document.getElementById('createBankAccountBtn');
+        const importMt940Btn = document.getElementById('importMt940Btn');
+        const loadBankTransactionsBtn = document.getElementById('loadBankTransactionsBtn');
+        const mt940BankAccountSelect = document.getElementById('mt940BankAccountSelect');
         const loadValidationBtn = document.getElementById('loadValidationBtn');
         const exportValidationExcelBtn = document.getElementById('exportValidationExcelBtn');
         const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
@@ -2840,6 +2945,10 @@
         if (fetchAdvisor360Btn) fetchAdvisor360Btn.addEventListener('click', fetchAdvisor360);
         if (fetchErpnextSalesInvoicesBtn) fetchErpnextSalesInvoicesBtn.addEventListener('click', fetchErpnextSalesInvoices);
         if (fetchErpnextPurchaseOrdersBtn) fetchErpnextPurchaseOrdersBtn.addEventListener('click', fetchErpnextPurchaseOrders);
+        if (createBankAccountBtn) createBankAccountBtn.addEventListener('click', createBankAccount);
+        if (importMt940Btn) importMt940Btn.addEventListener('click', importMt940);
+        if (loadBankTransactionsBtn) loadBankTransactionsBtn.addEventListener('click', loadBankTransactions);
+        if (mt940BankAccountSelect) mt940BankAccountSelect.addEventListener('change', loadBankTransactions);
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
         if (exportValidationExcelBtn) exportValidationExcelBtn.addEventListener('click', exportValidationTableToExcel);
         if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
@@ -2872,6 +2981,8 @@
         renderTable();
         setPollingButtonState(false);
         await loadSettings();
+        await loadBankAccounts();
+        await loadBankTransactions();
         await loadMailLog();
         await loadReminderLog();
         if (!currentUser?.isAdmin) {
