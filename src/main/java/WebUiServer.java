@@ -4889,7 +4889,7 @@ private static String toGermanDate(String input) {
     private static String parseGermanAmount(String input) {
         String raw = Objects.toString(input, "").trim();
         if (raw.isBlank()) return "";
-        String normalized = raw.replace(".", "").replace(',', '.').replaceAll("[^0-9+\-.]", "");
+        String normalized = raw.replace(".", "").replace(',', '.').replaceAll("[^0-9+.-]", "");
         if (normalized.isBlank()) return "";
         try {
             double value = Double.parseDouble(normalized);
