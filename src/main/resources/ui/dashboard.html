@@ -1693,10 +1693,35 @@
       const box = document.getElementById('commissionHistoryEditor');
       if (!box) return;
       const list = sortCommissionsChronologically(history);
-      box.innerHTML = list.map(value => {
+      const MAX_VISIBLE = 10;
+      const showAll = list.length <= MAX_VISIBLE;
+
+      const pillHtml = (value) => {
         const label = (historyLabels && historyLabels[value]) || value;
         return `<span class="pill">${label}<button type="button" data-remove-commission="${value}">x</button></span>`;
-      }).join('');
+      };
+
+      if (showAll) {
+        box.innerHTML = list.map(pillHtml).join('');
+      } else {
+        const visiblePills = list.slice(-MAX_VISIBLE).map(pillHtml).join('');
+        const hiddenPills = list.slice(0, -MAX_VISIBLE).map(pillHtml).join('');
+        const remaining = list.length - MAX_VISIBLE;
+        box.innerHTML = visiblePills +
+          `<div id="pillOverflow" style="display:none;flex-wrap:wrap;gap:8px;">${hiddenPills}</div>` +
+          `<button type="button" class="secondary" id="pillToggleBtn" style="font-size:12px;padding:5px 12px;">Alle anzeigen (${remaining} weitere)</button>`;
+
+        const toggleBtn = document.getElementById('pillToggleBtn');
+        const overflow = document.getElementById('pillOverflow');
+        if (toggleBtn && overflow) {
+          toggleBtn.addEventListener('click', function() {
+            const isHidden = overflow.style.display === 'none';
+            overflow.style.display = isHidden ? 'flex' : 'none';
+            toggleBtn.textContent = isHidden ? 'Einklappen' : `Alle anzeigen (${remaining} weitere)`;
+          });
+        }
+      }
+
       box.querySelectorAll('button[data-remove-commission]').forEach(btn => {
         btn.addEventListener('click', async () => {
           const commission = btn.getAttribute('data-remove-commission') || '';
