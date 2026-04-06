@@ -2768,17 +2768,7 @@
     async function init() {
       try {
         await showLoginAndAuthenticate();
-        const executables = await fetchExecutables();
-        if (!Array.isArray(executables) || executables.length === 0) {
-          document.getElementById('panels').innerHTML = '<p>Keine ausführbaren Java-Dateien gefunden.</p>';
-          return;
-        }
-
-        const mainExecutable = executables.find(exe => exe.name === 'MainProvisionenGoaffpro');
-        if (!mainExecutable) {
-          document.getElementById('panels').innerHTML = '<p>MainProvisionenGoaffpro konnte nicht gefunden werden.</p>';
-          return;
-        }
+        const mainExecutable = { id: 'mainprovisionengoaffpro', name: 'MainProvisionenGoaffpro', path: '' };
         if (canSeeDepartment('VEMMINA')) {
           createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
           createValidationTabAndPanel();
@@ -2791,7 +2781,7 @@
         await loadHelpDocumentation();
         wireVersionPopup();
         document.getElementById('headerHelpBtn')?.addEventListener('click', () => {
-          const mainTab = document.querySelector('.tab[data-target="MainProvisionenGoaffpro"]');
+          const mainTab = document.querySelector('.tab[data-target="mainprovisionengoaffpro"]');
           if (mainTab) mainTab.click();
           document.querySelectorAll('#panels .panel').forEach(p => p.classList.toggle('active', p.id === 'help-panel'));
           document.querySelectorAll('#tabs .tab').forEach(t => t.classList.remove('active'));
