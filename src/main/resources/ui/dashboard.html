@@ -7,6 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
   <style>
     /* ── Design Tokens ── */
     :root {
@@ -433,7 +434,7 @@
       <h3>ERPNext</h3>
       <div class="toolbar">
         <label for="erpnextApiKey">API-Schlüssel:</label>
-        <input id="erpnextApiKey" type="text" placeholder="z. B. abc123..." style="min-width:320px;" />
+        <input id="erpnextApiKey" type="password" placeholder="z. B. abc123..." style="min-width:320px;" />
       </div>
       <div class="toolbar">
         <label for="erpnextApiSecret">API-Geheimnis:</label>
@@ -504,10 +505,12 @@
 
   <div id="loginOverlay" class="login-overlay">
     <div class="login-card">
+      <form onsubmit="return false;" autocomplete="on">
       <h3 style="margin-top:0">Anmeldung</h3>
-      <div class="toolbar"><label>Benutzername</label><input id="loginUsername" type="text" style="min-width:100%"/></div>
-      <div class="toolbar"><label>Passwort</label><input id="loginPassword" type="password" style="min-width:100%"/></div>
-      <div class="toolbar"><button id="loginBtn" type="button">Login</button><span id="loginStatus" class="status"></span></div>
+      <div class="toolbar"><label for="loginUsername">Benutzername</label><input id="loginUsername" type="text" autocomplete="username" style="min-width:100%"/></div>
+      <div class="toolbar"><label for="loginPassword">Passwort</label><input id="loginPassword" type="password" autocomplete="current-password" style="min-width:100%"/></div>
+      <div class="toolbar"><button id="loginBtn" type="button">Anmelden</button><span id="loginStatus" class="status"></span></div>
+      </form>
       <div id="adminUsersBox" style="display:none;margin-top:12px;"></div>
     </div>
   </div>
@@ -689,7 +692,7 @@
                   <h3>GoAffPro & Zahlläufe</h3>
                   <div class="toolbar">
                     <label for="goaffproAPIKey">GoAffPro API-Key:</label>
-                    <input id="goaffproAPIKey" type="text" placeholder="API-Key" />
+                    <input id="goaffproAPIKey" type="password" placeholder="API-Key" />
                   </div>
                   <div class="toolbar"><label>Editierbare Zahlläufe (chronologisch):</label></div>
                   <div id="commissionHistoryEditor" class="pill-list"></div>
