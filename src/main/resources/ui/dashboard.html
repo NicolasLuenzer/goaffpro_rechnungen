@@ -232,6 +232,74 @@
     .mail-log-modal { position:fixed; inset:0; background:rgba(15,7,35,.6); backdrop-filter:blur(6px); z-index:3500; display:flex; align-items:center; justify-content:center; }
     .mail-log-modal-card { width:min(920px,95vw); max-height:85vh; overflow:auto; background:var(--clr-surface); border-radius:var(--radius-lg); border:1.5px solid var(--clr-border-strong); box-shadow:var(--shadow-lg); padding:20px; }
 
+    /* ── Responsive: Mobile (<768px) ── */
+    @media (max-width: 767px) {
+
+      /* Body: reduce outer padding */
+      body { padding: 10px; }
+
+      /* Header: allow wrapping, reduce padding */
+      .app-header { flex-wrap: wrap; gap: 8px; padding: 10px 14px; }
+      .app-header h1 { font-size: 20px; }
+      .app-header .app-subtitle { font-size: 11px; }
+
+      /* Version badge: reposition below header instead of overlapping */
+      .app-version { position: static; display: block; text-align: center; margin: 8px 0; border-radius: var(--radius-sm); }
+
+      /* Main layout: stack vertically instead of side-by-side.
+         IMPORTANT: #mainLayout has inline style "display:flex", so we
+         must use !important to override it from CSS. */
+      #mainLayout { flex-direction: column !important; }
+
+      /* Sidebar: hide on mobile (hamburger toggle comes in Plan 02) */
+      .side-nav { display: none; }
+
+      /* Main content: remove left padding that was spacing from sidebar */
+      #mainContent { padding-left: 0 !important; }
+
+      /* Inputs: override the global min-width:420px that causes overflow */
+      input[type="text"],
+      input[type="email"],
+      input[type="number"],
+      select { min-width: 0; width: 100%; box-sizing: border-box; }
+
+      /* Tabs: stack vertically */
+      .tabs { flex-direction: column; }
+      .area-tabs { flex-direction: column; }
+
+      /* Toolbar: stack vertically, full-width children */
+      .toolbar { flex-direction: column; align-items: stretch; }
+      .toolbar input,
+      .toolbar select,
+      .toolbar button,
+      .toolbar label { width: 100%; box-sizing: border-box; text-align: left; }
+
+      /* Settings grid: single column */
+      .settings-grid { grid-template-columns: 1fr; }
+
+      /* KPI grid: single column */
+      .kpi-grid { grid-template-columns: 1fr; }
+
+      /* Tables: horizontal scroll wrapper */
+      table { display: block; overflow-x: auto; }
+
+      /* Section tabs and validation subtabs: wrap */
+      .section-tabs { flex-wrap: wrap; justify-content: flex-start; }
+      .validation-subtabs { flex-wrap: wrap; }
+
+      /* Panels: reduce padding */
+      .panel { padding: 12px; }
+
+      /* Version popup: full-width */
+      .version-popup { left: 10px; right: 10px; width: auto; top: auto; }
+
+      /* Login card: reduce padding */
+      .login-card { padding: 18px; }
+
+      /* Settings overlay: reduce padding */
+      #settingsOverlay { padding: 10px !important; }
+    }
+
   </style>
 </head>
 <body>
