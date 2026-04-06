@@ -29,8 +29,8 @@ Phasen werden in numerischer Reihenfolge ausgeführt.
 **Goal:** Erste responsive Breakpoint-Schicht hinzufuegen: Sidebar auf Mobile verstecken und per Hamburger-Button als Drawer einblenden, Input-Overflow fixen, Layout vertikal stacken. Kein Email-Designer-Responsive (D-01).
 **Requirements**: RESP-01-media-queries, RESP-02-input-overflow, RESP-03-layout-stacking, RESP-04-sidebar-hide, RESP-05-hamburger-toggle, RESP-06-sidebar-drawer
 **Depends on:** Phase 0
-**Plans:** 2 plans
+**Plans:** 1/2 plans executed
 
 Plans:
-- [ ] 01-01-PLAN.md — CSS @media breakpoint: sidebar hide, input fix, layout stacking
+- [x] 01-01-PLAN.md — CSS @media breakpoint: sidebar hide, input fix, layout stacking
 - [ ] 01-02-PLAN.md — Hamburger button HTML + JS toggle + sidebar drawer overlay
