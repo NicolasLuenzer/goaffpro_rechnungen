@@ -1,0 +1,31 @@
+# config.properties.template
+# Kopiere diese Datei als "config.properties" und trage deine Werte ein.
+# WICHTIG: config.properties wird NICHT ins Git eingecheckt (steht in .gitignore).
+
+adminUsername=admin
+adminPassword=DEIN_PASSWORT
+authSecret=EIN_ZUFAELLIGER_GEHEIMER_STRING
+
+goaffproAPIKey=DEIN_GOAFFPRO_API_KEY
+erpnextApiKey=DEIN_ERPNEXT_API_KEY
+erpnextApiSecret=DEIN_ERPNEXT_API_SECRET
+
+smtpHost=smtp.mandrillapp.com
+smtpPassword=DEIN_SMTP_PASSWORT
+
+contactEmail=deine@email.de
+emailBcc=
+emailRecipientMode=contact
+sendEmailsEnabled=false
+
+belegJahr=2025
+eInvoiceEnabled=true
+eInvoiceAttachAndStoreEnabled=true
+
+pdfExportPath=C:\\Pfad\\zum\\Export
+exportPath=/pfad/zum/export
+importBelegePath=/pfad/zu/importBelege
+importZahlungenPath=/pfad/zu/importZahlungen
+importZahlungenBillbeePath=/pfad/zu/importZahlungenBillbee
+processPath=/pfad/zu/process
+processedPath=/pfad/zu/processed

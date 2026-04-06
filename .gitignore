@@ -27,3 +27,9 @@ bin/
 
 ### Mac OS ###
 .DS_Store
+
+### Project-specific ###
+# Config contains credentials and runtime state — never commit
+src/main/java/config.properties
+# Maven build output
+target/
