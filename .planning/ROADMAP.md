@@ -23,14 +23,15 @@ Phasen werden in numerischer Reihenfolge ausgeführt.
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
+| 1     | 2/2            | Complete | 2026-04-06 |
 
 ### Phase 1: Responsive Layout und Sidebar-Collapse
 
 **Goal:** Erste responsive Breakpoint-Schicht hinzufuegen: Sidebar auf Mobile verstecken und per Hamburger-Button als Drawer einblenden, Input-Overflow fixen, Layout vertikal stacken. Kein Email-Designer-Responsive (D-01).
 **Requirements**: RESP-01-media-queries, RESP-02-input-overflow, RESP-03-layout-stacking, RESP-04-sidebar-hide, RESP-05-hamburger-toggle, RESP-06-sidebar-drawer
 **Depends on:** Phase 0
-**Plans:** 1/2 plans executed
+**Plans:** 2/2 plans executed
 
 Plans:
 - [x] 01-01-PLAN.md — CSS @media breakpoint: sidebar hide, input fix, layout stacking
-- [ ] 01-02-PLAN.md — Hamburger button HTML + JS toggle + sidebar drawer overlay
+- [x] 01-02-PLAN.md — Hamburger button HTML + JS toggle + sidebar drawer overlay
