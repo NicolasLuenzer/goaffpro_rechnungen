@@ -259,9 +259,7 @@
     <nav id="sideNav" class="side-nav"></nav>
     <div id="mainContent" style="flex:1;min-width:0;padding-left:16px;">
       <div id="areaTabs" class="area-tabs" style="display:none;"></div>
-      <div id="asPanel" class="panel area-panel"><h2>AS</h2><p>Noch keine Inhalte vorhanden.</p></div>
-      <div id="ltPanel" class="panel area-panel"><h2>LT</h2><p>Noch keine Inhalte vorhanden.</p></div>
-      <div id="vPanel" class="area-panel active"><div id="tabs" class="tabs" style="display:none;"></div><div id="panels"></div></div>
+<div id="vPanel" class="area-panel active"><div id="tabs" class="tabs" style="display:none;"></div><div id="panels"></div></div>
     </div>
   </div>
   <div id="mailLogModalRoot"></div>
@@ -330,8 +328,6 @@
         <input id="newUserPhone" type="text" placeholder="Telefon" style="min-width:120px;" />
         <span style="display:inline-flex;gap:10px;align-items:center;">
           <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><input id="deptVEMMiNA" type="checkbox" value="VEMMINA" /> VEMMiNA</label>
-          <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><input id="deptAS" type="checkbox" value="AS" /> AS</label>
-          <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><input id="deptLT" type="checkbox" value="LT" /> LT</label>
         </span>
         <label><input id="newUserIsAdmin" type="checkbox" /> Admin</label>
       </div>
@@ -2473,24 +2469,18 @@
     function getDepartmentsFromForm() {
       const checked = [];
       if (document.getElementById('deptVEMMiNA')?.checked) checked.push('VEMMINA');
-      if (document.getElementById('deptAS')?.checked) checked.push('AS');
-      if (document.getElementById('deptLT')?.checked) checked.push('LT');
       return checked.length ? checked.join(',') : 'VEMMINA';
     }
 
     function setDepartmentsInForm(deptString) {
       const parts = String(deptString || '').toUpperCase().split(',').map(s => s.trim());
       const vEl = document.getElementById('deptVEMMiNA');
-      const aEl = document.getElementById('deptAS');
-      const lEl = document.getElementById('deptLT');
       if (vEl) vEl.checked = parts.includes('VEMMINA') || parts.includes('ALL');
-      if (aEl) aEl.checked = parts.includes('AS') || parts.includes('ALL');
-      if (lEl) lEl.checked = parts.includes('LT') || parts.includes('ALL');
     }
 
     function renderDeptPills(deptString) {
       if (!deptString) return '';
-      const colors = { VEMMINA: '#3b82f6', AS: '#10b981', LT: '#f59e0b', ALL: '#6366f1' };
+      const colors = { VEMMINA: '#3b82f6', ALL: '#6366f1' };
       return deptString.toUpperCase().split(',').map(d => d.trim()).filter(Boolean).map(d => {
         const bg = colors[d] || '#6b7280';
         return `<span style="display:inline-block;padding:1px 8px;border-radius:9999px;background:${bg};color:#fff;font-size:11px;font-weight:600;margin:1px 2px;">${escapeHtml(d)}</span>`;
@@ -2500,27 +2490,19 @@
     function switchArea(area) {
       activeArea = area;
       document.getElementById('vPanel')?.classList.toggle('active', area === 'VEMMiNA');
-      document.getElementById('asPanel')?.classList.toggle('active', area === 'AS');
-      document.getElementById('ltPanel')?.classList.toggle('active', area === 'LT');
     }
 
     function activateSideNavItem(panelId) {
       document.querySelectorAll('#sideNav .side-nav-item').forEach(b =>
         b.classList.toggle('active', b.dataset.panel === panelId));
-      if (panelId === 'asPanel') {
-        switchArea('AS');
-      } else if (panelId === 'ltPanel') {
-        switchArea('LT');
-      } else {
-        switchArea('VEMMiNA');
-        activateTab(panelId);
-      }
+      switchArea('VEMMiNA');
+      activateTab(panelId);
     }
 
     function renderSideNav() {
       const nav = document.getElementById('sideNav');
       if (!nav) return;
-      const badgeColors = { VEMMINA: '#3b82f6', AS: '#10b981', LT: '#f59e0b' };
+      const badgeColors = { VEMMINA: '#3b82f6' };
       const groups = [];
       if (canSeeDepartment('VEMMINA')) {
         // Backend lowercases the class name as panel ID, so look it up from the DOM
@@ -2530,14 +2512,6 @@
           { label: 'Validierungen',    panelId: 'validation-panel' },
           { label: 'Auswertungen',     panelId: 'analytics-panel' },
         ]});
-      }
-      if (canSeeDepartment('AS')) {
-        groups.push({ key: 'AS', dept: 'AS', panelId: 'asPanel', items: [
-          { label: 'ERPNext Rechnungsimport', panelId: 'asPanel' },
-        ]});
-      }
-      if (canSeeDepartment('LT')) {
-        groups.push({ key: 'LT', dept: 'LT', panelId: 'ltPanel', items: [] });
       }
       let html = '<div class="side-nav-section-label">Navigation</div>';
       for (let gi = 0; gi < groups.length; gi++) {
