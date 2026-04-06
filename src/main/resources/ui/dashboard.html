@@ -232,6 +232,64 @@
     .mail-log-modal { position:fixed; inset:0; background:rgba(15,7,35,.6); backdrop-filter:blur(6px); z-index:3500; display:flex; align-items:center; justify-content:center; }
     .mail-log-modal-card { width:min(920px,95vw); max-height:85vh; overflow:auto; background:var(--clr-surface); border-radius:var(--radius-lg); border:1.5px solid var(--clr-border-strong); box-shadow:var(--shadow-lg); padding:20px; }
 
+    /* ── Hamburger Button ── */
+    .hamburger-btn {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 40px;
+      height: 40px;
+      background: rgba(255,255,255,.15);
+      border: 1px solid rgba(255,255,255,.3);
+      border-radius: var(--radius-sm);
+      color: #fff;
+      font-size: 22px;
+      cursor: pointer;
+      backdrop-filter: blur(8px);
+      padding: 0;
+      line-height: 1;
+      font-family: inherit;
+    }
+    .hamburger-btn:hover {
+      background: rgba(255,255,255,.28);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0,0,0,.18);
+    }
+
+    /* ── Sidebar Overlay (backdrop when drawer is open) ── */
+    .sidebar-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(15,7,35,.5);
+      backdrop-filter: blur(4px);
+      z-index: 899;
+    }
+    .sidebar-overlay.active {
+      display: block;
+    }
+
+    /* ── Sidebar Drawer Open State ── */
+    .side-nav.side-nav-open {
+      display: flex !important;
+      flex-direction: column;
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 260px;
+      min-width: 0;
+      z-index: 900;
+      border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+      overflow-y: auto;
+      animation: slideInLeft .22s ease-out;
+    }
+
+    @keyframes slideInLeft {
+      from { transform: translateX(-100%); }
+      to { transform: translateX(0); }
+    }
+
     /* ── Responsive: Mobile (<768px) ── */
     @media (max-width: 767px) {
 
@@ -298,6 +356,9 @@
 
       /* Settings overlay: reduce padding */
       #settingsOverlay { padding: 10px !important; }
+
+      /* Hamburger: show on mobile */
+      .hamburger-btn { display: flex; }
     }
 
   </style>
@@ -313,6 +374,7 @@
       <h1>S+R Assistent</h1>
       <p class="app-subtitle">Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.</p>
     </div>
+    <button id="hamburgerBtn" class="hamburger-btn" type="button" aria-label="Navigation oeffnen" title="Navigation">&#9776;</button>
     <div class="header-spacer"></div>
     <button id="headerSettingsBtn" class="header-btn" type="button">Einstellungen</button>
     <button id="headerHelpBtn" class="header-btn" type="button">Hilfe</button>
@@ -323,6 +385,7 @@
     <ul id="versionHistoryList"></ul>
   </div>
 
+  <div id="sidebarOverlay" class="sidebar-overlay"></div>
   <div id="mainLayout" style="display:flex;align-items:flex-start;gap:0;">
     <nav id="sideNav" class="side-nav"></nav>
     <div id="mainContent" style="flex:1;min-width:0;padding-left:16px;">
@@ -2627,6 +2690,53 @@
       if (firstBtn) activateSideNavItem(firstBtn.dataset.panel);
     }
 
+    function initHamburgerToggle() {
+      const hamburger = document.getElementById('hamburgerBtn');
+      const sideNav = document.getElementById('sideNav');
+      const overlay = document.getElementById('sidebarOverlay');
+      if (!hamburger || !sideNav) return;
+
+      function openSidebar() {
+        sideNav.classList.add('side-nav-open');
+        if (overlay) overlay.classList.add('active');
+        hamburger.setAttribute('aria-label', 'Navigation schliessen');
+        hamburger.innerHTML = '&#10005;';
+      }
+
+      function closeSidebar() {
+        sideNav.classList.remove('side-nav-open');
+        if (overlay) overlay.classList.remove('active');
+        hamburger.setAttribute('aria-label', 'Navigation oeffnen');
+        hamburger.innerHTML = '&#9776;';
+      }
+
+      hamburger.addEventListener('click', function() {
+        if (sideNav.classList.contains('side-nav-open')) {
+          closeSidebar();
+        } else {
+          openSidebar();
+        }
+      });
+
+      if (overlay) {
+        overlay.addEventListener('click', closeSidebar);
+      }
+
+      sideNav.addEventListener('click', function(e) {
+        if (e.target.closest('.side-nav-item')) {
+          if (window.innerWidth < 768) {
+            closeSidebar();
+          }
+        }
+      });
+
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && sideNav.classList.contains('side-nav-open')) {
+          closeSidebar();
+        }
+      });
+    }
+
     function renderAreaTabs() { renderSideNav(); }
 
     async function showLoginAndAuthenticate() {
@@ -2818,6 +2928,7 @@
           createHelpTabAndPanel();
         }
         renderSideNav();
+        initHamburgerToggle();
         wireTabSwitching();
         await loadVersion();
         await loadHelpDocumentation();
