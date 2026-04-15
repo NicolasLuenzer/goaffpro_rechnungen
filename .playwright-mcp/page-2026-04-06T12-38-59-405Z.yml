@@ -1,0 +1,241 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - img "VEMMiNA Logo" [ref=e4]
+      - img "S+R Logo" [ref=e6]
+    - generic [ref=e7]:
+      - heading "S+R Assistent" [level=1] [ref=e8]
+      - paragraph [ref=e9]: Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.
+    - button "Einstellungen" [ref=e10] [cursor=pointer]
+    - button "Hilfe" [ref=e11] [cursor=pointer]
+  - generic "Klicken für Versionshistorie" [ref=e12] [cursor=pointer]: "Version: 20260406135522-000088"
+  - generic [ref=e13]:
+    - navigation [ref=e14]:
+      - generic [ref=e26]: Navigation
+      - generic [ref=e27] [cursor=pointer]:
+        - generic [ref=e28]: V
+        - generic [ref=e29]: VEMMiNA
+        - generic [ref=e30]: ⌄
+      - generic [ref=e31]:
+        - button "Rechnungsservice" [ref=e32] [cursor=pointer]
+        - button "Validierungen" [ref=e33] [cursor=pointer]
+        - button "Auswertungen" [ref=e34] [cursor=pointer]
+    - generic [ref=e38]:
+      - heading "Rechnungsservice" [level=2] [ref=e39]
+      - generic [ref=e40]:
+        - button "Arbeitsbereich" [ref=e41] [cursor=pointer]
+        - button "✉ E-Mail Designer" [ref=e42] [cursor=pointer]
+        - button "⚙ Einstellungen" [active] [ref=e43] [cursor=pointer]
+      - generic [ref=e271]:
+        - strong [ref=e272]: Einstellungen
+        - generic [ref=e273]:
+          - generic [ref=e274]:
+            - heading "GoAffPro & Zahlläufe" [level=3] [ref=e275]
+            - generic [ref=e276]:
+              - generic [ref=e277]: "GoAffPro API-Key:"
+              - textbox "GoAffPro API-Key:" [ref=e278]:
+                - /placeholder: API-Key
+                - text: 91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845
+            - generic [ref=e280]: "Editierbare Zahlläufe (chronologisch):"
+            - generic [ref=e281]:
+              - generic [ref=e282]:
+                - text: 1336332 (21.12.2023)
+                - button "x" [ref=e283] [cursor=pointer]
+              - generic [ref=e284]:
+                - text: 1338907 (23.12.2023)
+                - button "x" [ref=e285] [cursor=pointer]
+              - generic [ref=e286]:
+                - text: 1339275 (24.12.2023)
+                - button "x" [ref=e287] [cursor=pointer]
+              - generic [ref=e288]:
+                - text: 1339995 (26.12.2023)
+                - button "x" [ref=e289] [cursor=pointer]
+              - generic [ref=e290]:
+                - text: 1340315 (27.12.2023)
+                - button "x" [ref=e291] [cursor=pointer]
+              - generic [ref=e292]:
+                - text: 1364115 (11.01.2024)
+                - button "x" [ref=e293] [cursor=pointer]
+              - generic [ref=e294]:
+                - text: 1446660 (13.03.2024)
+                - button "x" [ref=e295] [cursor=pointer]
+              - generic [ref=e296]:
+                - text: 1451703 (18.03.2024)
+                - button "x" [ref=e297] [cursor=pointer]
+              - generic [ref=e298]:
+                - text: 1454912 (21.03.2024)
+                - button "x" [ref=e299] [cursor=pointer]
+              - generic [ref=e300]:
+                - text: 1464533 (30.03.2024)
+                - button "x" [ref=e301] [cursor=pointer]
+              - generic [ref=e302]:
+                - text: 1522067 (06.05.2024)
+                - button "x" [ref=e303] [cursor=pointer]
+              - generic [ref=e304]:
+                - text: 1532523 (13.05.2024)
+                - button "x" [ref=e305] [cursor=pointer]
+              - generic [ref=e306]:
+                - text: 1544271 (22.05.2024)
+                - button "x" [ref=e307] [cursor=pointer]
+              - generic [ref=e308]:
+                - text: 1594205 (27.06.2024)
+                - button "x" [ref=e309] [cursor=pointer]
+              - generic [ref=e310]:
+                - text: 1598702 (01.07.2024)
+                - button "x" [ref=e311] [cursor=pointer]
+              - generic [ref=e312]:
+                - text: 1637112 (24.07.2024)
+                - button "x" [ref=e313] [cursor=pointer]
+              - generic [ref=e314]:
+                - text: 1639643 (26.07.2024)
+                - button "x" [ref=e315] [cursor=pointer]
+              - generic [ref=e316]:
+                - text: 1645214 (31.07.2024)
+                - button "x" [ref=e317] [cursor=pointer]
+              - generic [ref=e318]:
+                - text: 1646647 (01.08.2024)
+                - button "x" [ref=e319] [cursor=pointer]
+              - generic [ref=e320]:
+                - text: 1666025 (12.08.2024)
+                - button "x" [ref=e321] [cursor=pointer]
+              - generic [ref=e322]:
+                - text: 1667309 (13.08.2024)
+                - button "x" [ref=e323] [cursor=pointer]
+              - generic [ref=e324]:
+                - text: 1668606 (14.08.2024)
+                - button "x" [ref=e325] [cursor=pointer]
+              - generic [ref=e326]:
+                - text: 1772181 (22.10.2024)
+                - button "x" [ref=e327] [cursor=pointer]
+              - generic [ref=e328]:
+                - text: 1776148 (25.10.2024)
+                - button "x" [ref=e329] [cursor=pointer]
+              - generic [ref=e330]:
+                - text: 1780357 (29.10.2024)
+                - button "x" [ref=e331] [cursor=pointer]
+              - generic [ref=e332]:
+                - text: 1784883 (01.11.2024)
+                - button "x" [ref=e333] [cursor=pointer]
+              - generic [ref=e334]:
+                - text: 1811346 (12.11.2024)
+                - button "x" [ref=e335] [cursor=pointer]
+              - generic [ref=e336]:
+                - text: 1813970 (13.11.2024)
+                - button "x" [ref=e337] [cursor=pointer]
+              - generic [ref=e338]:
+                - text: 1827041 (20.11.2024)
+                - button "x" [ref=e339] [cursor=pointer]
+              - generic [ref=e340]:
+                - text: 1864428 (06.12.2024)
+                - button "x" [ref=e341] [cursor=pointer]
+              - generic [ref=e342]:
+                - text: 1883352 (10.12.2024)
+                - button "x" [ref=e343] [cursor=pointer]
+              - generic [ref=e344]:
+                - text: 1929847 (03.01.2025)
+                - button "x" [ref=e345] [cursor=pointer]
+              - generic [ref=e346]:
+                - text: 1939943 (07.01.2025)
+                - button "x" [ref=e347] [cursor=pointer]
+              - generic [ref=e348]:
+                - text: 1944773 (09.01.2025)
+                - button "x" [ref=e349] [cursor=pointer]
+              - generic [ref=e350]:
+                - text: 1994162 (30.01.2025)
+                - button "x" [ref=e351] [cursor=pointer]
+              - generic [ref=e352]:
+                - text: 2048001 (27.02.2025)
+                - button "x" [ref=e353] [cursor=pointer]
+              - generic [ref=e354]:
+                - text: 2103705 (26.03.2025)
+                - button "x" [ref=e355] [cursor=pointer]
+              - generic [ref=e356]:
+                - text: 2167905 (28.04.2025)
+                - button "x" [ref=e357] [cursor=pointer]
+              - generic [ref=e358]:
+                - text: 2190357 (06.05.2025)
+                - button "x" [ref=e359] [cursor=pointer]
+              - generic [ref=e360]:
+                - text: 2230376 (28.05.2025)
+                - button "x" [ref=e361] [cursor=pointer]
+              - generic [ref=e362]:
+                - text: 2336836 (30.06.2025)
+                - button "x" [ref=e363] [cursor=pointer]
+              - generic [ref=e364]:
+                - text: 2421355 (31.07.2025)
+                - button "x" [ref=e365] [cursor=pointer]
+              - generic [ref=e366]:
+                - text: 2497986 (29.08.2025)
+                - button "x" [ref=e367] [cursor=pointer]
+              - generic [ref=e368]:
+                - text: 2565325 (30.09.2025)
+                - button "x" [ref=e369] [cursor=pointer]
+              - generic [ref=e370]:
+                - text: 2634650 (31.10.2025)
+                - button "x" [ref=e371] [cursor=pointer]
+              - generic [ref=e372]:
+                - text: 2702322 (28.11.2025)
+                - button "x" [ref=e373] [cursor=pointer]
+              - generic [ref=e374]:
+                - text: 2769263 (18.12.2025)
+                - button "x" [ref=e375] [cursor=pointer]
+              - generic [ref=e376]:
+                - text: 2887600 (05.02.2026)
+                - button "x" [ref=e377] [cursor=pointer]
+              - generic [ref=e378]:
+                - text: 2916174 (19.02.2026)
+                - button "x" [ref=e379] [cursor=pointer]
+            - button "Zahlläufe aus Payments neu aufbauen" [ref=e381] [cursor=pointer]
+          - generic [ref=e382]:
+            - heading "Export" [level=3] [ref=e383]
+            - generic [ref=e384]:
+              - generic [ref=e385]: "PDF Zielverzeichnis:"
+              - textbox "PDF Zielverzeichnis:" [ref=e386]:
+                - /placeholder: C:\Users\nluenzer\Downloads\goaffpro
+                - text: C:\Users\nluenzer\Downloads\goaffpro
+              - button "Ordner auswählen…" [ref=e387] [cursor=pointer]
+          - generic [ref=e388]:
+            - heading "E-Rechnung (ZUGFeRD)" [level=3] [ref=e389]
+            - generic [ref=e391]:
+              - checkbox "E-Rechnung je Zahllauf erzeugen" [checked] [ref=e392]
+              - text: E-Rechnung je Zahllauf erzeugen
+            - strong [ref=e394]: Rechnungsempfänger (unsere Firma)
+            - generic [ref=e395]:
+              - generic [ref=e396]: "Name:"
+              - textbox "Name:" [ref=e397]:
+                - /placeholder: S+R linear technology gmbh
+            - generic [ref=e398]:
+              - generic [ref=e399]: "Straße:"
+              - textbox "Straße:" [ref=e400]:
+                - /placeholder: Musterstraße 1
+              - generic [ref=e401]: "PLZ:"
+              - textbox "PLZ:" [ref=e402]
+              - generic [ref=e403]: "Ort:"
+              - textbox "Ort:" [ref=e404]
+            - generic [ref=e405]:
+              - generic [ref=e406]: "Land (ISO):"
+              - textbox "Land (ISO):" [ref=e407]:
+                - /placeholder: DE
+                - text: DE
+              - generic [ref=e408]: "USt-IdNr:"
+              - textbox "USt-IdNr:" [ref=e409]
+              - generic [ref=e410]: "Steuernummer:"
+              - textbox "Steuernummer:" [ref=e411]
+            - strong [ref=e413]: Zahlungsdaten der Beraterin (optional überschreibbar)
+            - generic [ref=e414]:
+              - generic [ref=e415]: "IBAN:"
+              - textbox "IBAN:" [ref=e416]
+              - generic [ref=e417]: "BIC:"
+              - textbox "BIC:" [ref=e418]
+            - generic [ref=e419]:
+              - generic [ref=e420]: "Kontoinhaber:"
+              - textbox "Kontoinhaber:" [ref=e421]
+            - generic [ref=e422]:
+              - generic [ref=e423]: "Zahlungsbedingungen:"
+              - textbox "Zahlungsbedingungen:" [ref=e424]:
+                - /placeholder: Zahlbar sofort ohne Abzug
+        - button "Speichern" [ref=e426] [cursor=pointer]
+        - generic [ref=e427]:
+          - text: Die UI-Einstellungen werden im gewählten Ordner als
+          - code [ref=e428]: goaffpro_ui_settings.properties
+          - text: gespeichert.

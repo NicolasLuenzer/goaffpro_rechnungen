@@ -1,0 +1,110 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - img "VEMMiNA Logo" [ref=e4]
+      - img "S+R Logo" [ref=e6]
+    - generic [ref=e7]:
+      - heading "S+R Assistent" [level=1] [ref=e8]
+      - paragraph [ref=e9]: Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.
+    - button "Einstellungen" [ref=e10] [cursor=pointer]
+    - button "Hilfe" [ref=e11] [cursor=pointer]
+  - generic "Klicken für Versionshistorie" [ref=e12] [cursor=pointer]: "Version: 20260406135522-000088"
+  - generic [ref=e106]:
+    - generic [ref=e107]:
+      - heading "Benutzerverwaltung" [level=2] [ref=e108]
+      - button "Speichern" [ref=e109] [cursor=pointer]
+      - button "Schließen" [ref=e110] [cursor=pointer]
+    - generic [ref=e111]:
+      - heading "E-Mail Versand" [level=3] [ref=e112]
+      - generic [ref=e113]:
+        - generic [ref=e114]: "Kontakt-E-Mail:"
+        - textbox "Kontakt-E-Mail:" [ref=e115]:
+          - /placeholder: z. B. info@vemmina.com
+          - text: nluenzer@sr-gmbh.de
+      - generic [ref=e116]:
+        - generic [ref=e117]: "SMTP Host:"
+        - textbox "SMTP Host:" [ref=e118]:
+          - /placeholder: smtp.example.com
+          - text: smtp.mandrillapp.com
+        - generic [ref=e119]: "Port:"
+        - spinbutton "Port:" [ref=e120]: "587"
+      - generic [ref=e121]:
+        - generic [ref=e122]: "SMTP Benutzer:"
+        - textbox "SMTP Benutzer:" [ref=e123]:
+          - /placeholder: user@example.com
+          - text: smtp@sr-gmbh.de
+        - generic [ref=e124]: "SMTP Passwort:"
+        - textbox "SMTP Passwort:" [ref=e125]:
+          - /placeholder: (unverändert lassen zum Beibehalten)
+      - generic [ref=e127]:
+        - checkbox "E-Mails versenden" [checked] [ref=e128]
+        - text: E-Mails versenden
+      - generic [ref=e129]:
+        - generic [ref=e130]: "BCC (optional):"
+        - textbox "BCC (optional):" [ref=e131]:
+          - /placeholder: z. B. controlling@vemmina.com
+          - text: n.luenzer@gmail.com
+    - generic [ref=e132]:
+      - heading "ERPNext" [level=3] [ref=e133]
+      - generic [ref=e134]:
+        - generic [ref=e135]: "API-Schlüssel:"
+        - textbox "API-Schlüssel:" [ref=e136]:
+          - /placeholder: z. B. abc123...
+          - text: af2abd731744f38
+      - generic [ref=e137]:
+        - generic [ref=e138]: "API-Geheimnis:"
+        - textbox "API-Geheimnis:" [ref=e139]:
+          - /placeholder: (unverändert lassen zum Beibehalten)
+    - generic [ref=e140]:
+      - heading "Neuen Benutzer anlegen" [level=3] [ref=e141]
+      - generic [ref=e142]:
+        - generic [ref=e143]: "Username:"
+        - textbox "Username" [ref=e144]
+        - generic [ref=e145]: "Vorname:"
+        - textbox "Vorname" [ref=e146]
+        - generic [ref=e147]: "Nachname:"
+        - textbox "Nachname" [ref=e148]
+      - generic [ref=e149]:
+        - generic [ref=e150]: "E-Mail:"
+        - textbox "E-Mail" [ref=e151]
+        - generic [ref=e152]: "Telefon:"
+        - textbox "Telefon" [ref=e153]
+        - generic [ref=e155]:
+          - checkbox "VEMMiNA" [ref=e156]
+          - text: VEMMiNA
+        - generic [ref=e157]:
+          - checkbox "Admin" [ref=e158]
+          - text: Admin
+      - button "Benutzer anlegen" [ref=e160] [cursor=pointer]
+      - paragraph
+      - generic [ref=e161]:
+        - generic [ref=e162]:
+          - strong [ref=e163]: Vorhandene Benutzer
+          - button "Benutzer laden" [ref=e164] [cursor=pointer]
+        - table [ref=e165]:
+          - rowgroup [ref=e166]:
+            - row "Username Spaltenbreite ändern Vorname Spaltenbreite ändern Nachname Spaltenbreite ändern E-Mail Spaltenbreite ändern Telefon Spaltenbreite ändern Abteilung Spaltenbreite ändern Admin Spaltenbreite ändern" [ref=e167]:
+              - columnheader "Username Spaltenbreite ändern" [ref=e168]:
+                - text: Username
+                - generic "Spaltenbreite ändern" [ref=e169]
+              - columnheader "Vorname Spaltenbreite ändern" [ref=e170]:
+                - text: Vorname
+                - generic "Spaltenbreite ändern" [ref=e171]
+              - columnheader "Nachname Spaltenbreite ändern" [ref=e172]:
+                - text: Nachname
+                - generic "Spaltenbreite ändern" [ref=e173]
+              - columnheader "E-Mail Spaltenbreite ändern" [ref=e174]:
+                - text: E-Mail
+                - generic "Spaltenbreite ändern" [ref=e175]
+              - columnheader "Telefon Spaltenbreite ändern" [ref=e176]:
+                - text: Telefon
+                - generic "Spaltenbreite ändern" [ref=e177]
+              - columnheader "Abteilung Spaltenbreite ändern" [ref=e178]:
+                - text: Abteilung
+                - generic "Spaltenbreite ändern" [ref=e179]
+              - columnheader "Admin Spaltenbreite ändern" [ref=e180]:
+                - text: Admin
+                - generic "Spaltenbreite ändern" [ref=e181]
+          - rowgroup [ref=e182]:
+            - row "Klicken Sie auf „Benutzer laden\" um vorhandene Benutzer anzuzeigen." [ref=e183]:
+              - cell "Klicken Sie auf „Benutzer laden\" um vorhandene Benutzer anzuzeigen." [ref=e184]

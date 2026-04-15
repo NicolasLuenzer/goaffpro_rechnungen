@@ -1,0 +1,96 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - img "VEMMiNA Logo" [ref=e4]
+      - img "S+R Logo" [ref=e6]
+    - generic [ref=e7]:
+      - heading "S+R Assistent" [level=1] [ref=e8]
+      - paragraph [ref=e9]: Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.
+    - button "Einstellungen" [ref=e10] [cursor=pointer]
+    - button "Hilfe" [ref=e11] [cursor=pointer]
+  - generic "Klicken für Versionshistorie" [ref=e12] [cursor=pointer]: "Version: 20260406135522-000088"
+  - generic [ref=e13]:
+    - navigation [ref=e14]:
+      - generic [ref=e26]: Navigation
+      - generic [ref=e27] [cursor=pointer]:
+        - generic [ref=e28]: V
+        - generic [ref=e29]: VEMMiNA
+        - generic [ref=e30]: ⌄
+      - generic [ref=e31]:
+        - button "Rechnungsservice" [active] [ref=e32] [cursor=pointer]
+        - button "Validierungen" [ref=e33] [cursor=pointer]
+        - button "Auswertungen" [ref=e34] [cursor=pointer]
+    - generic [ref=e38]:
+      - heading "Rechnungsservice" [level=2] [ref=e39]
+      - generic [ref=e40]:
+        - button "Arbeitsbereich" [ref=e41] [cursor=pointer]
+        - button "✉ E-Mail Designer" [ref=e42] [cursor=pointer]
+        - button "⚙ Einstellungen" [ref=e43] [cursor=pointer]
+      - generic [ref=e44]:
+        - generic [ref=e45]:
+          - button "Polling starten" [ref=e46] [cursor=pointer]
+          - generic [ref=e47]: "Zahllauf:"
+          - combobox "Zahllauf:" [ref=e48]:
+            - option "2916174 (19.02.2026)"
+            - option "2887600 (05.02.2026)"
+            - option "2769263 (18.12.2025)"
+            - option "2702322 (28.11.2025)"
+            - option "2634650 (31.10.2025)"
+            - option "2565325 (30.09.2025)"
+            - option "2497986 (29.08.2025)"
+            - option "2421355 (31.07.2025)"
+            - option "2336836 (30.06.2025)"
+            - option "2230376 (28.05.2025)" [selected]
+            - option "2190357 (06.05.2025)"
+            - option "2167905 (28.04.2025)"
+            - option "2103705 (26.03.2025)"
+            - option "2048001 (27.02.2025)"
+            - option "1994162 (30.01.2025)"
+            - option "1944773 (09.01.2025)"
+            - option "1939943 (07.01.2025)"
+            - option "1929847 (03.01.2025)"
+            - option "1883352 (10.12.2024)"
+            - option "1864428 (06.12.2024)"
+            - option "1827041 (20.11.2024)"
+            - option "1813970 (13.11.2024)"
+            - option "1811346 (12.11.2024)"
+            - option "1784883 (01.11.2024)"
+            - option "1780357 (29.10.2024)"
+            - option "1776148 (25.10.2024)"
+            - option "1772181 (22.10.2024)"
+            - option "1668606 (14.08.2024)"
+            - option "1667309 (13.08.2024)"
+            - option "1666025 (12.08.2024)"
+            - option "1646647 (01.08.2024)"
+            - option "1645214 (31.07.2024)"
+            - option "1639643 (26.07.2024)"
+            - option "1637112 (24.07.2024)"
+            - option "1598702 (01.07.2024)"
+            - option "1594205 (27.06.2024)"
+            - option "1544271 (22.05.2024)"
+            - option "1532523 (13.05.2024)"
+            - option "1522067 (06.05.2024)"
+            - option "1464533 (30.03.2024)"
+            - option "1454912 (21.03.2024)"
+            - option "1451703 (18.03.2024)"
+            - option "1446660 (13.03.2024)"
+            - option "1364115 (11.01.2024)"
+            - option "1340315 (27.12.2023)"
+            - option "1339995 (26.12.2023)"
+            - option "1339275 (24.12.2023)"
+            - option "1338907 (23.12.2023)"
+            - option "1336332 (21.12.2023)"
+          - button "Neuesten Zahllauf hinzufügen" [ref=e49] [cursor=pointer]
+          - button "Rechnungsdetails für selektierte Zeilen exportieren" [ref=e50] [cursor=pointer]
+          - textbox "Filtern nach Name, Land, Steuernummer, Belegdatum..." [ref=e51]
+        - generic [ref=e52]:
+          - generic [ref=e53]:
+            - 'radio "Versand: an Kontakt-E-Mail" [checked] [ref=e54]'
+            - text: "Versand: an Kontakt-E-Mail"
+          - generic [ref=e55]:
+            - 'radio "Versand: an Beraterinnen-E-Mail" [ref=e56]'
+            - text: "Versand: an Beraterinnen-E-Mail"
+          - generic "Wenn deaktiviert, werden nur Rechnungsdetails-PDF + JSON erzeugt/versendet." [ref=e57]:
+            - checkbox "E-Rechnung (ZUGFeRD + E-Rechnung-PDF) mitschicken & ablegen" [checked] [ref=e58]
+            - text: E-Rechnung (ZUGFeRD + E-Rechnung-PDF) mitschicken & ablegen
+        - paragraph [ref=e59]: Noch nicht gestartet.

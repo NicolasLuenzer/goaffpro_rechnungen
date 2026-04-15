@@ -1,0 +1,31 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - img "VEMMiNA Logo" [ref=e4]
+      - img "S+R Logo" [ref=e6]
+    - generic [ref=e7]:
+      - heading "S+R Assistent" [level=1] [ref=e8]
+      - paragraph [ref=e9]: Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.
+    - button "Einstellungen" [ref=e10] [cursor=pointer]
+    - button "Hilfe" [ref=e11] [cursor=pointer]
+  - generic "Klicken für Versionshistorie" [ref=e12] [cursor=pointer]: "Version: 20260406135522-000088"
+  - generic [ref=e13]:
+    - navigation [ref=e14]:
+      - generic [ref=e26]: Navigation
+      - generic [ref=e27] [cursor=pointer]:
+        - generic [ref=e28]: V
+        - generic [ref=e29]: VEMMiNA
+        - generic [ref=e30]: ⌄
+      - generic [ref=e31]:
+        - button "Rechnungsservice" [ref=e32] [cursor=pointer]
+        - button "Validierungen" [active] [ref=e33] [cursor=pointer]
+        - button "Auswertungen" [ref=e34] [cursor=pointer]
+    - generic [ref=e60]:
+      - heading "Validierung der Stammdaten" [level=2] [ref=e61]
+      - paragraph [ref=e62]: "Sortierung: Klick auf Spaltenkopf. Filter: Rechtsklick auf Spaltenkopf (wie Excel)."
+      - generic [ref=e63]:
+        - button "Validierung der Stammdaten" [ref=e64] [cursor=pointer]
+        - button "Baum der Beraterinnen" [ref=e65] [cursor=pointer]
+      - generic [ref=e66]:
+        - button "Stammdaten laden / neu laden" [ref=e68] [cursor=pointer]
+        - paragraph [ref=e69]: Noch keine Daten geladen.

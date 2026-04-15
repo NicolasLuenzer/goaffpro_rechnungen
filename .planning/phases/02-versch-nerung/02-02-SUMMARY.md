@@ -112,3 +112,11 @@ None - no external service configuration required.
 ---
 *Phase: 02-versch-nerung*
 *Completed: 2026-04-06*
+
+## Self-Check: PASSED
+
+- dashboard.html: FOUND
+- 02-02-SUMMARY.md: FOUND
+- Commit be5c489 (Task 1 - CSS tokens): FOUND
+- Commit a2c16f0 (Task 2 - pill collapse): FOUND
+- Commit 341edd6 (docs - metadata): FOUND

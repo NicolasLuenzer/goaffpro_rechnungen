@@ -1,0 +1,21 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - img "VEMMiNA Logo" [ref=e4]
+      - img "S+R Logo" [ref=e6]
+    - generic [ref=e7]:
+      - heading "S+R Assistent" [level=1] [ref=e8]
+      - paragraph [ref=e9]: Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.
+    - button "Einstellungen" [ref=e10] [cursor=pointer]
+    - button "Hilfe" [ref=e11] [cursor=pointer]
+  - generic "Klicken für Versionshistorie" [ref=e12] [cursor=pointer]: "Version: lädt…"
+  - navigation [ref=e14]
+  - generic [ref=e16]:
+    - heading "Anmeldung" [level=3] [ref=e17]
+    - generic [ref=e18]:
+      - generic [ref=e19]: Benutzername
+      - textbox [ref=e20]
+    - generic [ref=e21]:
+      - generic [ref=e22]: Passwort
+      - textbox [ref=e23]
+    - button "Login" [ref=e25] [cursor=pointer]

@@ -1,0 +1,379 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - generic [ref=e3]:
+      - img "VEMMiNA Logo" [ref=e4]
+      - img "S+R Logo" [ref=e6]
+    - generic [ref=e7]:
+      - heading "S+R Assistent" [level=1] [ref=e8]
+      - paragraph [ref=e9]: Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.
+    - button "Einstellungen" [ref=e10] [cursor=pointer]
+    - button "Hilfe" [ref=e11] [cursor=pointer]
+  - generic "Klicken für Versionshistorie" [ref=e12] [cursor=pointer]: "Version: 20260406135522-000088"
+  - generic [ref=e13]:
+    - navigation [ref=e14]:
+      - generic [ref=e26]: Navigation
+      - generic [ref=e27] [cursor=pointer]:
+        - generic [ref=e28]: V
+        - generic [ref=e29]: VEMMiNA
+        - generic [ref=e30]: ⌄
+      - generic [ref=e31]:
+        - button "Rechnungsservice" [ref=e32] [cursor=pointer]
+        - button "Validierungen" [ref=e33] [cursor=pointer]
+        - button "Auswertungen" [ref=e34] [cursor=pointer]
+    - generic [ref=e38]:
+      - heading "Rechnungsservice" [level=2] [ref=e39]
+      - generic [ref=e40]:
+        - button "Arbeitsbereich" [ref=e41] [cursor=pointer]
+        - button "✉ E-Mail Designer" [active] [ref=e42] [cursor=pointer]
+        - button "⚙ Einstellungen" [ref=e43] [cursor=pointer]
+      - generic [ref=e186]:
+        - strong [ref=e187]: E-Mail Designer
+        - generic [ref=e188]:
+          - generic [ref=e189]: "Vorlage:"
+          - combobox "Vorlage:" [ref=e190]:
+            - option "Rechnungsservice (Provisionsmail)" [selected]
+            - option "Stammdaten-Erinnerung"
+            - option "E-Rechnung PDF-Ansicht"
+        - generic [ref=e191]:
+          - generic [ref=e192]:
+            - generic [ref=e193]:
+              - button "B" [ref=e194] [cursor=pointer]
+              - button "I" [ref=e195] [cursor=pointer]
+              - button "U" [ref=e196] [cursor=pointer]
+              - button "• Liste" [ref=e197] [cursor=pointer]
+              - button "Link" [ref=e198] [cursor=pointer]
+              - button "Format löschen" [ref=e199] [cursor=pointer]
+              - generic [ref=e200]:
+                - text: Textfarbe
+                - textbox "Textfarbe" [ref=e201]: "#1f2937"
+              - button "anwenden" [ref=e202] [cursor=pointer]
+              - generic [ref=e203]:
+                - text: Highlight
+                - textbox "Highlight" [ref=e204]: "#fff59d"
+              - button "anwenden" [ref=e205] [cursor=pointer]
+              - button "HTML-Modus" [ref=e206] [cursor=pointer]
+              - button "Standardvorlage laden" [ref=e207] [cursor=pointer]
+            - generic [ref=e208]:
+              - paragraph [ref=e209]: VEMMiNA
+              - heading "Provisionsinformation" [level=1] [ref=e210]
+              - paragraph [ref=e211]: Ihr aktueller Zahllauf wurde erfolgreich verarbeitet.
+              - paragraph [ref=e212]: "Hallo {{salutationName}},"
+              - paragraph [ref=e213]: wir haben einen neuen Zahllauf für Sie verarbeitet. Die Auszahlung sollte in der Regel innerhalb der nächsten 2 Bankarbeitstage auf Ihrem Konto eingehen.
+              - strong [ref=e214]: Zeitraum
+              - text: "{{periodLabel}}"
+              - strong [ref=e215]: Zahllauf-ID
+              - text: "{{paymentId}}"
+              - strong [ref=e216]: Auszahlungsbetrag
+              - text: "{{payout}}"
+              - strong [ref=e217]: Zahlungsmethode
+              - text: "{{method}}"
+              - strong [ref=e218]: Auszahlungsdatum (System)
+              - text: "{{created}}"
+              - strong [ref=e219]: Anzahl Transaktionen
+              - text: "{{txCount}}"
+              - paragraph [ref=e220]: Im Anhang finden Sie Ihren Provisionsnachweis als PDF sowie die zugehörige JSON-Datei.
+              - paragraph [ref=e221]:
+                - text: Viele Grüße
+                - strong [ref=e222]: Ihr VEMMiNA Team
+            - generic [ref=e223]:
+              - text: "Verfügbare Platzhalter:"
+              - code [ref=e224]: "{{salutationName}}"
+              - text: ","
+              - code [ref=e225]: "{{periodLabel}}"
+              - text: ","
+              - code [ref=e226]: "{{paymentId}}"
+              - text: ","
+              - code [ref=e227]: "{{invoiceNumber}}"
+              - text: ","
+              - code [ref=e228]: "{{payout}}"
+              - text: ","
+              - code [ref=e229]: "{{method}}"
+              - text: ","
+              - code [ref=e230]: "{{created}}"
+              - text: ","
+              - code [ref=e231]: "{{txCount}}"
+              - text: ","
+              - code [ref=e232]: "{{missingFields}}"
+              - text: ","
+              - code [ref=e233]: "{{advisorName}}"
+              - text: ","
+              - code [ref=e234]: "{{advisorAddress}}"
+              - text: ","
+              - code [ref=e235]: "{{advisorEmail}}"
+              - text: ","
+              - code [ref=e236]: "{{advisorPhone}}"
+              - text: ","
+              - code [ref=e237]: "{{advisorTaxNumber}}"
+              - text: ","
+              - code [ref=e238]: "{{advisorIban}}"
+              - text: ","
+              - code [ref=e239]: "{{advisorBic}}"
+              - text: ","
+              - code [ref=e240]: "{{advisorAccountHolder}}"
+              - text: ","
+              - code [ref=e241]: "{{buyerCompanyName}}"
+              - text: ","
+              - code [ref=e242]: "{{buyerAddress}}"
+              - text: ","
+              - code [ref=e243]: "{{buyerVatId}}"
+              - text: ","
+              - code [ref=e244]: "{{buyerTaxNumber}}"
+              - text: ","
+              - code [ref=e245]: "{{amount}}"
+              - text: ","
+              - code [ref=e246]: "{{currency}}"
+              - text: .
+          - generic [ref=e247]:
+            - generic [ref=e248]:
+              - generic [ref=e249]: "Vorschau mit Beraterin:"
+              - combobox "Vorschau mit Beraterin:" [ref=e250]:
+                - option "ID 15366057 (15366057)" [selected]
+                - option "Adriana Roth (15366856)"
+                - option "Alois Haas (16078785)"
+                - option "Ama mit Steuern (14251588)"
+                - option "Andrea Bergmann (15366053)"
+                - option "Andrea Noel (15366810)"
+                - option "Andreas Brandl (15366065)"
+                - option "Anita Hövelkamp (15366630)"
+                - option "Anita Lutz (15366753)"
+                - option "Anna Klassen (15366687)"
+                - option "Anneli Müller (15366795)"
+                - option "Annemaria Gottwald (15366510)"
+                - option "Annemarie Haas (15366521)"
+                - option "Annemarie Scharf (15366868)"
+                - option "Annette Fischhaber (18335137)"
+                - option "Annette Sixt (15366912)"
+                - option "Astrid Stöhr (18013107)"
+                - option "Barbara Bressan (15366080)"
+                - option "Barbara Heinzle (15366542)"
+                - option "Barbara Rampp (15366840)"
+                - option "Barbara Weiß (15366969)"
+                - option "Beate Lieb (15366735)"
+                - option "Benjamin und Eva Knorr (15366691)"
+                - option "Benno Loferer (15366745)"
+                - option "Bernadette Stemer (15366925)"
+                - option "Bernhard Jakob (15366654)"
+                - option "Bettina Stöcker (15366940)"
+                - option "Birgit Merkle (15366774)"
+                - option "Brigitte Brauckmann (15366072)"
+                - option "Brigitte Carugati (15366098)"
+                - option "Brigitte Schrade (15366890)"
+                - option "Christa Quehl (15366839)"
+                - option "Christa Schmidmaier (15366876)"
+                - option "Christina Bauer (15726861)"
+                - option "Christine Strötzel (15366944)"
+                - option "Christine Will (17938281)"
+                - option "Claudia Brückner (15366084)"
+                - option "Claudia Katz (15366665)"
+                - option "Claudia Schieck-Timmer (15366871)"
+                - option "Cornelia Hilton (18521994)"
+                - option "Daniela Stengel (15366929)"
+                - option "David Hirsch (16288766)"
+                - option "Diana Lamshöft (15366726)"
+                - option "Diana Schäfferlein (15366867)"
+                - option "Doris Joas (15366662)"
+                - option "Dorothea Strack (15366942)"
+                - option "Dorothee Nicodemus (15366804)"
+                - option "Elena Gärtner (15366283)"
+                - option "Elfriede Hansen (15366533)"
+                - option "Elfriede Schäfer (15366863)"
+                - option "Elisabeth Dück (15366121)"
+                - option "Elisabeth Kempfle (15325677)"
+                - option "Elke Stapf (15366918)"
+                - option "Elsa Acklin (15365956)"
+                - option "Erika Baumann (15366037)"
+                - option "Erika Mergner (15528164)"
+                - option "Erika Mergner (15366771)"
+                - option "Evelyn Mich (15366779)"
+                - option "Fabian Faust (16755463)"
+                - option "Florian Spinnler (15964502)"
+                - option "Franziska Rauch (15889739)"
+                - option "Gabi-Anke Kehrer (15366677)"
+                - option "Gabriela Bänziger-Bürkler (15365964)"
+                - option "Gabriele Quast (15366833)"
+                - option "Gabriele Sedlak (15366906)"
+                - option "Gerda Lumpp (15366750)"
+                - option "Gerhild Taferner (15366948)"
+                - option "Gerlinde Reis (15366844)"
+                - option "Gertraud Gerhard (15366506)"
+                - option "Gertraud Puchstein (19001003)"
+                - option "Gertraud Puchstein (15366828)"
+                - option "Gertrud Beyer (15366055)"
+                - option "Gertrud Geissberger (15366501)"
+                - option "Gudrun Strohmeier (15366946)"
+                - option "Gunda Forster (15366264)"
+                - option "Hanna Beraterin (ohne Steuern) (14021301)"
+                - option "Heidi Dressler (15366117)"
+                - option "Heidi Karger (15366663)"
+                - option "Heike Grunwald (15366519)"
+                - option "Heinrich Eichhorn (15366232)"
+                - option "Hermine Hartlieb (15366535)"
+                - option "Holger Franke (15366270)"
+                - option "Ilse Sauder (15366862)"
+                - option "Ilze Lerch (14432077)"
+                - option "Inga Petersen-Wiswe (15366817)"
+                - option "Ingeborg Kuhn (15366717)"
+                - option "Ingeborg Nagel-Roth (15366802)"
+                - option "Ingrid Sippel (15366909)"
+                - option "Irene Mehling (15366765)"
+                - option "Iris Brülheide (15366088)"
+                - option "Iris Grünhagen (16260399)"
+                - option "Iris Wolzenburg (15366978)"
+                - option "Irmgard Fürle (15366275)"
+                - option "Irmgard Schork (15366885)"
+                - option "Irmgard Weyrich (15366971)"
+                - option "Jeannette Martin (15366758)"
+                - option "Jenny Unkelbach (16187275)"
+                - option "Jessica Bay (15366048)"
+                - option "Johanna Ruchti (16085086)"
+                - option "Joke-Johanna de Kroon (15366105)"
+                - option "Josef Schuller (15366892)"
+                - option "Julia Baumanns (15366042)"
+                - option "Juliane Wolaschka (15366976)"
+                - option "Jutta Hahn (15366527)"
+                - option "Jörg Höhl (15366625)"
+                - option "Karin Dünser (15366230)"
+                - option "Karin Eisele (15366235)"
+                - option "Karin Paulus (15366815)"
+                - option "Karin Schob (15366883)"
+                - option "Katharina Raith (15325690)"
+                - option "Katharina Rest (15366851)"
+                - option "Kathrin Werz (15622521)"
+                - option "Katja Maurer (18996939)"
+                - option "Katrin Dörr (15233060)"
+                - option "Kerstin Laub-Heldenberger (15366730)"
+                - option "Kirsten Balz (15366026)"
+                - option "Kornelia Mertesacker (15366777)"
+                - option "Leonie Schmid (15366875)"
+                - option "Lisa Backfee (15047196)"
+                - option "Lisa Moritz (15366785)"
+                - option "Lotte Hartnagel (15366537)"
+                - option "Luise Hipke (15366547)"
+                - option "Lydia Geiselhart (15366500)"
+                - option "Lydia Holzmann (15366638)"
+                - option "Manuela Ferreira da Silva (15366260)"
+                - option "Manuela Goth (15366507)"
+                - option "Manuela Imhof (15366651)"
+                - option "Manuela Tennert (15366949)"
+                - option "Margot Engel (15366238)"
+                - option "Margot Pulver (15366832)"
+                - option "Margrit Handschin (15366531)"
+                - option "Maria Hagedorn (15366522)"
+                - option "Maria Hammerschmid (15366530)"
+                - option "Maria Varm (15366952)"
+                - option "Maria Zlanabitnig (15366980)"
+                - option "Marianne Gröbmair (15366516)"
+                - option "Marianne Holtmanns (15366635)"
+                - option "Marianne Marx (15366759)"
+                - option "Marianne Michels (15366782)"
+                - option "Marianne Steinhart (15366922)"
+                - option "Marianne von Schöning (15366960)"
+                - option "Marie-Luise Schmidt (15366878)"
+                - option "Marion Stahl (15366917)"
+                - option "Marita Böttcher (15366063)"
+                - option "Marlene Braun (15366076)"
+                - option "Marta Backmitmir (15132962)"
+                - option "Martina Gerber (15366503)"
+                - option "Martina Gottschalk (15366509)"
+                - option "Martina Sonderegger (15366914)"
+                - option "Mechthild Volke (15366956)"
+                - option "Michaela Becherer (15366954)"
+                - option "Monika Böhmler (15366060)"
+                - option "Monika Plieschnegger (15366825)"
+                - option "Natalia Rudigier (15366857)"
+                - option "Nicolas Influcencer (mit Steuern) (13637495)"
+                - option "Nicolas Lueenzer (15365938)"
+                - option "Nicole Walter (19620736)"
+                - option "Norbert Knall (15366688)"
+                - option "Oliver Teschner (14926747)"
+                - option "Paula Wilhelm (15366973)"
+                - option "Peter Pettmann (15366822)"
+                - option "Petra Grimmer (15366514)"
+                - option "Petra Huber (15366649)"
+                - option "Petra Hörner (15366626)"
+                - option "Petra List (15366740)"
+                - option "Petra Munz (15366797)"
+                - option "Rebecca Grund (19182904)"
+                - option "Regina Hornung (15366643)"
+                - option "Renate Gack (15366277)"
+                - option "Rina Wilken (15826619)"
+                - option "Rolf Fritsch (15663664)"
+                - option "Rosa Meingaßner (16210282)"
+                - option "Rosemarie Ackermann (15954747)"
+                - option "Rosina Kessler (15366681)"
+                - option "Rositta Erlwein (15366258)"
+                - option "Rosmarie Rauscher (15325650)"
+                - option "Roswitha Reisner (15826769)"
+                - option "Sabine Bucher (15366092)"
+                - option "Sabine Fraissinet (15366266)"
+                - option "Sabine Kettler (15366683)"
+                - option "Sabine Merkatz (15366772)"
+                - option "Sabrina Boschert (16297278)"
+                - option "Sandra Bamberger (15366031)"
+                - option "Sandra Hagspiel (15366524)"
+                - option "Sieglinde Lidl (15366734)"
+                - option "Sigrid Gehlert (15366340)"
+                - option "Sigrid Kreitmeier (15366708)"
+                - option "Sigrid Meier (15366767)"
+                - option "Sigrid Pelles (15826667)"
+                - option "Silke Bender (15366051)"
+                - option "Silke Carstensen (15366096)"
+                - option "Silke Reckweg (15366842)"
+                - option "Silke Sagmeister (15366859)"
+                - option "Silvia Kaufmann (15366669)"
+                - option "Simone Hilligloh (15366544)"
+                - option "Simone Krug (15366713)"
+                - option "Simone Midinet (15366783)"
+                - option "Sonja Castrovinci (15366099)"
+                - option "Susanne Nickel (13551447)"
+                - option "Susanne Süß (15160253)"
+                - option "Sybille Kirchner (15366684)"
+                - option "Sybille Lappich (15643071)"
+                - option "T+O Stengel GbR (15366934)"
+                - option "Tanja Lochner (15366742)"
+                - option "Tanja Mair (15366756)"
+                - option "Team Knorr (16360395)"
+                - option "Team Lidl (16914536)"
+                - option "Team Rauscher (15519717)"
+                - option "Test (15126581)"
+                - option "Theresia Gahr (15366338)"
+                - option "Theresia König (15366701)"
+                - option "Theresia Leder (15366731)"
+                - option "Ursula Dippert (15366110)"
+                - option "Ursula Mai (15366754)"
+                - option "Ute Oelkers (15366813)"
+                - option "Ute Ruf (15366858)"
+                - option "Vanessa Kupka (15366724)"
+                - option "VEMMiNA Schulungszentrum (15032611)"
+                - option "Verena Gratzl (12557503)"
+                - option "Walter Fischer (19127528)"
+                - option "Waltraud Knörle (15366690)"
+                - option "Waltraud Leuthold (15366732)"
+                - option "Waltraud Maurer (15366762)"
+                - option "Waltraut Mühler (15366792)"
+                - option "Werner Huis (15366650)"
+              - button "Beraterinnen neu laden" [ref=e251] [cursor=pointer]
+              - button "Vorschau rendern" [ref=e252] [cursor=pointer]
+            - generic [ref=e253]:
+              - paragraph [ref=e254]: VEMMiNA
+              - heading "Provisionsinformation" [level=1] [ref=e255]
+              - paragraph [ref=e256]: Ihr aktueller Zahllauf wurde erfolgreich verarbeitet.
+              - paragraph [ref=e257]: Hallo Beraterin Beispiel,
+              - paragraph [ref=e258]: wir haben einen neuen Zahllauf für Sie verarbeitet. Die Auszahlung sollte in der Regel innerhalb der nächsten 2 Bankarbeitstage auf Ihrem Konto eingehen.
+              - strong [ref=e259]: Zeitraum
+              - text: 01.01.2026 bis 31.01.2026
+              - strong [ref=e260]: Zahllauf-ID
+              - text: "99999999"
+              - strong [ref=e261]: Auszahlungsbetrag
+              - text: 123,45 €
+              - strong [ref=e262]: Zahlungsmethode
+              - text: Banküberweisung
+              - strong [ref=e263]: Auszahlungsdatum (System)
+              - text: 06.04.2026, 14:33
+              - strong [ref=e264]: Anzahl Transaktionen
+              - text: "12"
+              - paragraph [ref=e265]: Im Anhang finden Sie Ihren Provisionsnachweis als PDF sowie die zugehörige JSON-Datei.
+              - paragraph [ref=e266]:
+                - text: Viele Grüße
+                - strong [ref=e267]: Ihr VEMMiNA Team
+        - button "E-Mail Vorlage speichern" [ref=e269] [cursor=pointer]
