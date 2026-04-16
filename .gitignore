@@ -33,3 +33,6 @@ bin/
 src/main/java/config.properties
 # Maven build output
 target/
+# Docker deployment data (secrets, runtime data)
+config/
+docker-data/

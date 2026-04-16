@@ -73,14 +73,18 @@ public class WebUiServer {
     private static final DateTimeFormatter INPUT_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss[XXX]");
     private static final DateTimeFormatter OUTPUT_FORMATTER = DateTimeFormatter.ofPattern("dd.MM.yyyy");
     private static final DateTimeFormatter FILE_TIMESTAMP = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss");
-    private static final Path CONFIG_PATH = Paths.get("src/main/java/config.properties");
-    private static final Path UI_PATH = Paths.get("src/main/resources/ui/dashboard.html");
-    private static final Path HELP_DOC_PATH = Paths.get("docs/HILFE.md");
+    private static final Path CONFIG_PATH = Paths.get(
+            System.getenv().getOrDefault("CONFIG_PATH", "src/main/java/config.properties"));
+    private static final Path UI_PATH = Paths.get(
+            System.getenv().getOrDefault("UI_PATH", "src/main/resources/ui/dashboard.html"));
+    private static final Path HELP_DOC_PATH = Paths.get(
+            System.getenv().getOrDefault("HELP_DOC_PATH", "docs/HILFE.md"));
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
     private static final String COMMISSION_HISTORY_DATES_KEY = "lastImportedComissionHistoryDates";
     private static final String MAIL_LOG_KEY = "sentMailLogJson";
     private static final String REMINDER_LOG_KEY = "sentReminderLogJson";
-    private static final String DEFAULT_PDF_EXPORT_PATH = "C:\\Users\\nluenzer\\Downloads\\goaffpro";
+    private static final String DEFAULT_PDF_EXPORT_PATH =
+            System.getenv().getOrDefault("PDF_EXPORT_PATH", "C:\\Users\\nluenzer\\Downloads\\goaffpro");
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
     private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
     private static final String USER_STORE_FILENAME = "goaffpro_users.enc";
@@ -95,34 +99,41 @@ public class WebUiServer {
         try {
             server = HttpServer.create(new InetSocketAddress(8080), 0);
         } catch (java.net.BindException e) {
-            System.err.println("Port 8080 ist bereits belegt. Versuche, den bestehenden Prozess zu beenden...");
-            try {
-                Process netstat = new ProcessBuilder("netstat", "-ano").start();
-                String output = new String(netstat.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-                netstat.waitFor();
-                String pid = null;
-                for (String line : output.split("\n")) {
-                    if (line.contains(":8080") && line.contains("LISTENING")) {
-                        String[] parts = line.trim().split("\\s+");
-                        pid = parts[parts.length - 1].trim();
-                        break;
+            System.err.println("Port 8080 ist bereits belegt.");
+            boolean isWindows = System.getProperty("os.name", "").toLowerCase().contains("win");
+            if (isWindows) {
+                System.err.println("Versuche, den bestehenden Prozess zu beenden...");
+                try {
+                    Process netstat = new ProcessBuilder("netstat", "-ano").start();
+                    String output = new String(netstat.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+                    netstat.waitFor();
+                    String pid = null;
+                    for (String line : output.split("\n")) {
+                        if (line.contains(":8080") && line.contains("LISTENING")) {
+                            String[] parts = line.trim().split("\\s+");
+                            pid = parts[parts.length - 1].trim();
+                            break;
+                        }
                     }
-                }
-                if (pid == null) {
-                    System.err.println("Kein Prozess auf Port 8080 gefunden.");
+                    if (pid == null) {
+                        System.err.println("Kein Prozess auf Port 8080 gefunden.");
+                        throw e;
+                    }
+                    System.err.println("Beende Prozess PID " + pid + "...");
+                    new ProcessBuilder("taskkill", "/F", "/PID", pid).start().waitFor();
+                    Thread.sleep(1500);
+                } catch (java.net.BindException be) {
+                    throw be;
+                } catch (Exception ex) {
+                    System.err.println("Konnte Prozess nicht automatisch beenden: " + ex.getMessage());
+                    System.err.println("Bitte manuell beenden: netstat -ano | findstr :8080, dann: taskkill /F /PID <PID>");
                     throw e;
                 }
-                System.err.println("Beende Prozess PID " + pid + "...");
-                new ProcessBuilder("taskkill", "/F", "/PID", pid).start().waitFor();
-                Thread.sleep(1500);
-            } catch (java.net.BindException be) {
-                throw be;
-            } catch (Exception ex) {
-                System.err.println("Konnte Prozess nicht automatisch beenden: " + ex.getMessage());
-                System.err.println("Bitte manuell beenden: netstat -ano | findstr :8080, dann: taskkill /F /PID <PID>");
+                server = HttpServer.create(new InetSocketAddress(8080), 0);
+            } else {
+                System.err.println("Bitte den blockierenden Prozess manuell beenden (z.B. lsof -i :8080).");
                 throw e;
             }
-            server = HttpServer.create(new InetSocketAddress(8080), 0);
         }
         server.createContext("/", new UiHandler());
         server.createContext("/api/executables", new ExecutablesHandler());

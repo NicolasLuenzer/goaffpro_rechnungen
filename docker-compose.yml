@@ -1,0 +1,12 @@
+services:
+  goaffpro:
+    build: .
+    container_name: goaffpro-rechnungen
+    ports:
+      - "8090:8080"
+    volumes:
+      - ./config/config.properties:/app/config/config.properties
+      - ./docker-data/exports:/app/exports
+    environment:
+      - TZ=Europe/Berlin
+    restart: unless-stopped

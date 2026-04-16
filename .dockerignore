@@ -1,0 +1,10 @@
+target/
+.idea/
+.claude/
+.planning/
+.playwright-mcp/
+*.iml
+docker-data/
+config/
+src/main/java/config.properties
+.vscode/
