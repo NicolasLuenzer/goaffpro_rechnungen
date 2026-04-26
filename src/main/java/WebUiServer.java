@@ -1551,6 +1551,7 @@ public class WebUiServer {
                 payload.put("includeEInvoiceArtifacts", eInvoiceAttachAndStoreEnabled);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                e.printStackTrace();
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -2268,6 +2269,7 @@ public class WebUiServer {
                 payload.put("toEmail", toEmail);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                e.printStackTrace();
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -2789,9 +2791,14 @@ public class WebUiServer {
 
         Transport transport = session.getTransport("smtp");
         try {
+            System.out.println("[SMTP] Connecting to " + smtpConfig.host + ":" + smtpConfig.port + " as " + smtpConfig.username + " (tls=" + smtpConfig.tls + ")");
             transport.connect(smtpConfig.host, smtpConfig.port, smtpConfig.username, smtpConfig.password);
             transport.sendMessage(message, message.getAllRecipients());
-            System.out.println("E-Mail versendet an " + toEmail + " | Betreff: " + subject);
+            System.out.println("[SMTP] Mail sent: to=" + toEmail + " subject=" + subject);
+        } catch (Exception e) {
+            System.err.println("[SMTP] Send failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            e.printStackTrace();
+            throw e;
         } finally {
             transport.close();
         }
@@ -3004,8 +3011,14 @@ public class WebUiServer {
 
         Transport transport = session.getTransport("smtp");
         try {
+            System.out.println("[SMTP] Connecting to " + smtpConfig.host + ":" + smtpConfig.port + " as " + smtpConfig.username + " (tls=" + smtpConfig.tls + ")");
             transport.connect(smtpConfig.host, smtpConfig.port, smtpConfig.username, smtpConfig.password);
             transport.sendMessage(message, message.getAllRecipients());
+            System.out.println("[SMTP] Mail sent: to=" + toEmail + " subject=" + subject);
+        } catch (Exception e) {
+            System.err.println("[SMTP] Send failed: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+            e.printStackTrace();
+            throw e;
         } finally {
             transport.close();
         }
@@ -3563,7 +3576,17 @@ public class WebUiServer {
                 "false"
         );
 
+        System.out.println("[SMTP] resolveSmtpConfig: host='" + host
+                + "' port=" + portRaw
+                + " username='" + username + "'"
+                + " hasPassword=" + !password.isBlank()
+                + " tls=" + tlsRaw);
+
         if (host.isBlank() || username.isBlank() || password.isBlank()) {
+            System.err.println("[SMTP] Konfiguration unvollständig"
+                    + " (host=" + (host.isBlank() ? "MISSING" : "ok")
+                    + ", username=" + (username.isBlank() ? "MISSING" : "ok")
+                    + ", password=" + (password.isBlank() ? "MISSING" : "ok") + ")");
             throw new IOException("SMTP-Konfiguration unvollständig. Bitte Host, Benutzername und Passwort in den Einstellungen setzen.");
         }
 
