@@ -1849,6 +1849,14 @@
       return advisor && advisor.checked ? 'advisor' : 'contact';
     }
 
+    async function persistEmailRecipientMode() {
+      try {
+        await apiPost('/api/settings/recipient-mode', { emailRecipientMode: getEmailRecipientMode() });
+      } catch (error) {
+        console.error('Recipient-Mode konnte nicht gespeichert werden', error);
+      }
+    }
+
     function shouldSendEmails() {
       const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
       return !sendEmailsEnabledInput || sendEmailsEnabledInput.checked;
@@ -2688,6 +2696,8 @@
         const sendEmailsEnabledInput = document.getElementById('sendEmailsEnabled');
         if (emailRecipientContactInput) emailRecipientContactInput.addEventListener('change', applyAdvisorRecipientUiState);
         if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.addEventListener('change', applyAdvisorRecipientUiState);
+        if (emailRecipientContactInput) emailRecipientContactInput.addEventListener('change', persistEmailRecipientMode);
+        if (emailRecipientAdvisorInput) emailRecipientAdvisorInput.addEventListener('change', persistEmailRecipientMode);
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.addEventListener('change', applyAdvisorRecipientUiState);
 
         wireSettingsDirtyTracking();

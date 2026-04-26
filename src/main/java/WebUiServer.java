@@ -129,6 +129,7 @@ public class WebUiServer {
         server.createContext("/api/executables", new ExecutablesHandler());
         server.createContext("/api/provisionen-goaffpro/poll", new PollGoaffproHandler());
         server.createContext("/api/settings", new SettingsHandler());
+        server.createContext("/api/settings/recipient-mode", new RecipientModeHandler());
         server.createContext("/api/provisionen-goaffpro/export-pdf", new ExportPdfHandler());
         server.createContext("/api/provisionen-goaffpro/invoice-details-pdf", new InvoiceDetailsPdfHandler());
         server.createContext("/api/mail-log", new MailLogHandler());
@@ -544,6 +545,34 @@ public class WebUiServer {
             }
 
             sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+        }
+    }
+
+    private static class RecipientModeHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String mode = asText(body, "emailRecipientMode").trim();
+                if (!"advisor".equals(mode)) mode = "contact";
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                config.setProperty("emailRecipientMode", mode);
+                persistSettings(config);
+                sendResponse(exchange, 200, "application/json", "{\"emailRecipientMode\":\"" + mode + "\"}");
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
         }
     }
 
@@ -3837,9 +3866,13 @@ public class WebUiServer {
             config.setProperty("smtpTls", uiSmtpTls);
         }
         config.setProperty("sendEmailsEnabled", Objects.toString(uiSettings.getProperty("sendEmailsEnabled"), Objects.toString(config.getProperty("sendEmailsEnabled"), "true")).trim());
-        String uiEmailRecipientMode = Objects.toString(uiSettings.getProperty("emailRecipientMode"), Objects.toString(config.getProperty("emailRecipientMode"), "contact")).trim();
-        if (!"advisor".equals(uiEmailRecipientMode)) uiEmailRecipientMode = "contact";
-        config.setProperty("emailRecipientMode", uiEmailRecipientMode);
+        String uiEmailRecipientMode = Objects.toString(uiSettings.getProperty("emailRecipientMode"), "").trim();
+        if (!uiEmailRecipientMode.isEmpty()) {
+            if (!"advisor".equals(uiEmailRecipientMode)) uiEmailRecipientMode = "contact";
+            config.setProperty("emailRecipientMode", uiEmailRecipientMode);
+        } else if (!config.containsKey("emailRecipientMode")) {
+            config.setProperty("emailRecipientMode", "contact");
+        }
         config.setProperty("emailTemplateHtml", Objects.toString(uiSettings.getProperty("emailTemplateHtml"), Objects.toString(config.getProperty("emailTemplateHtml"), "")));
         config.setProperty("validationReminderTemplateHtml", Objects.toString(uiSettings.getProperty("validationReminderTemplateHtml"), Objects.toString(config.getProperty("validationReminderTemplateHtml"), "")));
         config.setProperty("eInvoicePdfTemplateHtml", Objects.toString(uiSettings.getProperty("eInvoicePdfTemplateHtml"), Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "")));
