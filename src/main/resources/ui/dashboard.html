@@ -633,18 +633,6 @@
                 </div>
 
                 <div class="settings-group">
-                  <h3>Export</h3>
-                  <div class="toolbar">
-                    <label for="pdfExportPath">PDF Zielverzeichnis:</label>
-                    <input id="pdfExportPath" type="text" placeholder="C:\\Users\\nluenzer\\Downloads\\goaffpro" />
-                    <button id="pickFolderBtn" type="button" class="secondary">Ordner auswählen…</button>
-                    <input id="folderPickerInput" type="file" style="display:none" webkitdirectory directory mozdirectory />
-                  </div>
-                </div>
-
-
-
-                <div class="settings-group">
                   <h3>E-Rechnung (ZUGFeRD)</h3>
                   <div class="toolbar">
                     <label><input id="eInvoiceEnabled" type="checkbox" checked /> E-Rechnung je Zahllauf erzeugen</label>
@@ -1701,7 +1689,6 @@
 
 
     async function loadSettings() {
-      const input = document.getElementById('pdfExportPath');
       const goaffproAPIKeyInput = document.getElementById('goaffproAPIKey');
       const contactEmailInput = document.getElementById('contactEmail');
       const smtpHostInput = document.getElementById('smtpHost');
@@ -1713,10 +1700,8 @@
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
       const emailTemplateEditor = document.getElementById('emailTemplateEditor');
-      if (!input) return;
       try {
         const data = await apiGet('/api/settings');
-        input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || '';
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || '';
@@ -1764,7 +1749,6 @@
     }
 
     async function saveSettings() {
-      const input = document.getElementById('pdfExportPath');
       const select = document.getElementById('lastImportedSelect');
       const goaffproAPIKeyInput = document.getElementById('goaffproAPIKey');
       const contactEmailInput = document.getElementById('contactEmail');
@@ -1778,11 +1762,10 @@
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
       const emailTemplateEditor = document.getElementById('emailTemplateEditor');
       const status = document.getElementById('pollStatus');
-      if (!input || !status || !select) return;
+      if (!status || !select) return;
       try {
         const beforeSnapshot = settingsSnapshot || buildSettingsSnapshot();
         const data = await apiPost('/api/settings', {
-          pdfExportPath: input.value,
           lastImportedComission: select.value,
           goaffproAPIKey: goaffproAPIKeyInput ? goaffproAPIKeyInput.value : '',
           contactEmail: contactEmailInput ? contactEmailInput.value : '',
@@ -1810,7 +1793,6 @@
           eInvoiceBankAccountHolder: document.getElementById('eInvoiceBankAccountHolder')?.value || '',
           eInvoicePaymentTerms: document.getElementById('eInvoicePaymentTerms')?.value || ''
         });
-        input.value = data.pdfExportPath || input.value;
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || smtpHostInput.value;
@@ -1987,7 +1969,6 @@
 
     function buildSettingsSnapshot() {
       return {
-        pdfExportPath: (document.getElementById('pdfExportPath')?.value || '').trim(),
         lastImportedComission: (document.getElementById('lastImportedSelect')?.value || '').trim(),
         goaffproAPIKey: (document.getElementById('goaffproAPIKey')?.value || '').trim(),
         contactEmail: (document.getElementById('contactEmail')?.value || '').trim(),
@@ -2026,7 +2007,7 @@
     }
 
     function wireSettingsDirtyTracking() {
-      const ids = ['pdfExportPath','lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
+      const ids = ['lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
       ids.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -2126,7 +2107,6 @@
     async function exportSelectedInvoiceDetailsPdfs() {
       const status = document.getElementById('pollStatus');
       const filesBox = document.getElementById('exportedFiles');
-      const input = document.getElementById('pdfExportPath');
       const rows = tableState.rows.filter(row => tableState.selected.has(rowKey(row)));
       const paymentIds = [...new Set(rows.map(row => row.paymentId).filter(Boolean))];
 
@@ -2152,10 +2132,8 @@
         try {
           const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
             paymentId,
-            pdfExportPath: input ? input.value : '',
             includeEInvoiceArtifacts: !!document.getElementById('includeEInvoiceArtifacts')?.checked
           });
-          if (input && data.pdfExportPath) input.value = data.pdfExportPath;
           if (data.file) createdFiles.push(data.file);
           if (data.jsonFile) createdFiles.push(data.jsonFile);
           if (data.zugferdFile) createdFiles.push(data.zugferdFile);
@@ -2186,7 +2164,6 @@
 
     async function loadInvoiceDetailsPdf(paymentId) {
       const status = document.getElementById('pollStatus');
-      const input = document.getElementById('pdfExportPath');
       try {
         if (shouldSendEmails() && getEmailRecipientMode() === 'advisor') {
           const confirmed = window.confirm('Die E-Mail wird an die Beraterinnen-Adresse gesendet. Möchtest du fortfahren?');
@@ -2197,10 +2174,8 @@
         }
         const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
           paymentId,
-          pdfExportPath: input ? input.value : '',
           includeEInvoiceArtifacts: !!document.getElementById('includeEInvoiceArtifacts')?.checked
         });
-        if (input && data.pdfExportPath) input.value = data.pdfExportPath;
         await loadMailLog();
         renderTable();
         status.textContent = data.opened
@@ -2509,44 +2484,6 @@
       pollIntervalId = window.setInterval(pollOnce, 60000);
     }
 
-    async function pickFolder() {
-      const input = document.getElementById('pdfExportPath');
-      const hiddenPicker = document.getElementById('folderPickerInput');
-      if (!input) return;
-
-      if (window.showDirectoryPicker) {
-        try {
-          const handle = await window.showDirectoryPicker();
-          if (handle && handle.name) {
-            const guess = input.value || '';
-            const base = guess.includes('\\') ? guess.substring(0, Math.max(0, guess.lastIndexOf('\\'))) : '';
-            input.value = base ? `${base}\\${handle.name}` : handle.name;
-          }
-          return;
-        } catch (_) {}
-      }
-
-      if (hiddenPicker) {
-        hiddenPicker.click();
-      }
-    }
-
-    function wireFolderPickerFallback() {
-      const hiddenPicker = document.getElementById('folderPickerInput');
-      const input = document.getElementById('pdfExportPath');
-      if (!hiddenPicker || !input) return;
-
-      hiddenPicker.addEventListener('change', (e) => {
-        const file = e.target.files && e.target.files[0];
-        if (!file || !file.webkitRelativePath) return;
-        const topFolder = file.webkitRelativePath.split('/')[0];
-        const current = input.value || '';
-        const base = current.includes('\\') ? current.substring(0, Math.max(0, current.lastIndexOf('\\'))) : '';
-        input.value = base ? `${base}\\${topFolder}` : topFolder;
-      });
-    }
-
-
     function canSeeDepartment(dep) {
       if (!currentUser) return false;
       if (currentUser.isAdmin) return true;
@@ -2724,7 +2661,6 @@
         const pollingBtn = document.getElementById('togglePollingBtn');
         const saveBtn = document.getElementById('saveSettingsBtn');
         const emailDesignerSaveBtn = document.getElementById('emailDesignerSaveBtn');
-        const pickBtn = document.getElementById('pickFolderBtn');
         const exportInvoiceDetailsBtn = document.getElementById('exportInvoiceDetailsBtn');
         const addLatestCommissionBtn = document.getElementById('addLatestCommissionBtn');
         const rebuildCommissionHistoryBtn = document.getElementById('rebuildCommissionHistoryBtn');
@@ -2737,7 +2673,6 @@
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
         if (emailDesignerSaveBtn) emailDesignerSaveBtn.addEventListener('click', saveSettings);
-        if (pickBtn) pickBtn.addEventListener('click', pickFolder);
         if (exportInvoiceDetailsBtn) exportInvoiceDetailsBtn.addEventListener('click', exportSelectedInvoiceDetailsPdfs);
         if (addLatestCommissionBtn) addLatestCommissionBtn.addEventListener('click', addLatestCommission);
         if (rebuildCommissionHistoryBtn) rebuildCommissionHistoryBtn.addEventListener('click', rebuildCommissionHistoryFromPayments);
@@ -2756,7 +2691,6 @@
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.addEventListener('change', applyAdvisorRecipientUiState);
 
         wireSettingsDirtyTracking();
-        wireFolderPickerFallback();
         wireMainSectionTabs();
         wireValidationSubtabs();
         wireAnalyticsSubtabs();
