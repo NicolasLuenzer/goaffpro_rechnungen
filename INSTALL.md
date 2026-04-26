@@ -14,7 +14,11 @@ git clone https://github.com/NicolasLuenzer/goaffpro_rechnungen.git
 cd goaffpro_rechnungen
 ```
 
-## 2. Secrets in `.env` hinterlegen
+## 2. Secrets bereitstellen
+
+Es gibt zwei Wege, je nach Deployment-Methode:
+
+### Variante A: CLI / SSH (mit `.env`-Datei)
 
 Kopiere `.env.example` zu `.env` und trage die echten Zugangsdaten ein:
 
@@ -23,16 +27,31 @@ cp .env.example .env
 nano .env
 ```
 
-Inhalt der `.env` (Beispiel):
+Inhalt der `.env`:
 
 ```env
-GOAFFPRO_API_KEY=91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845
-ERPNEXT_API_KEY=af2abd731744f38
-ERPNEXT_API_SECRET=463fcff988cdd6d
-SMTP_PASSWORD=md-qj1uI63hpGjrtf7ojwrLGg
+GOAFFPRO_API_KEY=<DEIN_GOAFFPRO_KEY>
+ERPNEXT_API_KEY=<DEIN_ERPNEXT_KEY>
+ERPNEXT_API_SECRET=<DEIN_ERPNEXT_SECRET>
+SMTP_PASSWORD=<DEIN_SMTP_PASSWORT>
 AUTH_SECRET=<langer-zufaelliger-string>
 ADMIN_PASSWORD=<sicheres-admin-passwort>
 ```
+
+### Variante B: Portainer (Stack via Git Repository)
+
+Im Stack-Erstellungsformular von Portainer **nach unten scrollen** zum Abschnitt **"Environment variables"**. Dort die 6 Variablen einzeln eintragen:
+
+| Name | Wert |
+|------|------|
+| `GOAFFPRO_API_KEY` | dein Key |
+| `ERPNEXT_API_KEY` | dein Key |
+| `ERPNEXT_API_SECRET` | dein Secret |
+| `SMTP_PASSWORD` | dein Passwort |
+| `AUTH_SECRET` | langer zufaelliger String |
+| `ADMIN_PASSWORD` | sicheres Admin-Passwort |
+
+Portainer injiziert diese in den Container — die `.env`-Datei wird dann nicht benoetigt (`env_file` ist optional).
 
 > **Wichtig:** `.env` enthaelt sensible Zugangsdaten und wird NICHT ins Git-Repository aufgenommen.
 

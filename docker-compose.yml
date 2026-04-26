@@ -5,7 +5,8 @@ services:
     ports:
       - "8090:8080"
     env_file:
-      - .env
+      - path: .env
+        required: false
     volumes:
       - ./config/config.properties:/app/config/config.properties
       - ./docker-data/exports:/app/exports
