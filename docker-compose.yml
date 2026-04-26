@@ -4,12 +4,15 @@ services:
     container_name: goaffpro-rechnungen
     ports:
       - "8090:8080"
-    env_file:
-      - path: .env
-        required: false
     volumes:
       - ./config/config.properties:/app/config/config.properties
       - ./docker-data/exports:/app/exports
     environment:
       - TZ=Europe/Berlin
+      - GOAFFPRO_API_KEY=${GOAFFPRO_API_KEY:-}
+      - ERPNEXT_API_KEY=${ERPNEXT_API_KEY:-}
+      - ERPNEXT_API_SECRET=${ERPNEXT_API_SECRET:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - AUTH_SECRET=${AUTH_SECRET:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
     restart: unless-stopped
