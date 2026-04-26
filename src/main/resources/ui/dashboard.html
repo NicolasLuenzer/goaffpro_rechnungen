@@ -448,89 +448,6 @@
       </div>
     </div>
 
-    <div class="settings-group" style="background:#fff;max-width:1200px;margin-bottom:16px;">
-      <h3>ERPNext</h3>
-      <div class="toolbar">
-        <label for="erpnextApiKey">API-Schlüssel:</label>
-        <input id="erpnextApiKey" type="password" placeholder="z. B. abc123..." style="min-width:320px;" />
-      </div>
-      <div class="toolbar">
-        <label for="erpnextApiSecret">API-Geheimnis:</label>
-        <input id="erpnextApiSecret" type="password" placeholder="(unverändert lassen zum Beibehalten)" style="min-width:320px;" />
-      </div>
-    </div>
-
-    <div class="settings-group" id="adminUserMgmtGroup" style="background:#fff;max-width:1200px;">
-      <h3 id="userFormTitle">Neuen Benutzer anlegen</h3>
-      <input id="editUserUsername" type="hidden" value="" />
-      <div class="toolbar">
-        <label>Username:</label>
-        <input id="newUserUsername" type="text" placeholder="Username" style="min-width:150px;" />
-        <label>Vorname:</label>
-        <input id="newUserFirstName" type="text" placeholder="Vorname" style="min-width:120px;" />
-        <label>Nachname:</label>
-        <input id="newUserLastName" type="text" placeholder="Nachname" style="min-width:120px;" />
-      </div>
-      <div class="toolbar">
-        <label>E-Mail:</label>
-        <input id="newUserEmail" type="email" placeholder="E-Mail" style="min-width:200px;" />
-        <label>Telefon:</label>
-        <input id="newUserPhone" type="text" placeholder="Telefon" style="min-width:120px;" />
-        <span style="display:inline-flex;gap:10px;align-items:center;">
-          <label style="font-weight:normal;display:inline-flex;align-items:center;gap:4px;"><input id="deptVEMMiNA" type="checkbox" value="VEMMINA" /> VEMMiNA</label>
-        </span>
-        <label><input id="newUserIsAdmin" type="checkbox" /> Admin</label>
-      </div>
-      <div id="userCreateButtons" class="toolbar">
-        <button id="createUserBtn" class="secondary" type="button">Benutzer anlegen</button>
-      </div>
-      <div id="userEditButtons" class="toolbar" style="display:none;">
-        <button id="updateUserBtn" class="secondary" type="button">Änderungen speichern</button>
-        <button id="deleteUserBtn" class="danger" type="button">Benutzer löschen</button>
-        <button id="cancelEditUserBtn" type="button" style="background:var(--clr-muted);">Abbrechen</button>
-      </div>
-      <div id="userPasswordSection" style="display:none;">
-        <div class="toolbar" style="margin-top:4px;padding-top:10px;border-top:1px solid var(--clr-border-neutral);">
-          <label>Neues Passwort (leer = zufällig):</label>
-          <input id="resetUserPassword" type="text" placeholder="Neues Passwort" style="min-width:240px;" />
-          <button id="resetUserPasswordBtn" class="danger" type="button">Passwort zurücksetzen</button>
-        </div>
-      </div>
-      <p id="usersAdminStatus" class="status"></p>
-
-      <div style="margin-top:18px;border-top:1px solid var(--clr-border-neutral);padding-top:14px;">
-        <div class="toolbar" style="margin-bottom:8px;">
-          <strong style="font-size:14px;color:var(--clr-accent-1);">Vorhandene Benutzer</strong>
-          <button id="reloadUsersBtn" class="secondary" type="button" style="padding:6px 14px;font-size:12px;">Benutzer laden</button>
-        </div>
-        <table class="user-admin-table">
-          <thead><tr>
-            <th style="cursor:default;">Username</th>
-            <th style="cursor:default;">Vorname</th>
-            <th style="cursor:default;">Nachname</th>
-            <th style="cursor:default;">E-Mail</th>
-            <th style="cursor:default;">Telefon</th>
-            <th style="cursor:default;">Abteilung</th>
-            <th style="cursor:default;">Admin</th>
-          </tr></thead>
-          <tbody id="usersAdminBody">
-            <tr id="usersAdminEmptyRow"><td colspan="7" style="text-align:center;color:#9ca3af;font-style:italic;padding:18px;">Klicken Sie auf „Benutzer laden" um vorhandene Benutzer anzuzeigen.</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-
-  <div id="loginOverlay" class="login-overlay">
-    <div class="login-card">
-      <form onsubmit="return false;" autocomplete="on">
-      <h3 style="margin-top:0">Anmeldung</h3>
-      <div class="toolbar"><label for="loginUsername">Benutzername</label><input id="loginUsername" type="text" autocomplete="username" style="min-width:100%"/></div>
-      <div class="toolbar"><label for="loginPassword">Passwort</label><input id="loginPassword" type="password" autocomplete="current-password" style="min-width:100%"/></div>
-      <div class="toolbar"><button id="loginBtn" type="button">Anmelden</button><span id="loginStatus" class="status"></span></div>
-      </form>
-      <div id="adminUsersBox" style="display:none;margin-top:12px;"></div>
-    </div>
   </div>
 
   <script>
@@ -555,23 +472,19 @@
     let mailLogByPayment = new Map();
     let reminderLogByAdvisor = new Map();
     let analyticsLastPayload = null;
-    let currentUser = null;
+    let currentUser = { isAdmin: true, department: 'ALL' };
     let activeArea = "VEMMiNA";
 
     async function apiGet(path) {
-      const token = localStorage.getItem("authToken") || "";
-      const response = await fetch(`${API_BASE}${path}`, { headers: token ? { "X-Auth-Token": token } : {} });
+      const response = await fetch(`${API_BASE}${path}`);
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'API-Fehler');
       return json;
     }
 
     async function apiPost(path, payload) {
-      const token = localStorage.getItem("authToken") || "";
-      const headers = { 'Content-Type': 'application/json' };
-      if (token) headers['X-Auth-Token'] = token;
       const response = await fetch(`${API_BASE}${path}`, {
-        method: 'POST', headers, body: JSON.stringify(payload)
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'API-Fehler');
@@ -1805,8 +1718,6 @@
         const data = await apiGet('/api/settings');
         input.value = data.pdfExportPath || 'C:\\Users\\nluenzer\\Downloads\\goaffpro';
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || '';
-        const erpnextApiKeyInput = document.getElementById('erpnextApiKey');
-        if (erpnextApiKeyInput) erpnextApiKeyInput.value = data.erpnextApiKey || '';
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || '';
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || '587';
@@ -1874,8 +1785,6 @@
           pdfExportPath: input.value,
           lastImportedComission: select.value,
           goaffproAPIKey: goaffproAPIKeyInput ? goaffproAPIKeyInput.value : '',
-          erpnextApiKey: document.getElementById('erpnextApiKey')?.value || '',
-          erpnextApiSecret: document.getElementById('erpnextApiSecret')?.value || '',
           contactEmail: contactEmailInput ? contactEmailInput.value : '',
           smtpHost: smtpHostInput ? smtpHostInput.value : '',
           smtpPort: smtpPortInput ? smtpPortInput.value : '587',
@@ -1903,10 +1812,6 @@
         });
         input.value = data.pdfExportPath || input.value;
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
-        const erpnextKeyEl = document.getElementById('erpnextApiKey');
-        if (erpnextKeyEl && data.erpnextApiKey !== undefined) erpnextKeyEl.value = data.erpnextApiKey;
-        const erpnextSecretEl = document.getElementById('erpnextApiSecret');
-        if (erpnextSecretEl) erpnextSecretEl.value = '';
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || smtpHostInput.value;
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || smtpPortInput.value || '587';
@@ -2791,187 +2696,8 @@
 
     function renderAreaTabs() { renderSideNav(); }
 
-    async function showLoginAndAuthenticate() {
-      const overlay = document.getElementById('loginOverlay');
-      const btn = document.getElementById('loginBtn');
-      const status = document.getElementById('loginStatus');
-      const u = document.getElementById('loginUsername');
-      const p = document.getElementById('loginPassword');
-      overlay.style.display = 'flex';
-      const tryExisting = localStorage.getItem('authToken');
-      if (tryExisting) {
-        try {
-          const me = await apiGet('/api/auth/me');
-          currentUser = me.user || null;
-          overlay.style.display = 'none';
-          return;
-        } catch (_) {}
-      }
-      await new Promise(resolve => {
-        btn.addEventListener('click', async () => {
-          try {
-            status.textContent = 'Anmeldung läuft...';
-            const data = await apiPost('/api/auth/login', { username: u.value || '', password: p.value || '' });
-            localStorage.setItem('authToken', data.token || '');
-            currentUser = data.user || null;
-            status.textContent = 'Erfolgreich angemeldet.';
-            overlay.style.display = 'none';
-            resolve();
-          } catch (e) {
-            status.textContent = `Login fehlgeschlagen: ${e.message}`;
-          }
-        }, { once: true });
-      });
-    }
-
-
-    async function loadAdminUsers() {
-      if (!currentUser?.isAdmin) return;
-      const body = document.getElementById('usersAdminBody');
-      const status = document.getElementById('usersAdminStatus');
-      if (!body) return;
-      try {
-        const data = await apiGet('/api/users');
-        const rows = Array.isArray(data.users) ? data.users : [];
-        const selectedUsername = document.getElementById('editUserUsername')?.value || '';
-        if (rows.length === 0) {
-          body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#9ca3af;font-style:italic;padding:18px;">Keine Benutzer vorhanden.</td></tr>';
-        } else {
-          body.innerHTML = rows.map(u => `
-            <tr class="user-row${u.username === selectedUsername ? ' user-row-selected' : ''}" data-username="${escapeHtml(u.username || '')}">
-              <td>${escapeHtml(u.username || '')}</td>
-              <td>${escapeHtml(u.firstName || '')}</td>
-              <td>${escapeHtml(u.lastName || '')}</td>
-              <td>${escapeHtml(u.email || '')}</td>
-              <td>${escapeHtml(u.phone || '')}</td>
-              <td>${renderDeptPills(u.department || '')}</td>
-              <td>${u.isAdmin ? 'ja' : 'nein'}</td>
-            </tr>`).join('');
-          body.querySelectorAll('tr.user-row').forEach(tr => {
-            tr.addEventListener('click', () => {
-              const username = tr.dataset.username;
-              const user = rows.find(u => u.username === username);
-              if (user) loadUserIntoForm(user);
-            });
-          });
-        }
-        if (status) status.textContent = `${rows.length} Benutzer geladen.`;
-      } catch (e) { if (status) status.textContent = `Fehler: ${e.message}`; }
-    }
-
-    function loadUserIntoForm(user) {
-      document.getElementById('editUserUsername').value = user.username || '';
-      document.getElementById('newUserUsername').value = user.username || '';
-      document.getElementById('newUserUsername').readOnly = true;
-      document.getElementById('newUserUsername').style.background = '#f3f4f6';
-      document.getElementById('newUserFirstName').value = user.firstName || '';
-      document.getElementById('newUserLastName').value = user.lastName || '';
-      document.getElementById('newUserEmail').value = user.email || '';
-      document.getElementById('newUserPhone').value = user.phone || '';
-      setDepartmentsInForm(user.department || 'VEMMINA');
-      const adminCheck = document.getElementById('newUserIsAdmin');
-      if (adminCheck) adminCheck.checked = !!user.isAdmin;
-      document.getElementById('userFormTitle').textContent = `Benutzer bearbeiten: ${user.username}`;
-      document.getElementById('userCreateButtons').style.display = 'none';
-      document.getElementById('userEditButtons').style.display = '';
-      document.getElementById('userPasswordSection').style.display = '';
-      document.getElementById('resetUserPassword').value = '';
-      document.getElementById('usersAdminStatus').textContent = '';
-      document.querySelectorAll('#usersAdminBody tr.user-row').forEach(tr =>
-        tr.classList.toggle('user-row-selected', tr.dataset.username === user.username));
-    }
-
-    function clearUserForm() {
-      document.getElementById('editUserUsername').value = '';
-      document.getElementById('newUserUsername').value = '';
-      document.getElementById('newUserUsername').readOnly = false;
-      document.getElementById('newUserUsername').style.background = '';
-      document.getElementById('newUserFirstName').value = '';
-      document.getElementById('newUserLastName').value = '';
-      document.getElementById('newUserEmail').value = '';
-      document.getElementById('newUserPhone').value = '';
-      setDepartmentsInForm('VEMMINA');
-      const adminCheck = document.getElementById('newUserIsAdmin');
-      if (adminCheck) adminCheck.checked = false;
-      document.getElementById('userFormTitle').textContent = 'Neuen Benutzer anlegen';
-      document.getElementById('userCreateButtons').style.display = '';
-      document.getElementById('userEditButtons').style.display = 'none';
-      document.getElementById('userPasswordSection').style.display = 'none';
-      document.getElementById('resetUserPassword').value = '';
-      document.getElementById('usersAdminStatus').textContent = '';
-      document.querySelectorAll('#usersAdminBody tr.user-row').forEach(tr => tr.classList.remove('user-row-selected'));
-    }
-
-    async function updateAdminUser() {
-      const status = document.getElementById('usersAdminStatus');
-      const username = document.getElementById('editUserUsername')?.value || '';
-      if (!username) return;
-      try {
-        await apiPost('/api/users', {
-          action: 'update',
-          username,
-          firstName: document.getElementById('newUserFirstName')?.value || '',
-          lastName: document.getElementById('newUserLastName')?.value || '',
-          email: document.getElementById('newUserEmail')?.value || '',
-          phone: document.getElementById('newUserPhone')?.value || '',
-          department: getDepartmentsFromForm(),
-          isAdmin: !!document.getElementById('newUserIsAdmin')?.checked
-        });
-        if (status) status.textContent = `Benutzer "${username}" aktualisiert.`;
-        await loadAdminUsers();
-      } catch (e) { if (status) status.textContent = `Fehler: ${e.message}`; }
-    }
-
-    async function deleteAdminUser() {
-      const username = document.getElementById('editUserUsername')?.value || '';
-      if (!username) return;
-      const status = document.getElementById('usersAdminStatus');
-      if (!confirm(`Benutzer "${username}" wirklich löschen?`)) return;
-      try {
-        await apiPost('/api/users', { action: 'delete', username });
-        if (status) status.textContent = `Benutzer "${username}" gelöscht.`;
-        clearUserForm();
-        await loadAdminUsers();
-      } catch (e) { if (status) status.textContent = `Fehler: ${e.message}`; }
-    }
-
-    async function createAdminUser() {
-      const status = document.getElementById('usersAdminStatus');
-      try {
-        await apiPost('/api/users', {
-          action: 'create',
-          username: document.getElementById('newUserUsername')?.value || '',
-          firstName: document.getElementById('newUserFirstName')?.value || '',
-          lastName: document.getElementById('newUserLastName')?.value || '',
-          email: document.getElementById('newUserEmail')?.value || '',
-          phone: document.getElementById('newUserPhone')?.value || '',
-          department: getDepartmentsFromForm(),
-          isAdmin: !!document.getElementById('newUserIsAdmin')?.checked
-        });
-        if (status) status.textContent = 'Benutzer angelegt. E-Mail mit Passwortwechsel wurde versendet (wenn SMTP konfiguriert).';
-        clearUserForm();
-        await loadAdminUsers();
-      } catch (e) { if (status) status.textContent = `Fehler: ${e.message}`; }
-    }
-
-    async function resetAdminUserPassword() {
-      const status = document.getElementById('usersAdminStatus');
-      const username = document.getElementById('editUserUsername')?.value || '';
-      if (!username) { if (status) status.textContent = 'Kein Benutzer ausgewählt.'; return; }
-      try {
-        await apiPost('/api/users', {
-          action: 'resetPassword',
-          username,
-          newPassword: document.getElementById('resetUserPassword')?.value || ''
-        });
-        if (status) status.textContent = `Passwort für "${username}" zurückgesetzt.`;
-        document.getElementById('resetUserPassword').value = '';
-      } catch (e) { if (status) status.textContent = `Fehler: ${e.message}`; }
-    }
-
     async function init() {
       try {
-        await showLoginAndAuthenticate();
         const mainExecutable = { id: 'mainprovisionengoaffpro', name: 'MainProvisionenGoaffpro', path: '' };
         if (canSeeDepartment('VEMMINA')) {
           createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
@@ -2993,10 +2719,7 @@
         });
         document.getElementById('headerSettingsBtn')?.addEventListener('click', openSettingsOverlay);
         document.getElementById('settingsOverlayCloseBtn')?.addEventListener('click', closeSettingsOverlay);
-        document.getElementById('settingsOverlaySaveBtn')?.addEventListener('click', async () => {
-          await saveSettings();
-          await loadAdminUsers();
-        });
+        document.getElementById('settingsOverlaySaveBtn')?.addEventListener('click', saveSettings);
 
         const pollingBtn = document.getElementById('togglePollingBtn');
         const saveBtn = document.getElementById('saveSettingsBtn');
@@ -3011,12 +2734,6 @@
         const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
         const expandAllTreeBtn = document.getElementById('expandAllTreeBtn');
         const collapseAllTreeBtn = document.getElementById('collapseAllTreeBtn');
-        const reloadUsersBtn = document.getElementById('reloadUsersBtn');
-        const createUserBtn = document.getElementById('createUserBtn');
-        const updateUserBtn = document.getElementById('updateUserBtn');
-        const deleteUserBtn = document.getElementById('deleteUserBtn');
-        const cancelEditUserBtn = document.getElementById('cancelEditUserBtn');
-        const resetUserPasswordBtn = document.getElementById('resetUserPasswordBtn');
         if (pollingBtn) pollingBtn.addEventListener('click', togglePolling);
         if (saveBtn) saveBtn.addEventListener('click', saveSettings);
         if (emailDesignerSaveBtn) emailDesignerSaveBtn.addEventListener('click', saveSettings);
@@ -3030,12 +2747,6 @@
         if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
         if (expandAllTreeBtn) expandAllTreeBtn.addEventListener('click', expandAllValidationTree);
         if (collapseAllTreeBtn) collapseAllTreeBtn.addEventListener('click', collapseAllValidationTree);
-        if (reloadUsersBtn) reloadUsersBtn.addEventListener('click', loadAdminUsers);
-        if (createUserBtn) createUserBtn.addEventListener('click', createAdminUser);
-        if (updateUserBtn) updateUserBtn.addEventListener('click', updateAdminUser);
-        if (deleteUserBtn) deleteUserBtn.addEventListener('click', deleteAdminUser);
-        if (cancelEditUserBtn) cancelEditUserBtn.addEventListener('click', clearUserForm);
-        if (resetUserPasswordBtn) resetUserPasswordBtn.addEventListener('click', resetAdminUserPassword);
 
         const emailRecipientContactInput = document.getElementById('emailRecipientContact');
         const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
@@ -3059,9 +2770,6 @@
         await loadSettings();
         await loadMailLog();
         await loadReminderLog();
-        if (!currentUser?.isAdmin) {
-          document.getElementById('headerSettingsBtn').style.display = "none";
-        }
         updateEmptyTablesVisibility(document);
       } catch (error) {
         document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;

@@ -61,12 +61,6 @@ import java.util.Set;
 import java.security.MessageDigest;
 import java.util.stream.Collectors;
 
-import javax.crypto.Cipher;
-import javax.crypto.spec.GCMParameterSpec;
-import javax.crypto.spec.SecretKeySpec;
-import java.security.SecureRandom;
-import java.util.Base64;
-import java.util.concurrent.ConcurrentHashMap;
 
 public class WebUiServer {
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
@@ -87,10 +81,6 @@ public class WebUiServer {
             System.getenv().getOrDefault("PDF_EXPORT_PATH", "C:\\Users\\nluenzer\\Downloads\\goaffpro");
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
     private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
-    private static final String USER_STORE_FILENAME = "goaffpro_users.enc";
-    private static final String AUTH_SECRET_DEFAULT = "goaffpro-auth-secret";
-    private static final Map<String, SessionUser> ACTIVE_SESSIONS = new ConcurrentHashMap<>();
-    private static final SecureRandom SECURE_RANDOM = new SecureRandom();
     private static final List<String> DEFAULT_COMMISSION_HISTORY = List.of("2103705", "2167905", "2190357", "2230376", "2336836", "2421355", "2497986", "2565325");
     private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
 
@@ -155,150 +145,12 @@ public class WebUiServer {
         server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
         server.createContext("/api/validation/send-reminder", new ValidationReminderMailHandler());
         server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
-        server.createContext("/api/auth/login", new AuthLoginHandler());
-        server.createContext("/api/auth/me", new AuthMeHandler());
-        server.createContext("/api/auth/logout", new AuthLogoutHandler());
-        server.createContext("/api/users", new UsersHandler());
         server.setExecutor(null);
         server.start();
 
         System.out.println("Web UI Server gestartet auf http://localhost:8080");
     }
 
-
-    private static class AuthLoginHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
-            try {
-                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-                String username = asText(body, "username").trim();
-                String password = asText(body, "password");
-                Properties config = loadConfig();
-                List<UserAccount> users = loadUserAccounts(config);
-                UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(username)).findFirst().orElse(null);
-                if (u == null || !verifyPassword(password, u.passwordSalt, u.passwordHash)) { sendResponse(exchange, 401, "application/json", "{\"error\":\"Ungültige Login-Daten\"}"); return; }
-                String token = generateToken();
-                ACTIVE_SESSIONS.put(token, new SessionUser(u.username, u.isAdmin, u.department));
-                Map<String,Object> payload = new LinkedHashMap<>();
-                payload.put("token", token);
-                payload.put("user", userToMap(u));
-                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
-            } catch (Exception e) { sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}"); }
-        }
-    }
-
-    private static class AuthMeHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
-            SessionUser s = requireSession(exchange);
-            if (s == null) return;
-            try {
-                Properties config = loadConfig();
-                List<UserAccount> users = loadUserAccounts(config);
-                UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(s.username)).findFirst().orElse(null);
-                if (u == null) { sendResponse(exchange, 401, "application/json", "{\"error\":\"Session ungültig\"}"); return; }
-                Map<String,Object> payload = new LinkedHashMap<>();
-                payload.put("user", userToMap(u));
-                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
-            } catch (Exception e) { sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}"); }
-        }
-    }
-
-    private static class AuthLogoutHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
-            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
-            String token = Objects.toString(exchange.getRequestHeaders().getFirst("X-Auth-Token"), "").trim();
-            if (!token.isBlank()) ACTIVE_SESSIONS.remove(token);
-            sendResponse(exchange, 200, "application/json", "{}");
-        }
-    }
-
-    private static class UsersHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 200, "application/json", "{}"); return; }
-            SessionUser su = requireSession(exchange);
-            if (su == null) return;
-            if (!su.isAdmin) { sendResponse(exchange, 403, "application/json", "{\"error\":\"Nur Admin\"}"); return; }
-            try {
-                Properties config = loadConfig();
-                if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-                    List<Map<String,Object>> users = loadUserAccounts(config).stream().map(WebUiServer::userToMap).collect(Collectors.toList());
-                    Map<String,Object> p = new HashMap<>(); p.put("users", users);
-                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(p));
-                    return;
-                }
-                if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) { sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}"); return; }
-                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
-                String action = asText(body, "action").trim();
-                List<UserAccount> users = loadUserAccounts(config);
-                if ("create".equals(action)) {
-                    String username = asText(body, "username").trim();
-                    if (username.isBlank()) { sendResponse(exchange, 400, "application/json", "{\"error\":\"username fehlt\"}"); return; }
-                    if (users.stream().anyMatch(u -> u.username.equalsIgnoreCase(username))) { sendResponse(exchange, 400, "application/json", "{\"error\":\"Benutzer existiert bereits\"}"); return; }
-                    UserAccount u = new UserAccount();
-                    u.username = username;
-                    u.firstName = asText(body, "firstName").trim();
-                    u.lastName = asText(body, "lastName").trim();
-                    u.email = asText(body, "email").trim();
-                    u.phone = asText(body, "phone").trim();
-                    u.department = normalizeDepartment(asText(body, "department").trim());
-                    u.isAdmin = body.has("isAdmin") && body.get("isAdmin").asBoolean(false);
-                    String temp = randomPassword();
-                    String[] pw = hashPassword(temp);
-                    u.passwordSalt = pw[0]; u.passwordHash = pw[1];
-                    u.forcePasswordChange = true;
-                    users.add(u);
-                    saveUserAccounts(config, users);
-                    trySendPasswordChangeMail(u.email, username, temp, config);
-                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message","Benutzer angelegt")));
-                    return;
-                }
-                if ("resetPassword".equals(action)) {
-                    String username = asText(body, "username").trim();
-                    String newPassword = asText(body, "newPassword");
-                    UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(username)).findFirst().orElse(null);
-                    if (u == null) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Benutzer nicht gefunden\"}"); return; }
-                    if (newPassword.isBlank()) newPassword = randomPassword();
-                    String[] pw = hashPassword(newPassword);
-                    u.passwordSalt = pw[0]; u.passwordHash = pw[1];
-                    u.forcePasswordChange = true;
-                    saveUserAccounts(config, users);
-                    trySendPasswordChangeMail(u.email, u.username, newPassword, config);
-                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message","Passwort überschrieben")));
-                    return;
-                }
-                if ("update".equals(action)) {
-                    String username = asText(body, "username").trim();
-                    UserAccount u = users.stream().filter(x -> x.username.equalsIgnoreCase(username)).findFirst().orElse(null);
-                    if (u == null) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Benutzer nicht gefunden\"}"); return; }
-                    u.firstName = asText(body, "firstName").trim();
-                    u.lastName = asText(body, "lastName").trim();
-                    u.email = asText(body, "email").trim();
-                    u.phone = asText(body, "phone").trim();
-                    u.department = normalizeDepartment(asText(body, "department").trim());
-                    u.isAdmin = body.has("isAdmin") && body.get("isAdmin").asBoolean(false);
-                    saveUserAccounts(config, users);
-                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message", "Benutzer aktualisiert")));
-                    return;
-                }
-                if ("delete".equals(action)) {
-                    String username = asText(body, "username").trim();
-                    boolean removed = users.removeIf(x -> x.username.equalsIgnoreCase(username));
-                    if (!removed) { sendResponse(exchange, 404, "application/json", "{\"error\":\"Benutzer nicht gefunden\"}"); return; }
-                    saveUserAccounts(config, users);
-                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(Map.of("message", "Benutzer gelöscht")));
-                    return;
-                }
-                sendResponse(exchange, 400, "application/json", "{\"error\":\"Unbekannte Aktion\"}");
-            } catch (Exception e) { sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}"); }
-        }
-    }
 
     private static class UiHandler implements HttpHandler {
         @Override
@@ -505,7 +357,6 @@ public class WebUiServer {
                 String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH);
                 String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
                 String goaffproAPIKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
-                String erpnextApiKey = getSecretOrConfig(config, "ERPNEXT_API_KEY", "erpnextApiKey", "").trim();
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 String smtpHost = Objects.toString(config.getProperty("smtpHost"), "").trim();
                 String smtpPort = Objects.toString(config.getProperty("smtpPort"), "587").trim();
@@ -539,7 +390,6 @@ public class WebUiServer {
                 payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 payload.put("lastImportedComission", activeCommission);
                 payload.put("goaffproAPIKey", goaffproAPIKey);
-                payload.put("erpnextApiKey", erpnextApiKey);
                 payload.put("contactEmail", contactEmail);
                 payload.put("smtpHost", smtpHost);
                 payload.put("smtpPort", smtpPort);
@@ -568,8 +418,6 @@ public class WebUiServer {
                     String newPath = asText(body, "pdfExportPath").trim();
                     String selectedCommission = asText(body, "lastImportedComission").trim();
                     String goaffproAPIKey = asText(body, "goaffproAPIKey").trim();
-                    String erpnextApiKey = asText(body, "erpnextApiKey").trim();
-                    String erpnextApiSecret = asText(body, "erpnextApiSecret").trim();
                     String contactEmail = asText(body, "contactEmail").trim();
                     String smtpHost = asText(body, "smtpHost").trim();
                     String smtpPort = asText(body, "smtpPort").trim();
@@ -604,10 +452,6 @@ public class WebUiServer {
                     config.setProperty("pdfExportPath", chosenDir.toString());
                     if (!goaffproAPIKey.isEmpty()) {
                         config.setProperty("goaffproAPIKey", goaffproAPIKey);
-                    }
-                    config.setProperty("erpnextApiKey", erpnextApiKey);
-                    if (!erpnextApiSecret.isBlank()) {
-                        config.setProperty("erpnextApiSecret", erpnextApiSecret);
                     }
                     if (!selectedCommission.isEmpty()) {
                         config.setProperty("lastImportedComission", selectedCommission);
@@ -661,7 +505,6 @@ public class WebUiServer {
                     payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                     payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
                     payload.put("goaffproAPIKey", getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY));
-                    payload.put("erpnextApiKey", getSecretOrConfig(config, "ERPNEXT_API_KEY", "erpnextApiKey", ""));
                     payload.put("contactEmail", Objects.toString(config.getProperty("contactEmail"), ""));
                     payload.put("smtpHost", Objects.toString(config.getProperty("smtpHost"), ""));
                     payload.put("smtpPort", Objects.toString(config.getProperty("smtpPort"), "587"));
@@ -3659,182 +3502,6 @@ public class WebUiServer {
     }
 
 
-    private static class SessionUser {
-        final String username;
-        final boolean isAdmin;
-        final String department;
-        SessionUser(String username, boolean isAdmin, String department) { this.username = username; this.isAdmin = isAdmin; this.department = department; }
-    }
-
-    private static class UserAccount {
-        public String username;
-        public String firstName;
-        public String lastName;
-        public String email;
-        public String phone;
-        public String department;
-        public boolean isAdmin;
-        public boolean forcePasswordChange;
-        public String passwordSalt;
-        public String passwordHash;
-    }
-
-    private static SessionUser requireSession(HttpExchange exchange) throws IOException {
-        String token = Objects.toString(exchange.getRequestHeaders().getFirst("X-Auth-Token"), "").trim();
-        SessionUser su = ACTIVE_SESSIONS.get(token);
-        if (su == null) {
-            sendResponse(exchange, 401, "application/json", "{\"error\":\"Nicht angemeldet\"}");
-            return null;
-        }
-        return su;
-    }
-
-    private static Path resolveUserStorePath(Properties config) {
-        String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH).trim();
-        if (exportDir.isBlank()) exportDir = DEFAULT_PDF_EXPORT_PATH;
-        return Paths.get(exportDir).toAbsolutePath().resolve(USER_STORE_FILENAME);
-    }
-
-    private static List<UserAccount> loadUserAccounts(Properties config) throws Exception {
-        ensureUserStoreInitialized(config);
-        Path p = resolveUserStorePath(config);
-        try {
-            byte[] enc = Files.readAllBytes(p);
-            byte[] plain = decrypt(enc, getSecretOrConfig(config, "AUTH_SECRET", "authSecret", AUTH_SECRET_DEFAULT));
-            return OBJECT_MAPPER.readValue(plain, new TypeReference<List<UserAccount>>(){});
-        } catch (Exception ex) {
-            List<UserAccount> defaults = new ArrayList<>(List.of(buildDefaultAdminUser(config)));
-            saveUserAccounts(config, defaults);
-            return defaults;
-        }
-    }
-
-    private static void saveUserAccounts(Properties config, List<UserAccount> users) throws Exception {
-        Path p = resolveUserStorePath(config);
-        Files.createDirectories(p.getParent());
-        byte[] raw = OBJECT_MAPPER.writeValueAsBytes(users);
-        byte[] enc = encrypt(raw, getSecretOrConfig(config, "AUTH_SECRET", "authSecret", AUTH_SECRET_DEFAULT));
-        Files.write(p, enc, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-    }
-
-    private static void ensureUserStoreInitialized(Properties config) throws Exception {
-        if (Objects.toString(config.getProperty("adminUsername"), "").isBlank()) config.setProperty("adminUsername", "admin");
-        if (Objects.toString(config.getProperty("adminPassword"), "").isBlank()) config.setProperty("adminPassword", "admin");
-        if (Objects.toString(config.getProperty("authSecret"), "").isBlank()) config.setProperty("authSecret", AUTH_SECRET_DEFAULT);
-        Path p = resolveUserStorePath(config);
-        if (Files.exists(p)) return;
-        UserAccount admin = buildDefaultAdminUser(config);
-        saveUserAccounts(config, new ArrayList<>(List.of(admin)));
-        persistSettings(config);
-    }
-
-    private static UserAccount buildDefaultAdminUser(Properties config) {
-        UserAccount admin = new UserAccount();
-        admin.username = Objects.toString(config.getProperty("adminUsername"), "admin");
-        admin.firstName = "Admin";
-        admin.lastName = "User";
-        admin.department = "ALL";
-        admin.isAdmin = true;
-        admin.email = "";
-        admin.phone = "";
-        admin.forcePasswordChange = false;
-        String[] pw = hashPassword(getSecretOrConfig(config, "ADMIN_PASSWORD", "adminPassword", "admin"));
-        admin.passwordSalt = pw[0];
-        admin.passwordHash = pw[1];
-        return admin;
-    }
-
-    private static byte[] encrypt(byte[] plain, String secret) throws Exception {
-        byte[] key = sha256Bytes(secret.getBytes(StandardCharsets.UTF_8));
-        byte[] iv = new byte[12];
-        SECURE_RANDOM.nextBytes(iv);
-        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
-        c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
-        byte[] enc = c.doFinal(plain);
-        byte[] out = new byte[iv.length + enc.length];
-        System.arraycopy(iv, 0, out, 0, iv.length);
-        System.arraycopy(enc, 0, out, iv.length, enc.length);
-        return out;
-    }
-
-    private static byte[] decrypt(byte[] data, String secret) throws Exception {
-        byte[] key = sha256Bytes(secret.getBytes(StandardCharsets.UTF_8));
-        byte[] iv = java.util.Arrays.copyOfRange(data, 0, 12);
-        byte[] enc = java.util.Arrays.copyOfRange(data, 12, data.length);
-        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
-        c.init(Cipher.DECRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
-        return c.doFinal(enc);
-    }
-
-    private static String[] hashPassword(String password) {
-        byte[] salt = new byte[16];
-        SECURE_RANDOM.nextBytes(salt);
-        String saltB64 = Base64.getEncoder().encodeToString(salt);
-        String hash = sha256Hex(saltB64 + ":" + (password == null ? "" : password));
-        return new String[]{saltB64, hash};
-    }
-
-    private static boolean verifyPassword(String password, String saltB64, String hash) {
-        return sha256Hex(Objects.toString(saltB64, "") + ":" + (password == null ? "" : password)).equals(Objects.toString(hash, ""));
-    }
-
-    private static byte[] sha256Bytes(byte[] data) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        return digest.digest(data);
-    }
-
-    private static String generateToken() {
-        byte[] b = new byte[24];
-        SECURE_RANDOM.nextBytes(b);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
-    }
-
-    private static String randomPassword() {
-        byte[] b = new byte[9];
-        SECURE_RANDOM.nextBytes(b);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
-    }
-
-    private static final java.util.Set<String> VALID_DEPARTMENTS = java.util.Set.of("AS", "VEMMINA", "LT", "ALL");
-
-    private static String normalizeDepartment(String dep) {
-        if (dep == null || dep.isBlank()) return "VEMMINA";
-        String[] parts = dep.split("[,;\\s]+");
-        List<String> result = new ArrayList<>();
-        for (String p : parts) {
-            String d = p.trim().toUpperCase();
-            if (VALID_DEPARTMENTS.contains(d)) result.add(d);
-        }
-        if (result.isEmpty()) return "VEMMINA";
-        if (result.contains("ALL")) return "ALL";
-        return String.join(",", result);
-    }
-
-    private static Map<String, Object> userToMap(UserAccount u) {
-        Map<String,Object> m = new LinkedHashMap<>();
-        m.put("username", u.username);
-        m.put("firstName", u.firstName);
-        m.put("lastName", u.lastName);
-        m.put("email", u.email);
-        m.put("phone", u.phone);
-        m.put("department", u.department);
-        m.put("isAdmin", u.isAdmin);
-        m.put("forcePasswordChange", u.forcePasswordChange);
-        return m;
-    }
-
-    private static void trySendPasswordChangeMail(String to, String username, String tempPassword, Properties config) {
-        try {
-            if (to == null || to.isBlank()) return;
-            SmtpConfig smtpConfig = resolveSmtpConfig(config);
-            if (smtpConfig.username == null || smtpConfig.username.isBlank()) return;
-            String subject = "Zugang eingerichtet - Passwort bitte ändern";
-            String text = "Hallo " + username + "\n\nIhr Zugang wurde eingerichtet.\nTemporäres Passwort: " + tempPassword + "\nBitte melden Sie sich an und ändern Sie das Passwort umgehend.";
-            String html = "<p>Hallo " + escapeHtmlEmail(username) + ",</p><p>Ihr Zugang wurde eingerichtet.</p><p><b>Temporäres Passwort:</b> " + escapeHtmlEmail(tempPassword) + "</p><p>Bitte melden Sie sich an und ändern Sie das Passwort umgehend.</p>";
-            sendSimpleHtmlMail(to, Objects.toString(config.getProperty("emailBcc"), ""), subject, text, html, smtpConfig);
-        } catch (Exception ignored) {}
-    }
-
     private static Map<String, String> parseQueryParams(URI uri) {
         Map<String, String> query = new LinkedHashMap<>();
         if (uri == null || uri.getRawQuery() == null || uri.getRawQuery().isBlank()) return query;
@@ -3981,11 +3648,7 @@ public class WebUiServer {
 
     private static final String[][] SECRET_ENV_MAPPINGS = {
             {"GOAFFPRO_API_KEY", "goaffproAPIKey"},
-            {"ERPNEXT_API_KEY", "erpnextApiKey"},
-            {"ERPNEXT_API_SECRET", "erpnextApiSecret"},
-            {"SMTP_PASSWORD", "smtpPassword"},
-            {"AUTH_SECRET", "authSecret"},
-            {"ADMIN_PASSWORD", "adminPassword"}
+            {"SMTP_PASSWORD", "smtpPassword"}
     };
 
     private static final Map<String, String> DOT_ENV = loadDotEnvFile();

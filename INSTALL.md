@@ -31,29 +31,23 @@ Inhalt der `.env`:
 
 ```env
 GOAFFPRO_API_KEY=<DEIN_GOAFFPRO_KEY>
-ERPNEXT_API_KEY=<DEIN_ERPNEXT_KEY>
-ERPNEXT_API_SECRET=<DEIN_ERPNEXT_SECRET>
 SMTP_PASSWORD=<DEIN_SMTP_PASSWORT>
-AUTH_SECRET=<langer-zufaelliger-string>
-ADMIN_PASSWORD=<sicheres-admin-passwort>
 ```
 
 ### Variante B: Portainer (Stack via Git Repository)
 
-Im Stack-Erstellungsformular von Portainer **nach unten scrollen** zum Abschnitt **"Environment variables"**. Dort die 6 Variablen einzeln eintragen:
+Im Stack-Erstellungsformular von Portainer **nach unten scrollen** zum Abschnitt **"Environment variables"**. Dort die 2 Variablen einzeln eintragen:
 
 | Name | Wert |
 |------|------|
 | `GOAFFPRO_API_KEY` | dein Key |
-| `ERPNEXT_API_KEY` | dein Key |
-| `ERPNEXT_API_SECRET` | dein Secret |
 | `SMTP_PASSWORD` | dein Passwort |
-| `AUTH_SECRET` | langer zufaelliger String |
-| `ADMIN_PASSWORD` | sicheres Admin-Passwort |
 
-Portainer injiziert diese in den Container — die `.env`-Datei wird dann nicht benoetigt (`env_file` ist optional).
+Portainer injiziert diese in den Container.
 
 > **Wichtig:** `.env` enthaelt sensible Zugangsdaten und wird NICHT ins Git-Repository aufgenommen.
+
+> **Sicherheitshinweis:** Die App hat **keinen Login** — wer die URL erreicht, hat vollen Zugriff. Nur in vertrauenswuerdigen, internen Netzwerken betreiben.
 
 ## 3. Konfiguration (optional)
 
@@ -62,7 +56,7 @@ Die App speichert ihre Daten in **zwei Docker Named Volumes**:
 | Volume | Inhalt |
 |--------|--------|
 | `goaffpro-config` | `config.properties` (App-Einstellungen, Templates) |
-| `goaffpro-exports` | PDF-Exporte, `goaffpro_users.enc` |
+| `goaffpro-exports` | PDF-Exporte |
 
 Beim ersten Start sind die Volumes leer — die App nutzt Defaults und persistiert UI-Aenderungen automatisch in `goaffpro-config`.
 
@@ -102,7 +96,7 @@ sendEmailsEnabled=true
 eInvoiceAttachAndStoreEnabled=true
 ```
 
-> **Hinweis:** API-Keys und Passwoerter (`goaffproAPIKey`, `smtpPassword`, `erpnextApiKey`, `erpnextApiSecret`, `authSecret`, `adminPassword`) sollten NICHT in `config.properties` stehen — sie werden ueber `.env` (oder Portainer Env-Vars) gesetzt. Wenn die Env-Variable gesetzt ist, hat sie Vorrang vor dem File-Wert.
+> **Hinweis:** API-Keys und Passwoerter (`goaffproAPIKey`, `smtpPassword`) sollten NICHT in `config.properties` stehen — sie werden ueber `.env` (oder Portainer Env-Vars) gesetzt. Wenn die Env-Variable gesetzt ist, hat sie Vorrang vor dem File-Wert.
 
 ## 4. Container bauen und starten
 
@@ -160,7 +154,7 @@ Folgende Daten sollten regelmaessig gesichert werden:
 |--------|--------|
 | `.env` (oder Portainer Env-Vars) | API-Keys, Passwoerter (Secrets) |
 | Docker Volume `goaffpro-config` | App-Einstellungen, SMTP-Host, Templates |
-| Docker Volume `goaffpro-exports` | PDF-Exporte, Rechnungen, `goaffpro_users.enc` |
+| Docker Volume `goaffpro-exports` | PDF-Exporte, Rechnungen |
 
 Volumes auf dem Host sichern:
 
