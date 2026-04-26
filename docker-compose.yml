@@ -10,6 +10,10 @@ services:
     environment:
       - TZ=Europe/Berlin
       - GOAFFPRO_API_KEY=${GOAFFPRO_API_KEY:-}
+      - GOAFFPRO_SMTP_HOST=${GOAFFPRO_SMTP_HOST:-}
+      - GOAFFPRO_SMTP_USERNAME=${GOAFFPRO_SMTP_USERNAME:-}
+      - GOAFFPRO_SMTP_PORT=${GOAFFPRO_SMTP_PORT:-}
+      - GOAFFPRO_SMTP_TLS=${GOAFFPRO_SMTP_TLS:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
     restart: unless-stopped
 

@@ -3812,15 +3812,30 @@ public class WebUiServer {
             config.setProperty("contactEmail", uiContactEmail);
         }
 
-        config.setProperty("smtpHost", Objects.toString(uiSettings.getProperty("smtpHost"), Objects.toString(config.getProperty("smtpHost"), "")).trim());
-        config.setProperty("smtpPort", Objects.toString(uiSettings.getProperty("smtpPort"), Objects.toString(config.getProperty("smtpPort"), "587")).trim());
-        config.setProperty("smtpUsername", Objects.toString(uiSettings.getProperty("smtpUsername"), Objects.toString(config.getProperty("smtpUsername"), "")).trim());
-        config.setProperty("emailBcc", Objects.toString(uiSettings.getProperty("emailBcc"), Objects.toString(config.getProperty("emailBcc"), "")).trim());
+        String uiSmtpHost = Objects.toString(uiSettings.getProperty("smtpHost"), "").trim();
+        if (!uiSmtpHost.isEmpty()) {
+            config.setProperty("smtpHost", uiSmtpHost);
+        }
+        String uiSmtpPort = Objects.toString(uiSettings.getProperty("smtpPort"), "").trim();
+        if (!uiSmtpPort.isEmpty()) {
+            config.setProperty("smtpPort", uiSmtpPort);
+        }
+        String uiSmtpUsername = Objects.toString(uiSettings.getProperty("smtpUsername"), "").trim();
+        if (!uiSmtpUsername.isEmpty()) {
+            config.setProperty("smtpUsername", uiSmtpUsername);
+        }
+        String uiEmailBcc = Objects.toString(uiSettings.getProperty("emailBcc"), "").trim();
+        if (!uiEmailBcc.isEmpty()) {
+            config.setProperty("emailBcc", uiEmailBcc);
+        }
         String uiSmtpPassword = Objects.toString(uiSettings.getProperty("smtpPassword"), "").trim();
         if (!uiSmtpPassword.isEmpty() || config.containsKey("smtpPassword")) {
             config.setProperty("smtpPassword", uiSmtpPassword);
         }
-        config.setProperty("smtpTls", Objects.toString(uiSettings.getProperty("smtpTls"), Objects.toString(config.getProperty("smtpTls"), "false")).trim());
+        String uiSmtpTls = Objects.toString(uiSettings.getProperty("smtpTls"), "").trim();
+        if (!uiSmtpTls.isEmpty()) {
+            config.setProperty("smtpTls", uiSmtpTls);
+        }
         config.setProperty("sendEmailsEnabled", Objects.toString(uiSettings.getProperty("sendEmailsEnabled"), Objects.toString(config.getProperty("sendEmailsEnabled"), "true")).trim());
         String uiEmailRecipientMode = Objects.toString(uiSettings.getProperty("emailRecipientMode"), Objects.toString(config.getProperty("emailRecipientMode"), "contact")).trim();
         if (!"advisor".equals(uiEmailRecipientMode)) uiEmailRecipientMode = "contact";
