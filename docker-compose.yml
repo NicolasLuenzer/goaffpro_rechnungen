@@ -6,17 +6,12 @@ services:
       - "8090:8080"
     volumes:
       - goaffpro-config:/app/config
-      - goaffpro-exports:/app/exports
+      - /volume1/docker/goaffpro_rechnungen/export:/app/exports
     environment:
       - TZ=Europe/Berlin
       - GOAFFPRO_API_KEY=${GOAFFPRO_API_KEY:-}
-      - ERPNEXT_API_KEY=${ERPNEXT_API_KEY:-}
-      - ERPNEXT_API_SECRET=${ERPNEXT_API_SECRET:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
-      - AUTH_SECRET=${AUTH_SECRET:-}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
     restart: unless-stopped
 
 volumes:
   goaffpro-config:
-  goaffpro-exports:

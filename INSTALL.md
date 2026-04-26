@@ -51,14 +51,19 @@ Portainer injiziert diese in den Container.
 
 ## 3. Konfiguration (optional)
 
-Die App speichert ihre Daten in **zwei Docker Named Volumes**:
+Die App speichert ihre Daten an zwei Orten:
 
-| Volume | Inhalt |
-|--------|--------|
-| `goaffpro-config` | `config.properties` (App-Einstellungen, Templates) |
-| `goaffpro-exports` | PDF-Exporte |
+| Pfad | Typ | Inhalt |
+|------|-----|--------|
+| `goaffpro-config` | Docker Named Volume | `config.properties` (App-Einstellungen, Templates) |
+| `/volume1/docker/goaffpro_rechnungen/export/` | Host Bind-Mount | PDF-Exporte (vom NAS-Filesystem zugreifbar) |
 
-Beim ersten Start sind die Volumes leer — die App nutzt Defaults und persistiert UI-Aenderungen automatisch in `goaffpro-config`.
+> **Wichtig:** Das Host-Verzeichnis `/volume1/docker/goaffpro_rechnungen/export/` muss vor dem Stack-Start existieren. Per SSH anlegen:
+> ```bash
+> mkdir -p /volume1/docker/goaffpro_rechnungen/export
+> ```
+
+Beim ersten Start sind beide leer — die App nutzt Defaults und persistiert UI-Aenderungen automatisch in `goaffpro-config`. PDF-Exporte landen direkt im Host-Verzeichnis und sind ueber die Synology File Station zugreifbar.
 
 Wenn du die Konfiguration **vorbefuellen** willst:
 
@@ -154,24 +159,19 @@ Folgende Daten sollten regelmaessig gesichert werden:
 |--------|--------|
 | `.env` (oder Portainer Env-Vars) | API-Keys, Passwoerter (Secrets) |
 | Docker Volume `goaffpro-config` | App-Einstellungen, SMTP-Host, Templates |
-| Docker Volume `goaffpro-exports` | PDF-Exporte, Rechnungen |
+| `/volume1/docker/goaffpro_rechnungen/export/` | PDF-Exporte, Rechnungen |
 
-Volumes auf dem Host sichern:
+Backup als tar.gz:
 
 ```bash
-# Volume-Inhalte anzeigen
-docker run --rm -v goaffpro-config:/data alpine ls -la /data
-docker run --rm -v goaffpro-exports:/data alpine ls -la /data
-
-# Backup als tar.gz
 docker run --rm \
   -v goaffpro-config:/source/config \
-  -v goaffpro-exports:/source/exports \
+  -v /volume1/docker/goaffpro_rechnungen/export:/source/exports \
   -v $(pwd):/backup \
   alpine tar -czf /backup/goaffpro_backup_$(date +%Y%m%d).tar.gz -C /source .
 ```
 
-Auf Synology lassen sich Named Volumes ueber **Container Manager > Container > Details > Speicher** einsehen.
+Das `goaffpro-config`-Volume ist im Synology Container Manager unter **Container > Details > Speicher** einsehbar. Die PDFs sind direkt ueber die Synology File Station unter `docker/goaffpro_rechnungen/export/` zugreifbar.
 
 ## Verzeichnisstruktur auf dem Server
 
@@ -183,10 +183,11 @@ Auf Synology lassen sich Named Volumes ueber **Container Manager > Container > D
 ├── Dockerfile                   # Multi-Stage Build
 ├── pom.xml                      # Maven Build
 ├── src/                         # Quellcode
-└── docs/                        # Hilfe-Dokumentation
+├── docs/                        # Hilfe-Dokumentation
+└── export/                      # PDF-Exporte (vom Container beschrieben)
 ```
 
-Daten liegen in Docker Volumes (verwaltet von Docker, nicht im Stack-Verzeichnis).
+Die `config.properties` liegt in einem Docker Named Volume (`goaffpro-config`).
 
 ## Troubleshooting
 
