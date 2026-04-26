@@ -3965,7 +3965,7 @@ public class WebUiServer {
         for (String[] mapping : SECRET_ENV_MAPPINGS) {
             String envName = mapping[0];
             String configKey = mapping[1];
-            String envValue = System.getenv(envName);
+            String envValue = getEnv(envName);
             if (envValue != null && !envValue.isBlank()) {
                 forStore.remove(configKey);
             }
@@ -3988,8 +3988,32 @@ public class WebUiServer {
             {"ADMIN_PASSWORD", "adminPassword"}
     };
 
+    private static final Map<String, String> DOT_ENV = loadDotEnvFile();
+
+    private static Map<String, String> loadDotEnvFile() {
+        Map<String, String> result = new HashMap<>();
+        Path envFile = Paths.get(".env");
+        if (!Files.exists(envFile)) return result;
+        try {
+            for (String line : Files.readAllLines(envFile, StandardCharsets.UTF_8)) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.startsWith("#")) continue;
+                int eq = trimmed.indexOf('=');
+                if (eq <= 0) continue;
+                result.put(trimmed.substring(0, eq).trim(), trimmed.substring(eq + 1).trim());
+            }
+        } catch (IOException ignored) {}
+        return result;
+    }
+
+    private static String getEnv(String name) {
+        String v = System.getenv(name);
+        if (v != null && !v.isBlank()) return v;
+        return DOT_ENV.get(name);
+    }
+
     private static String getSecretOrConfig(Properties config, String envName, String configKey, String defaultValue) {
-        String envValue = System.getenv(envName);
+        String envValue = getEnv(envName);
         if (envValue != null && !envValue.isBlank()) {
             return envValue;
         }
@@ -4058,7 +4082,7 @@ public class WebUiServer {
         ui.setProperty(REMINDER_LOG_KEY, Objects.toString(source.getProperty(REMINDER_LOG_KEY), ""));
 
         for (String[] mapping : SECRET_ENV_MAPPINGS) {
-            String envValue = System.getenv(mapping[0]);
+            String envValue = getEnv(mapping[0]);
             if (envValue != null && !envValue.isBlank()) {
                 ui.remove(mapping[1]);
             }
