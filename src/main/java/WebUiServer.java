@@ -3950,6 +3950,9 @@ public class WebUiServer {
 
     private static Properties loadConfig() throws IOException {
         Properties properties = new Properties();
+        if (!Files.exists(CONFIG_PATH)) {
+            return properties;
+        }
         try (InputStream is = Files.newInputStream(CONFIG_PATH)) {
             properties.load(is);
         }
@@ -3966,6 +3969,10 @@ public class WebUiServer {
             if (envValue != null && !envValue.isBlank()) {
                 forStore.remove(configKey);
             }
+        }
+        Path parent = CONFIG_PATH.getParent();
+        if (parent != null) {
+            Files.createDirectories(parent);
         }
         try (OutputStream os = Files.newOutputStream(CONFIG_PATH)) {
             forStore.store(os, "Updated by WebUiServer");

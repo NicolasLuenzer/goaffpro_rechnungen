@@ -5,7 +5,7 @@ services:
     ports:
       - "8090:8080"
     volumes:
-      - ./config/config.properties:/app/config/config.properties
+      - ./config:/app/config
       - ./docker-data/exports:/app/exports
     environment:
       - TZ=Europe/Berlin

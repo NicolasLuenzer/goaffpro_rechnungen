@@ -55,13 +55,18 @@ Portainer injiziert diese in den Container — die `.env`-Datei wird dann nicht 
 
 > **Wichtig:** `.env` enthaelt sensible Zugangsdaten und wird NICHT ins Git-Repository aufgenommen.
 
-## 3. Konfiguration vorbereiten
+## 3. Konfiguration (optional)
+
+Beim ersten Start ohne `config.properties` nutzt die App Defaults — das Verzeichnis `config/` wird vom Docker-Bind-Mount automatisch angelegt. Settings, die du in der UI vornimmst, werden in `config/config.properties` persistiert.
+
+Wenn du die Konfiguration **vorbefuellen** willst, lege die Datei manuell an:
 
 ```bash
-mkdir -p config docker-data/exports
+mkdir -p config
+nano config/config.properties
 ```
 
-Erstelle die Datei `config/config.properties` mit den nicht-sensiblen Einstellungen:
+Beispielinhalt (alles optional — Felder koennen auch via UI gesetzt werden):
 
 ```properties
 # SMTP E-Mail-Versand (Passwort kommt aus .env)
@@ -83,7 +88,7 @@ sendEmailsEnabled=true
 eInvoiceAttachAndStoreEnabled=true
 ```
 
-> **Hinweis:** API-Keys und Passwoerter (`goaffproAPIKey`, `smtpPassword`, `erpnextApiKey`, `erpnextApiSecret`, `authSecret`, `adminPassword`) sollten NICHT in `config.properties` stehen — sie werden ueber `.env` gesetzt. Wenn die Env-Variable gesetzt ist, hat sie Vorrang vor dem File-Wert.
+> **Hinweis:** API-Keys und Passwoerter (`goaffproAPIKey`, `smtpPassword`, `erpnextApiKey`, `erpnextApiSecret`, `authSecret`, `adminPassword`) sollten NICHT in `config.properties` stehen — sie werden ueber `.env` (oder Portainer Env-Vars) gesetzt. Wenn die Env-Variable gesetzt ist, hat sie Vorrang vor dem File-Wert.
 
 ## 4. Container bauen und starten
 
