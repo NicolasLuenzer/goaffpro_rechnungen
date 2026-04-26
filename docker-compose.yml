@@ -5,8 +5,8 @@ services:
     ports:
       - "8090:8080"
     volumes:
-      - ./config:/app/config
-      - ./docker-data/exports:/app/exports
+      - goaffpro-config:/app/config
+      - goaffpro-exports:/app/exports
     environment:
       - TZ=Europe/Berlin
       - GOAFFPRO_API_KEY=${GOAFFPRO_API_KEY:-}
@@ -16,3 +16,7 @@ services:
       - AUTH_SECRET=${AUTH_SECRET:-}
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
     restart: unless-stopped
+
+volumes:
+  goaffpro-config:
+  goaffpro-exports:

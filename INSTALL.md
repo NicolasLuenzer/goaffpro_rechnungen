@@ -57,13 +57,27 @@ Portainer injiziert diese in den Container — die `.env`-Datei wird dann nicht 
 
 ## 3. Konfiguration (optional)
 
-Beim ersten Start ohne `config.properties` nutzt die App Defaults — das Verzeichnis `config/` wird vom Docker-Bind-Mount automatisch angelegt. Settings, die du in der UI vornimmst, werden in `config/config.properties` persistiert.
+Die App speichert ihre Daten in **zwei Docker Named Volumes**:
 
-Wenn du die Konfiguration **vorbefuellen** willst, lege die Datei manuell an:
+| Volume | Inhalt |
+|--------|--------|
+| `goaffpro-config` | `config.properties` (App-Einstellungen, Templates) |
+| `goaffpro-exports` | PDF-Exporte, `goaffpro_users.enc` |
+
+Beim ersten Start sind die Volumes leer — die App nutzt Defaults und persistiert UI-Aenderungen automatisch in `goaffpro-config`.
+
+Wenn du die Konfiguration **vorbefuellen** willst:
 
 ```bash
-mkdir -p config
-nano config/config.properties
+# In den laufenden Container einsteigen
+docker-compose exec goaffpro sh
+# Datei anlegen
+cat > /app/config/config.properties << 'EOF'
+smtpHost=smtp.mandrillapp.com
+# ... (siehe Beispiel unten)
+EOF
+exit
+docker-compose restart goaffpro
 ```
 
 Beispielinhalt (alles optional — Felder koennen auch via UI gesetzt werden):
@@ -140,35 +154,45 @@ docker-compose logs -f goaffpro
 
 ## 8. Backup
 
-Folgende Dateien/Verzeichnisse sollten regelmaessig gesichert werden:
+Folgende Daten sollten regelmaessig gesichert werden:
 
-| Pfad | Inhalt |
-|------|--------|
-| `.env` | API-Keys, Passwoerter (Secrets) |
-| `config/config.properties` | App-Einstellungen, SMTP-Host, Templates |
-| `docker-data/exports/` | PDF-Exporte, Rechnungen, `goaffpro_users.enc` (verschluesselte Benutzer) |
+| Quelle | Inhalt |
+|--------|--------|
+| `.env` (oder Portainer Env-Vars) | API-Keys, Passwoerter (Secrets) |
+| Docker Volume `goaffpro-config` | App-Einstellungen, SMTP-Host, Templates |
+| Docker Volume `goaffpro-exports` | PDF-Exporte, Rechnungen, `goaffpro_users.enc` |
+
+Volumes auf dem Host sichern:
 
 ```bash
-# Beispiel: Backup erstellen
-tar -czf backup_goaffpro_$(date +%Y%m%d).tar.gz .env config/ docker-data/
+# Volume-Inhalte anzeigen
+docker run --rm -v goaffpro-config:/data alpine ls -la /data
+docker run --rm -v goaffpro-exports:/data alpine ls -la /data
+
+# Backup als tar.gz
+docker run --rm \
+  -v goaffpro-config:/source/config \
+  -v goaffpro-exports:/source/exports \
+  -v $(pwd):/backup \
+  alpine tar -czf /backup/goaffpro_backup_$(date +%Y%m%d).tar.gz -C /source .
 ```
+
+Auf Synology lassen sich Named Volumes ueber **Container Manager > Container > Details > Speicher** einsehen.
 
 ## Verzeichnisstruktur auf dem Server
 
 ```
 /volume1/docker/goaffpro_rechnungen/
-├── .env                         # Secrets (API-Keys, Passwoerter)
+├── .env                         # Secrets (nur fuer CLI-Deployment)
 ├── .env.example                 # Template fuer .env
-├── config/
-│   └── config.properties        # App-Einstellungen (kein Secret)
-├── docker-data/
-│   └── exports/                 # PDF-Exporte + Benutzerdaten
 ├── docker-compose.yml           # Container-Konfiguration
 ├── Dockerfile                   # Multi-Stage Build
 ├── pom.xml                      # Maven Build
 ├── src/                         # Quellcode
 └── docs/                        # Hilfe-Dokumentation
 ```
+
+Daten liegen in Docker Volumes (verwaltet von Docker, nicht im Stack-Verzeichnis).
 
 ## Troubleshooting
 
