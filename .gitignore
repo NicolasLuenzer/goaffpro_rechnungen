@@ -36,3 +36,5 @@ target/
 # Docker deployment data (secrets, runtime data)
 config/
 docker-data/
+# Docker environment variables (contains secrets)
+.env

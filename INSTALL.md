@@ -14,28 +14,42 @@ git clone https://github.com/NicolasLuenzer/goaffpro_rechnungen.git
 cd goaffpro_rechnungen
 ```
 
-## 2. Konfiguration vorbereiten
+## 2. Secrets in `.env` hinterlegen
+
+Kopiere `.env.example` zu `.env` und trage die echten Zugangsdaten ein:
+
+```bash
+cp .env.example .env
+nano .env
+```
+
+Inhalt der `.env` (Beispiel):
+
+```env
+GOAFFPRO_API_KEY=91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845
+ERPNEXT_API_KEY=af2abd731744f38
+ERPNEXT_API_SECRET=463fcff988cdd6d
+SMTP_PASSWORD=md-qj1uI63hpGjrtf7ojwrLGg
+AUTH_SECRET=<langer-zufaelliger-string>
+ADMIN_PASSWORD=<sicheres-admin-passwort>
+```
+
+> **Wichtig:** `.env` enthaelt sensible Zugangsdaten und wird NICHT ins Git-Repository aufgenommen.
+
+## 3. Konfiguration vorbereiten
 
 ```bash
 mkdir -p config docker-data/exports
 ```
 
-Erstelle die Datei `config/config.properties` mit den benoetigten Einstellungen:
+Erstelle die Datei `config/config.properties` mit den nicht-sensiblen Einstellungen:
 
 ```properties
-# GoAffPro API
-goaffproApiKey=<DEIN_API_KEY>
-
-# SMTP E-Mail-Versand
+# SMTP E-Mail-Versand (Passwort kommt aus .env)
 smtpHost=smtp.mandrillapp.com
 smtpPort=587
-smtpUser=<DEIN_SMTP_USER>
-smtpPassword=<DEIN_SMTP_PASSWORT>
+smtpUsername=<DEIN_SMTP_USER>
 smtpTls=true
-
-# ERPNext API (optional)
-erpNextApiKey=<DEIN_ERPNEXT_KEY>
-erpNextApiSecret=<DEIN_ERPNEXT_SECRET>
 
 # Pfad fuer PDF-Exporte (Container-intern, nicht aendern)
 pdfExportPath=/app/exports
@@ -50,9 +64,9 @@ sendEmailsEnabled=true
 eInvoiceAttachAndStoreEnabled=true
 ```
 
-> **Wichtig:** Die Datei `config/config.properties` enthaelt sensible Zugangsdaten und wird NICHT ins Git-Repository aufgenommen.
+> **Hinweis:** API-Keys und Passwoerter (`goaffproAPIKey`, `smtpPassword`, `erpnextApiKey`, `erpnextApiSecret`, `authSecret`, `adminPassword`) sollten NICHT in `config.properties` stehen — sie werden ueber `.env` gesetzt. Wenn die Env-Variable gesetzt ist, hat sie Vorrang vor dem File-Wert.
 
-## 3. Container bauen und starten
+## 4. Container bauen und starten
 
 ```bash
 docker-compose up --build -d
@@ -60,7 +74,7 @@ docker-compose up --build -d
 
 Der erste Build dauert einige Minuten (Maven-Dependencies werden heruntergeladen).
 
-## 4. Zugriff testen
+## 5. Zugriff testen
 
 Die App ist erreichbar unter:
 
@@ -74,7 +88,7 @@ Logs pruefen:
 docker-compose logs -f goaffpro
 ```
 
-## 5. Updates einspielen
+## 6. Updates einspielen
 
 ```bash
 cd /volume1/docker/goaffpro_rechnungen
@@ -84,7 +98,7 @@ docker-compose up --build -d
 
 Der Multi-Stage-Build nutzt Docker-Layer-Caching — nur geaenderte Teile werden neu gebaut.
 
-## 6. Container verwalten
+## 7. Container verwalten
 
 ```bash
 # Status pruefen
@@ -100,26 +114,29 @@ docker-compose restart goaffpro
 docker-compose logs -f goaffpro
 ```
 
-## 7. Backup
+## 8. Backup
 
 Folgende Dateien/Verzeichnisse sollten regelmaessig gesichert werden:
 
 | Pfad | Inhalt |
 |------|--------|
-| `config/config.properties` | API-Keys, SMTP-Zugangsdaten, App-Einstellungen |
+| `.env` | API-Keys, Passwoerter (Secrets) |
+| `config/config.properties` | App-Einstellungen, SMTP-Host, Templates |
 | `docker-data/exports/` | PDF-Exporte, Rechnungen, `goaffpro_users.enc` (verschluesselte Benutzer) |
 
 ```bash
 # Beispiel: Backup erstellen
-tar -czf backup_goaffpro_$(date +%Y%m%d).tar.gz config/ docker-data/
+tar -czf backup_goaffpro_$(date +%Y%m%d).tar.gz .env config/ docker-data/
 ```
 
 ## Verzeichnisstruktur auf dem Server
 
 ```
 /volume1/docker/goaffpro_rechnungen/
+├── .env                         # Secrets (API-Keys, Passwoerter)
+├── .env.example                 # Template fuer .env
 ├── config/
-│   └── config.properties        # Konfiguration mit Zugangsdaten
+│   └── config.properties        # App-Einstellungen (kein Secret)
 ├── docker-data/
 │   └── exports/                 # PDF-Exporte + Benutzerdaten
 ├── docker-compose.yml           # Container-Konfiguration

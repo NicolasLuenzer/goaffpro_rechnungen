@@ -4,6 +4,8 @@ services:
     container_name: goaffpro-rechnungen
     ports:
       - "8090:8080"
+    env_file:
+      - .env
     volumes:
       - ./config/config.properties:/app/config/config.properties
       - ./docker-data/exports:/app/exports
