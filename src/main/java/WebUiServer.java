@@ -3797,6 +3797,7 @@ public class WebUiServer {
         ui.setProperty("eInvoiceBankBic", Objects.toString(source.getProperty("eInvoiceBankBic"), ""));
         ui.setProperty("eInvoiceBankAccountHolder", Objects.toString(source.getProperty("eInvoiceBankAccountHolder"), ""));
         ui.setProperty("eInvoicePaymentTerms", Objects.toString(source.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug"));
+        ui.setProperty("nachweisFirmenname", Objects.toString(source.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH"));
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
         ui.setProperty(COMMISSION_HISTORY_DATES_KEY, Objects.toString(source.getProperty(COMMISSION_HISTORY_DATES_KEY), ""));
         ui.setProperty(MAIL_LOG_KEY, Objects.toString(source.getProperty(MAIL_LOG_KEY), ""));
@@ -3895,6 +3896,7 @@ public class WebUiServer {
         config.setProperty("eInvoiceBankBic", Objects.toString(uiSettings.getProperty("eInvoiceBankBic"), Objects.toString(config.getProperty("eInvoiceBankBic"), "")));
         config.setProperty("eInvoiceBankAccountHolder", Objects.toString(uiSettings.getProperty("eInvoiceBankAccountHolder"), Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), "")));
         config.setProperty("eInvoicePaymentTerms", Objects.toString(uiSettings.getProperty("eInvoicePaymentTerms"), Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug")));
+        config.setProperty("nachweisFirmenname", Objects.toString(uiSettings.getProperty("nachweisFirmenname"), Objects.toString(config.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH")));
 
         config.setProperty(MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(MAIL_LOG_KEY), Objects.toString(config.getProperty(MAIL_LOG_KEY), "")));
         config.setProperty(REMINDER_LOG_KEY, Objects.toString(uiSettings.getProperty(REMINDER_LOG_KEY), Objects.toString(config.getProperty(REMINDER_LOG_KEY), "")));
