@@ -675,6 +675,13 @@
                   </div>
                 </div>
 
+                <div class="settings-group">
+                  <h3>Provisionsnachweis PDF</h3>
+                  <div class="toolbar">
+                    <label for="nachweisFirmenname">Firmenname im Hinweistext:</label>
+                    <input id="nachweisFirmenname" type="text" placeholder="S+R Linear Technology GmbH" />
+                  </div>
+                </div>
 
               </div>
               <div class="toolbar"><button id="saveSettingsBtn" class="secondary">Speichern</button></div>
@@ -1721,6 +1728,7 @@
         if (document.getElementById('eInvoiceBankBic')) document.getElementById('eInvoiceBankBic').value = data.eInvoiceBankBic || '';
         if (document.getElementById('eInvoiceBankAccountHolder')) document.getElementById('eInvoiceBankAccountHolder').value = data.eInvoiceBankAccountHolder || '';
         if (document.getElementById('eInvoicePaymentTerms')) document.getElementById('eInvoicePaymentTerms').value = data.eInvoicePaymentTerms || '';
+        if (document.getElementById('nachweisFirmenname')) document.getElementById('nachweisFirmenname').value = data.nachweisFirmenname || '';
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         const mode = data.emailRecipientMode || 'contact';
@@ -1791,7 +1799,8 @@
           eInvoiceBankIban: document.getElementById('eInvoiceBankIban')?.value || '',
           eInvoiceBankBic: document.getElementById('eInvoiceBankBic')?.value || '',
           eInvoiceBankAccountHolder: document.getElementById('eInvoiceBankAccountHolder')?.value || '',
-          eInvoicePaymentTerms: document.getElementById('eInvoicePaymentTerms')?.value || ''
+          eInvoicePaymentTerms: document.getElementById('eInvoicePaymentTerms')?.value || '',
+          nachweisFirmenname: document.getElementById('nachweisFirmenname')?.value || ''
         });
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
@@ -1812,6 +1821,7 @@
         if (document.getElementById('eInvoiceBankBic')) document.getElementById('eInvoiceBankBic').value = data.eInvoiceBankBic || '';
         if (document.getElementById('eInvoiceBankAccountHolder')) document.getElementById('eInvoiceBankAccountHolder').value = data.eInvoiceBankAccountHolder || '';
         if (document.getElementById('eInvoicePaymentTerms')) document.getElementById('eInvoicePaymentTerms').value = data.eInvoicePaymentTerms || '';
+        if (document.getElementById('nachweisFirmenname')) document.getElementById('nachweisFirmenname').value = data.nachweisFirmenname || '';
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         const mode = data.emailRecipientMode || 'contact';

@@ -383,6 +383,7 @@ public class WebUiServer {
                 String eInvoiceBankBic = Objects.toString(config.getProperty("eInvoiceBankBic"), "").trim();
                 String eInvoiceBankAccountHolder = Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), "").trim();
                 String eInvoicePaymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
+                String nachweisFirmenname = Objects.toString(config.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH").trim();
                 ensureCommissionInHistory(config, activeCommission);
                 persistSettings(config);
 
@@ -406,6 +407,7 @@ public class WebUiServer {
                 payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
                 payload.put("eInvoicePdfTemplateHtml", eInvoicePdfTemplateHtml.isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : eInvoicePdfTemplateHtml);
                 payload.put("eInvoicePdfTemplateHtmlDefault", getDefaultEInvoicePdfViewHtmlTemplate());
+                payload.put("nachweisFirmenname", nachweisFirmenname);
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -444,6 +446,7 @@ public class WebUiServer {
                     String eInvoiceBankBic = asText(body, "eInvoiceBankBic").trim();
                     String eInvoiceBankAccountHolder = asText(body, "eInvoiceBankAccountHolder").trim();
                     String eInvoicePaymentTerms = asText(body, "eInvoicePaymentTerms").trim();
+                    String nachweisFirmenname = asText(body, "nachweisFirmenname").trim();
                     if (!"advisor".equals(emailRecipientMode)) emailRecipientMode = "contact";
 
                     Properties config = loadConfig();
@@ -497,6 +500,7 @@ public class WebUiServer {
                     config.setProperty("eInvoiceBankBic", eInvoiceBankBic);
                     config.setProperty("eInvoiceBankAccountHolder", eInvoiceBankAccountHolder);
                     config.setProperty("eInvoicePaymentTerms", eInvoicePaymentTerms);
+                    config.setProperty("nachweisFirmenname", nachweisFirmenname);
 
                     persistSettings(config);
 
@@ -534,6 +538,7 @@ public class WebUiServer {
                     payload.put("eInvoiceBankBic", Objects.toString(config.getProperty("eInvoiceBankBic"), ""));
                     payload.put("eInvoiceBankAccountHolder", Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), ""));
                     payload.put("eInvoicePaymentTerms", Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug"));
+                    payload.put("nachweisFirmenname", Objects.toString(config.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH"));
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -1523,7 +1528,7 @@ public class WebUiServer {
                         : Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
                 Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("rechnung_" + sanitizeFilename(paymentId) + "_" + timestamp + ".xml") : null;
                 Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("rechnung_" + sanitizeFilename(paymentId) + "_" + timestamp + ".pdf") : null;
-                createInvoiceDetailsPdf(pdfPath, response, affiliate);
+                createInvoiceDetailsPdf(pdfPath, response, affiliate, config);
                 writeOriginalJson(jsonPath, response);
                 if (eInvoiceAttachAndStoreEnabled) {
                     createZugferdInvoiceXml(zugferdPath, payment, affiliate, config);
@@ -1585,7 +1590,7 @@ public class WebUiServer {
             }
         }
 
-        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate) throws IOException {
+        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate, Properties config) throws IOException {
             try (PDDocument document = new PDDocument()) {
                 JsonNode payments = apiResponse.get("payments");
                 JsonNode payment = (payments != null && payments.isArray() && payments.size() > 0) ? payments.get(0) : null;
@@ -1797,7 +1802,8 @@ public class WebUiServer {
                     }
 
                     y -= 8;
-                    String providerNote = "Dieser Nachweis wurde von der S+R Linear Technology GmbH bereitgestellt. " +
+                    String nachweisFirmenname = Objects.toString(config.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH").trim();
+                    String providerNote = "Dieser Nachweis wurde von der " + nachweisFirmenname + " bereitgestellt. " +
                             "Bei Rückfragen wenden Sie sich bitte an info@vemmina.com. " +
                             "Die zugrundeliegenden Rohdaten können bei Bedarf angefragt werden.";
                     for (String line : wrapForPdf(providerNote, 100)) {

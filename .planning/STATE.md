@@ -1,11 +1,11 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.3.1
+milestone: v1.3.2
 milestone_name: Post-Deployment Maintenance
 status: maintenance
-stopped_at: SMTP merge-overwrite bug fixed; env-var pipeline (GOAFFPRO_SMTP_HOST/USERNAME) added
-last_updated: "2026-04-26T19:00:00.000Z"
-last_activity: 2026-04-26
+stopped_at: Firmenname im Nachweis-PDF-Hinweis per Einstellung konfigurierbar gemacht
+last_updated: "2026-05-05T00:00:00.000Z"
+last_activity: 2026-05-05
 progress:
   total_phases: 2
   completed_phases: 2
@@ -35,6 +35,8 @@ Last activity: 2026-04-26 (SMTP-Konfig-Fix, Tag 1.3.1)
 Progress: [██████████] 100%
 
 ## Post-Milestone Maintenance Log
+
+- **2026-05-05 — Nachweis-Firmenname konfigurierbar (Tag 1.3.2):** Der Hinweistext im Provisions-PDF enthielt den Firmennamen „S+R Linear Technology GmbH" hart eincodiert. Neue Einstellung `nachweisFirmenname` (Config-Key) ermöglicht, diesen Wert in den UI-Einstellungen zu ändern. Änderungen: neues Textfeld in der Settings-Seite (Abschnitt „Provisionsnachweis PDF"), GET/POST `/api/settings` um den Key erweitert, `createInvoiceDetailsPdf()` liest den Wert aus der Config. Fallback bleibt „S+R Linear Technology GmbH".
 
 - **2026-04-26 — SMTP-Konfig-Fix (Tag 1.3.1):** Im laufenden Container kam beim PDF-/E-Mail-Versand `[SMTP] Konfiguration unvollständig (host=MISSING, username=MISSING, password=ok)`. Ursache: `mergeUiSettingsIntoConfig` ([WebUiServer.java:3815](src/main/java/WebUiServer.java#L3815)) verwendete `Objects.toString(value, default)`, was nur bei `null` auf den Default fällt — leere Strings aus `goaffpro_ui_settings.properties` überschrieben dadurch gültige Werte aus `config.properties`. Fix: `if (!ui.isEmpty())`-Pattern für alle SMTP-Felder (analog zu `goaffproAPIKey`, `lastImportedComission`). Zusätzlich `GOAFFPRO_SMTP_HOST` / `_USERNAME` / `_PORT` / `_TLS` in `docker-compose.yml` und `.env.example` durchgereicht — `resolveSmtpConfig` las sie zwar bereits, sie kamen aber nicht durch den Container.
 - **Deploy-Hinweis Portainer:** Env-Vars müssen in den Stack-Settings (Tab „Environment variables") hinterlegt werden — `.env` wirkt nur lokal, nicht beim Git-basierten Deploy.
@@ -76,6 +78,6 @@ Keine.
 
 ## Session Continuity
 
-Last session: 2026-04-26T19:00:00.000Z
-Stopped at: SMTP-Konfig-Fix gepusht, Tag 1.3.1 erstellt
+Last session: 2026-05-05T00:00:00.000Z
+Stopped at: Nachweis-Firmenname konfigurierbar gemacht, Tag 1.3.2
 Resume file: None
