@@ -6,7 +6,7 @@ services:
       - "8090:8080"
     volumes:
       - goaffpro-config:/app/config
-      - /volume1/docker/goaffpro_rechnungen/export:/app/exports
+      - ${EXPORT_PATH:-/volume1/docker/goaffpro_rechnungen/export}:/app/exports
     environment:
       - TZ=Europe/Berlin
       - GOAFFPRO_API_KEY=${GOAFFPRO_API_KEY:-}

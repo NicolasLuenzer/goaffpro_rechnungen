@@ -38,3 +38,5 @@ config/
 docker-data/
 # Docker environment variables (contains secrets)
 .env
+# Lokaler Export-Ordner
+exports/
