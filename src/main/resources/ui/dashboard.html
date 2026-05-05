@@ -493,14 +493,21 @@
 
     async function fetchExecutables() { return apiGet('/api/executables'); }
 
+    function formatVersion(raw) {
+      const m = /^(\d{4})(\d{2})(\d{2})\d{6}-(\d+)$/.exec(raw);
+      if (!m) return raw;
+      const [, y, mo, d, seq] = m;
+      return `Build ${parseInt(seq, 10)} · ${d}.${mo}.${y}`;
+    }
+
     async function loadVersion() {
       const box = document.getElementById('appVersion');
       if (!box) return;
       try {
         const data = await apiGet('/api/version');
-        box.textContent = `Version: ${data.version || 'dev'}`;
+        box.textContent = formatVersion(data.version || '') || 'dev';
       } catch (_) {
-        box.textContent = 'Version: dev';
+        box.textContent = 'dev';
       }
     }
 
