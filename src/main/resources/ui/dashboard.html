@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>S+R Assistent</title>
+  <title>VEMMiNA Assistent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -204,18 +204,9 @@
     /* ── Sidebar ── */
     .side-nav { width:220px; min-width:180px; background: var(--clr-sidebar); border-radius:var(--radius-lg); padding:16px 0 10px; flex-shrink:0; align-self:flex-start; position:sticky; top:8px; box-shadow: 0 8px 32px rgba(12,26,48,.38); }
     .side-nav-section-label { padding:2px 16px 10px; font-size:10px; font-weight:700; color:rgba(255,255,255,.42); letter-spacing:.1em; text-transform:uppercase; }
-    .side-nav-dept-header { display:flex; align-items:center; gap:8px; padding:8px 14px; cursor:pointer; user-select:none; transition:background .14s; }
-    .side-nav-dept-header:hover { background: var(--clr-sidebar-hover); }
-    .side-nav-dept-badge { width:28px; height:28px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:var(--fs-sm); color:#fff; flex-shrink:0; }
-    .side-nav-dept-name { flex:1; font-weight:700; font-size:var(--fs-body); color:rgba(255,255,255,.9); }
-    .side-nav-chevron { font-size:var(--fs-sm); color:rgba(255,255,255,.48); transition:transform .2s; line-height:1; }
-    .side-nav-chevron.open { transform:rotate(180deg); }
-    .side-nav-subitems { overflow:hidden; }
-    .side-nav-item { display:flex; align-items:center; width:100%; padding:7px 14px 7px 48px; background:none; border:none; border-left:3px solid transparent; text-align:left; font-size:var(--fs-body); color:rgba(255,255,255,.62); cursor:pointer; line-height:1.4; box-sizing:border-box; transition:all .15s; font-family:inherit; }
+    .side-nav-item { display:flex; align-items:center; width:100%; padding:10px 16px; background:none; border:none; border-left:3px solid transparent; text-align:left; font-size:var(--fs-body); color:rgba(255,255,255,.72); cursor:pointer; line-height:1.4; box-sizing:border-box; transition:all .15s; font-family:inherit; font-weight:600; }
     .side-nav-item:hover { background: var(--clr-sidebar-hover); color:rgba(255,255,255,.95); border-left-color:rgba(255,255,255,.3); }
     .side-nav-item.active { background: var(--clr-sidebar-active); color:#fff; font-weight:700; border-left-color:#3b82f6; }
-    .side-nav-item-solo { padding-left:14px; font-weight:700; color:rgba(255,255,255,.9); }
-    .side-nav-divider { height:1px; background:rgba(255,255,255,.1); margin:8px 0; }
 
     /* ── User Table ── */
     .user-row-selected td { background:var(--clr-surface-light) !important; }
@@ -390,8 +381,8 @@
       <img class="app-logo" src="https://sr-gmbh.de/wordpress/wp-content/uploads/2023/02/Logo-rund_negativ.png" alt="S+R Logo" style="background:#0c1a30;border-radius:50%;padding:4px;" />
     </div>
     <div>
-      <h1>S+R Assistent</h1>
-      <p class="app-subtitle">Rechnungsservice und Auswertungen für GoAffPro-Zahlungen.</p>
+      <h1>VEMMiNA Assistent</h1>
+      <p class="app-subtitle">Rechnungsservice, Validierungen und Auswertungen für VEMMiNA-Beraterinnen.</p>
     </div>
     <button id="hamburgerBtn" class="hamburger-btn" type="button" aria-label="Navigation oeffnen" title="Navigation">&#9776;</button>
     <div class="header-spacer"></div>
@@ -472,8 +463,6 @@
     let mailLogByPayment = new Map();
     let reminderLogByAdvisor = new Map();
     let analyticsLastPayload = null;
-    let currentUser = { isAdmin: true, department: 'ALL' };
-    let activeArea = "VEMMiNA";
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -2509,104 +2498,31 @@
       pollIntervalId = window.setInterval(pollOnce, 60000);
     }
 
-    function canSeeDepartment(dep) {
-      if (!currentUser) return false;
-      if (currentUser.isAdmin) return true;
-      const parts = String(currentUser.department || '').toUpperCase().split(',').map(s => s.trim());
-      return parts.includes(dep) || parts.includes('ALL');
-    }
-
-    function getDepartmentsFromForm() {
-      const checked = [];
-      if (document.getElementById('deptVEMMiNA')?.checked) checked.push('VEMMINA');
-      return checked.length ? checked.join(',') : 'VEMMINA';
-    }
-
-    function setDepartmentsInForm(deptString) {
-      const parts = String(deptString || '').toUpperCase().split(',').map(s => s.trim());
-      const vEl = document.getElementById('deptVEMMiNA');
-      if (vEl) vEl.checked = parts.includes('VEMMINA') || parts.includes('ALL');
-    }
-
-    function renderDeptPills(deptString) {
-      if (!deptString) return '';
-      const colors = { VEMMINA: '#3b82f6', ALL: '#6366f1' };
-      return deptString.toUpperCase().split(',').map(d => d.trim()).filter(Boolean).map(d => {
-        const bg = colors[d] || '#6b7280';
-        return `<span style="display:inline-block;padding:1px 8px;border-radius:9999px;background:${bg};color:#fff;font-size:12px;font-weight:600;margin:1px 2px;">${escapeHtml(d)}</span>`;
-      }).join('');
-    }
-
-    function switchArea(area) {
-      activeArea = area;
-      document.getElementById('vPanel')?.classList.toggle('active', area === 'VEMMiNA');
-    }
-
     function activateSideNavItem(panelId) {
       document.querySelectorAll('#sideNav .side-nav-item').forEach(b =>
         b.classList.toggle('active', b.dataset.panel === panelId));
-      switchArea('VEMMiNA');
       activateTab(panelId);
     }
 
     function renderSideNav() {
       const nav = document.getElementById('sideNav');
       if (!nav) return;
-      const badgeColors = { VEMMINA: '#3b82f6' };
-      const groups = [];
-      if (canSeeDepartment('VEMMINA')) {
-        // Backend lowercases the class name as panel ID, so look it up from the DOM
-        const mainPanelId = document.querySelector('#panels .panel')?.id || 'mainprovisionengoaffpro';
-        groups.push({ key: 'VEMMINA', dept: 'VEMMiNA', panelId: null, items: [
-          { label: 'Rechnungsservice', panelId: mainPanelId },
-          { label: 'Validierungen',    panelId: 'validation-panel' },
-          { label: 'Auswertungen',     panelId: 'analytics-panel' },
-        ]});
-      }
-      let html = '<div class="side-nav-section-label">Navigation</div>';
-      for (let gi = 0; gi < groups.length; gi++) {
-        const g = groups[gi];
-        if (gi > 0) html += '<div class="side-nav-divider"></div>';
-        const color = badgeColors[g.key] || '#6b7280';
-        const initial = g.dept.charAt(0).toUpperCase();
-        const groupId = `sngrp${gi}`;
-        if (g.items.length === 0) {
-          // Dept with no sub-items (e.g. LT) — single clickable row
-          html += `<button class="side-nav-item side-nav-item-solo" data-panel="${escapeHtml(g.panelId || g.key)}">
-            <span style="width:26px;height:26px;border-radius:7px;background:${color};display:inline-flex;align-items:center;justify-content:center;font-weight:700;font-size:12px;color:#fff;flex-shrink:0;margin-right:8px;">${escapeHtml(initial)}</span>
-            ${escapeHtml(g.dept)}
-          </button>`;
-        } else {
-          html += `<div class="side-nav-dept-header" data-group="${groupId}">
-            <span class="side-nav-dept-badge" style="background:${color};">${escapeHtml(initial)}</span>
-            <span class="side-nav-dept-name">${escapeHtml(g.dept)}</span>
-            <span class="side-nav-chevron open" id="${groupId}-chevron">&#8964;</span>
-          </div>
-          <div class="side-nav-subitems" id="${groupId}-items">`;
-          for (const item of g.items) {
-            html += `<button class="side-nav-item" data-panel="${escapeHtml(item.panelId)}">${escapeHtml(item.label)}</button>`;
-          }
-          html += `</div>`;
-        }
-      }
+      // Backend lowercases the class name as panel ID, so look it up from the DOM.
+      const mainPanelId = document.querySelector('#panels .panel')?.id || 'mainprovisionengoaffpro';
+      const activePanelId = document.querySelector('#panels .panel.active')?.id || mainPanelId;
+      const items = [
+        { label: 'Rechnungsservice', panelId: mainPanelId },
+        { label: 'Validierungen', panelId: 'validation-panel' },
+        { label: 'Auswertungen', panelId: 'analytics-panel' },
+      ];
+      const html = '<div class="side-nav-section-label">Navigation</div>'
+        + items.map(item => `<button class="side-nav-item" data-panel="${escapeHtml(item.panelId)}">${escapeHtml(item.label)}</button>`).join('');
       nav.innerHTML = html;
-      // Wire accordion toggles
-      nav.querySelectorAll('.side-nav-dept-header').forEach(header => {
-        const groupId = header.dataset.group;
-        const itemsEl = document.getElementById(`${groupId}-items`);
-        const chevronEl = document.getElementById(`${groupId}-chevron`);
-        // Set initial open state
-        if (itemsEl) itemsEl.style.maxHeight = itemsEl.scrollHeight + 'px';
-        header.addEventListener('click', () => {
-          const isOpen = itemsEl && itemsEl.style.maxHeight && itemsEl.style.maxHeight !== '0px';
-          if (itemsEl) itemsEl.style.maxHeight = isOpen ? '0px' : (itemsEl.scrollHeight + 'px');
-          chevronEl?.classList.toggle('open', !isOpen);
-        });
-      });
       nav.querySelectorAll('.side-nav-item').forEach(btn =>
         btn.addEventListener('click', () => activateSideNavItem(btn.dataset.panel)));
-      const firstBtn = nav.querySelector('.side-nav-item');
-      if (firstBtn) activateSideNavItem(firstBtn.dataset.panel);
+      const activeBtn = Array.from(nav.querySelectorAll('.side-nav-item'))
+        .find(btn => btn.dataset.panel === activePanelId) || nav.querySelector('.side-nav-item');
+      if (activeBtn) activateSideNavItem(activeBtn.dataset.panel);
     }
 
     function initHamburgerToggle() {
@@ -2661,12 +2577,10 @@
     async function init() {
       try {
         const mainExecutable = { id: 'mainprovisionengoaffpro', name: 'MainProvisionenGoaffpro', path: '' };
-        if (canSeeDepartment('VEMMINA')) {
-          createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
-          createValidationTabAndPanel();
-          createAnalyticsTabAndPanel();
-          createHelpTabAndPanel();
-        }
+        createTabAndPanel({ ...mainExecutable, displayName: 'Rechnungsservice' }, true);
+        createValidationTabAndPanel();
+        createAnalyticsTabAndPanel();
+        createHelpTabAndPanel();
         renderSideNav();
         initHamburgerToggle();
         wireTabSwitching();
@@ -2674,10 +2588,7 @@
         await loadHelpDocumentation();
         wireVersionPopup();
         document.getElementById('headerHelpBtn')?.addEventListener('click', () => {
-          const mainTab = document.querySelector('.tab[data-target="mainprovisionengoaffpro"]');
-          if (mainTab) mainTab.click();
-          document.querySelectorAll('#panels .panel').forEach(p => p.classList.toggle('active', p.id === 'help-panel'));
-          document.querySelectorAll('#tabs .tab').forEach(t => t.classList.remove('active'));
+          activateSideNavItem('help-panel');
         });
         document.getElementById('headerSettingsBtn')?.addEventListener('click', openSettingsOverlay);
         document.getElementById('settingsOverlayCloseBtn')?.addEventListener('click', closeSettingsOverlay);

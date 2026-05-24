@@ -1,6 +1,8 @@
 # Hilfe- und Funktionsdokumentation (deutsch)
 
-Diese Dokumentation beschreibt die wichtigsten Funktionen der Anwendung **VEMMiNA Provisionssystem**.
+Diese Dokumentation beschreibt die wichtigsten Funktionen der Anwendung **VEMMiNA Assistent**.
+
+Die Navigation ist bewusst flach aufgebaut: **Rechnungsservice**, **Validierungen** und **Auswertungen** stehen direkt in der Sidebar. Die **Hilfe** ist über den Button im Kopfbereich erreichbar. Eine zusätzliche VEMMiNA-Obergruppe wird nicht mehr angezeigt.
 
 ## 1) Hauptfunktionen im Arbeitsbereich
 
@@ -82,7 +84,7 @@ Diese Dokumentation beschreibt die wichtigsten Funktionen der Anwendung **VEMMiN
 - `apiGet`, `apiPost`, `fetchExecutables`, `init`
 
 ### UI-Struktur & Navigation
-- `createTabAndPanel`, `createAnalyticsTabAndPanel`, `activateTab`, `wireTabSwitching`, `wireMainSectionTabs`
+- `createTabAndPanel`, `createAnalyticsTabAndPanel`, `activateTab`, `renderSideNav`, `wireTabSwitching`, `wireMainSectionTabs`
 
 ### Tabelle
 - `rowKey`, `formatEuroAmount`, `filteredRows`, `renderTable`, `wireSortingAndFiltering`
