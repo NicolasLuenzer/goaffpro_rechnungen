@@ -83,6 +83,7 @@ public class WebUiServer {
     private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
     private static final List<String> DEFAULT_COMMISSION_HISTORY = List.of("2103705", "2167905", "2190357", "2230376", "2336836", "2421355", "2497986", "2565325");
     private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
+    private static final Object CONFIG_LOCK = new Object();
 
     public static void main(String[] args) throws IOException {
         HttpServer server;
@@ -1520,19 +1521,22 @@ public class WebUiServer {
                 Files.createDirectories(runExportDir);
 
                 String timestamp = FILE_TIMESTAMP.format(LocalDateTime.now());
-                String baseFilename = "rechnungsdetails_" + sanitizeFilename(paymentId) + "_" + timestamp;
+                String gutschriftNr = generateNextGutschriftNumber(config);
+                boolean isKleinunternehmer = affiliate == null || asText(affiliate, "tax_identification_number").isBlank();
+                String periodLabel = buildPaymentPeriodLabel(payment);
+                String baseFilename = "provisionsnachweis_" + sanitizeFilename(gutschriftNr) + "_" + timestamp;
                 Path pdfPath = runExportDir.resolve(baseFilename + ".pdf");
                 Path jsonPath = runExportDir.resolve(baseFilename + ".json");
                 boolean eInvoiceAttachAndStoreEnabled = includeEInvoiceArtifactsRequest != null
                         ? includeEInvoiceArtifactsRequest
                         : Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
-                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("rechnung_" + sanitizeFilename(paymentId) + "_" + timestamp + ".xml") : null;
-                Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("rechnung_" + sanitizeFilename(paymentId) + "_" + timestamp + ".pdf") : null;
-                createInvoiceDetailsPdf(pdfPath, response, affiliate, config);
+                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("gutschrift_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".xml") : null;
+                Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("gutschrift_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".pdf") : null;
+                createInvoiceDetailsPdf(pdfPath, response, affiliate, config, gutschriftNr);
                 writeOriginalJson(jsonPath, response);
                 if (eInvoiceAttachAndStoreEnabled) {
-                    createZugferdInvoiceXml(zugferdPath, payment, affiliate, config);
-                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, payment, affiliate, config);
+                    createZugferdInvoiceXml(zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer);
+                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer);
                 }
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
@@ -1547,11 +1551,10 @@ public class WebUiServer {
                     sendResponse(exchange, 400, "application/json", "{\"error\":\"" + escapeJson(errorText) + "\"}");
                     return;
                 }
-                String periodLabel = buildPaymentPeriodLabel(payment);
                 if (sendEmailsEnabled) {
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config));
-                    String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + ((affiliateNameForMail == null || affiliateNameForMail.isBlank()) ? "Beraterin" : affiliateNameForMail.trim());
+                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config), gutschriftNr);
+                    String subject = "Ihre VEMMiNA-Provisionsgutschrift " + gutschriftNr + " – " + periodLabel;
                     appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath);
                 }
 
@@ -1572,7 +1575,7 @@ public class WebUiServer {
                 persistSettings(config);
 
                 Map<String, Object> payload = new HashMap<>();
-                payload.put("message", sendEmailsEnabled ? ("advisor".equals(emailRecipientMode) ? "Rechnungsdetails-PDF erstellt und an Beraterinnen-E-Mail versendet." : "Rechnungsdetails-PDF erstellt und an Kontakt-E-Mail versendet.") : "Rechnungsdetails-PDF erstellt (E-Mail-Versand deaktiviert).");
+                payload.put("message", sendEmailsEnabled ? ("advisor".equals(emailRecipientMode) ? "Gutschrift-PDF erstellt und an Beraterinnen-E-Mail versendet." : "Gutschrift-PDF erstellt und an Kontakt-E-Mail versendet.") : "Gutschrift-PDF erstellt (E-Mail-Versand deaktiviert).");
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
@@ -1590,7 +1593,7 @@ public class WebUiServer {
             }
         }
 
-        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate, Properties config) throws IOException {
+        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate, Properties config, String gutschriftNr) throws IOException {
             try (PDDocument document = new PDDocument()) {
                 JsonNode payments = apiResponse.get("payments");
                 JsonNode payment = (payments != null && payments.isArray() && payments.size() > 0) ? payments.get(0) : null;
@@ -1677,7 +1680,7 @@ public class WebUiServer {
                     float keyWidth = totalWidth * 0.30f;
                     float valueWidth = totalWidth * 0.70f;
 
-                    String titleText = "Provisionsnachweis (Zahllauf) – Direkt- und Team-Provisionen";
+                    String titleText = "Provisionsübersicht zur Gutschrift " + gutschriftNr;
                     List<String> titleLines = wrapForPdf(titleText, 46);
                     float titleLineHeight = 22f;
                     float heroHeight = Math.max(62f, 18f + (titleLines.size() * titleLineHeight));
@@ -1785,7 +1788,7 @@ public class WebUiServer {
                     String[] notes = new String[]{
                             "• Diesen Provisionsnachweis zusammen mit dem Kontoauszug (Zahlungseingang/SEPA-Gutschrift) ablegen.",
                             "• Falls ihr umsatzsteuerpflichtig seid: prüfen, ob die Provision netto/brutto ausgewiesen werden muss.",
-                            "• Bei Kleinunternehmerregelung (§ 19 UStG): sicherstellen, dass eure Belege/Rechnungen passen.",
+                            "• Bei Kleinunternehmerregelung (§ 19 UStG): sicherstellen, dass die Gutschrift korrekt ausgestellt wurde.",
                             "• Team-/Downline-Provisionen: Referenzen im System aufbewahren und bei Bedarf nachreichen.",
                             "• Aufbewahrung: Unterlagen nach Jahr/Monat/Zahllauf archivieren.",
                             "• Stammdaten aktuell halten (Name/IBAN/Adresse/Steuernummer), damit Zuordnung eindeutig bleibt."
@@ -1803,7 +1806,7 @@ public class WebUiServer {
 
                     y -= 8;
                     String nachweisFirmenname = Objects.toString(config.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH").trim();
-                    String providerNote = "Dieser Nachweis wurde von der " + nachweisFirmenname + " bereitgestellt. " +
+                    String providerNote = "Diese Provisionsübersicht wurde von der " + nachweisFirmenname + " als Anlage zur Gutschrift " + gutschriftNr + " gemäß § 14 UStG erstellt. " +
                             "Bei Rückfragen wenden Sie sich bitte an info@vemmina.com. " +
                             "Die zugrundeliegenden Rohdaten können bei Bedarf angefragt werden.";
                     for (String line : wrapForPdf(providerNote, 100)) {
@@ -2355,10 +2358,11 @@ public class WebUiServer {
         }
     }
 
-    private static void createZugferdInvoiceXml(Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config) throws IOException {
+    private static void createZugferdInvoiceXml(Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
+                                                String gutschriftNr, String periodLabel, boolean isKleinunternehmer) throws IOException {
         boolean enabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true"));
         if (!enabled) {
-            Files.writeString(xmlPath, "<!-- ZUGFeRD deaktiviert -->", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            Files.writeString(xmlPath, "<!-- ZUGFeRD/E-Gutschrift deaktiviert -->", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             return;
         }
 
@@ -2383,11 +2387,18 @@ public class WebUiServer {
         String bankAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
         if (bankAccountHolder.isBlank()) bankAccountHolder = parseAffiliatePaymentField(affiliate, "name");
 
-        String invoiceId = asText(payment, "id");
         String issueDate = formatDateYmd(asText(payment, "created_at"));
         String currency = asText(payment, "currency");
         if (currency.isBlank()) currency = "EUR";
-        double amount = parseDoubleSafeStatic(asText(payment, "amount"));
+        double netAmount = parseDoubleSafeStatic(asText(payment, "amount"));
+        double vatAmount = calculateVat(netAmount, isKleinunternehmer);
+        double grossAmount = netAmount + vatAmount;
+
+        // Tax block: E = exempt (§19 Kleinunternehmer), S = standard 19%
+        String taxCategoryCode = isKleinunternehmer ? "E" : "S";
+        String taxRatePercent = isKleinunternehmer ? "0" : "19";
+        String taxExemptionReason = isKleinunternehmer
+                ? "<ram:ExemptionReason>Steuerbefreiung gem. § 19 UStG (Kleinunternehmerregelung)</ram:ExemptionReason>" : "";
 
         String xml = """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -2400,11 +2411,25 @@ public class WebUiServer {
                     </ram:GuidelineSpecifiedDocumentContextParameter>
                   </rsm:ExchangedDocumentContext>
                   <rsm:ExchangedDocument>
-                    <ram:ID>{{invoiceId}}</ram:ID>
-                    <ram:TypeCode>380</ram:TypeCode>
+                    <ram:ID>{{gutschriftNr}}</ram:ID>
+                    <ram:TypeCode>389</ram:TypeCode>
                     <ram:IssueDateTime><udt:DateTimeString format="102">{{issueDate}}</udt:DateTimeString></ram:IssueDateTime>
                   </rsm:ExchangedDocument>
                   <rsm:SupplyChainTradeTransaction>
+                    <ram:IncludedSupplyChainTradeLineItem>
+                      <ram:AssociatedDocumentLineDocument><ram:LineID>1</ram:LineID></ram:AssociatedDocumentLineDocument>
+                      <ram:SpecifiedTradeProduct><ram:Name>Vermittlungsprovision {{periodLabel}}</ram:Name></ram:SpecifiedTradeProduct>
+                      <ram:SpecifiedLineTradeSettlement>
+                        <ram:ApplicableTradeTax>
+                          <ram:TypeCode>VAT</ram:TypeCode>
+                          <ram:CategoryCode>{{taxCategoryCode}}</ram:CategoryCode>
+                          <ram:RateApplicablePercent>{{taxRatePercent}}</ram:RateApplicablePercent>
+                        </ram:ApplicableTradeTax>
+                        <ram:SpecifiedTradeSettlementLineMonetarySummation>
+                          <ram:LineTotalAmount>{{netAmount}}</ram:LineTotalAmount>
+                        </ram:SpecifiedTradeSettlementLineMonetarySummation>
+                      </ram:SpecifiedLineTradeSettlement>
+                    </ram:IncludedSupplyChainTradeLineItem>
                     <ram:ApplicableHeaderTradeAgreement>
                       <ram:SellerTradeParty>
                         <ram:Name>{{sellerName}}</ram:Name>
@@ -2418,8 +2443,17 @@ public class WebUiServer {
                         <ram:SpecifiedTaxRegistration><ram:ID schemeID="FC">{{buyerTaxNumber}}</ram:ID></ram:SpecifiedTaxRegistration>
                       </ram:BuyerTradeParty>
                     </ram:ApplicableHeaderTradeAgreement>
+                    <ram:ApplicableHeaderTradeDelivery/>
                     <ram:ApplicableHeaderTradeSettlement>
                       <ram:InvoiceCurrencyCode>{{currency}}</ram:InvoiceCurrencyCode>
+                      <ram:ApplicableTradeTax>
+                        <ram:CalculatedAmount>{{vatAmount}}</ram:CalculatedAmount>
+                        <ram:TypeCode>VAT</ram:TypeCode>
+                        {{taxExemptionReason}}
+                        <ram:BasisAmount>{{netAmount}}</ram:BasisAmount>
+                        <ram:CategoryCode>{{taxCategoryCode}}</ram:CategoryCode>
+                        <ram:RateApplicablePercent>{{taxRatePercent}}</ram:RateApplicablePercent>
+                      </ram:ApplicableTradeTax>
                       <ram:SpecifiedTradeSettlementPaymentMeans>
                         <ram:TypeCode>58</ram:TypeCode>
                         <ram:PayeePartyCreditorFinancialAccount><ram:IBANID>{{bankIban}}</ram:IBANID><ram:AccountName>{{bankAccountHolder}}</ram:AccountName></ram:PayeePartyCreditorFinancialAccount>
@@ -2427,16 +2461,18 @@ public class WebUiServer {
                       </ram:SpecifiedTradeSettlementPaymentMeans>
                       <ram:SpecifiedTradePaymentTerms><ram:Description>{{paymentTerms}}</ram:Description></ram:SpecifiedTradePaymentTerms>
                       <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
-                        <ram:LineTotalAmount>{{amount}}</ram:LineTotalAmount>
-                        <ram:GrandTotalAmount>{{amount}}</ram:GrandTotalAmount>
-                        <ram:DuePayableAmount>{{amount}}</ram:DuePayableAmount>
+                        <ram:LineTotalAmount>{{netAmount}}</ram:LineTotalAmount>
+                        <ram:TaxTotalAmount currencyID="{{currency}}">{{vatAmount}}</ram:TaxTotalAmount>
+                        <ram:GrandTotalAmount>{{grossAmount}}</ram:GrandTotalAmount>
+                        <ram:DuePayableAmount>{{grossAmount}}</ram:DuePayableAmount>
                       </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
                     </ram:ApplicableHeaderTradeSettlement>
                   </rsm:SupplyChainTradeTransaction>
                 </rsm:CrossIndustryInvoice>
                 """;
-        xml = xml.replace("{{invoiceId}}", escapeXml(invoiceId))
+        xml = xml.replace("{{gutschriftNr}}", escapeXml(gutschriftNr))
                 .replace("{{issueDate}}", escapeXml(issueDate))
+                .replace("{{periodLabel}}", escapeXml(periodLabel))
                 .replace("{{sellerName}}", escapeXml(sellerName))
                 .replace("{{sellerStreet}}", escapeXml(sellerStreet))
                 .replace("{{sellerZip}}", escapeXml(sellerZip))
@@ -2455,7 +2491,12 @@ public class WebUiServer {
                 .replace("{{bankAccountHolder}}", escapeXml(bankAccountHolder))
                 .replace("{{bankBic}}", escapeXml(bankBic))
                 .replace("{{paymentTerms}}", escapeXml(paymentTerms))
-                .replace("{{amount}}", String.format(java.util.Locale.US, "%.2f", amount));
+                .replace("{{taxCategoryCode}}", taxCategoryCode)
+                .replace("{{taxRatePercent}}", taxRatePercent)
+                .replace("{{taxExemptionReason}}", taxExemptionReason)
+                .replace("{{netAmount}}", String.format(java.util.Locale.US, "%.2f", netAmount))
+                .replace("{{vatAmount}}", String.format(java.util.Locale.US, "%.2f", vatAmount))
+                .replace("{{grossAmount}}", String.format(java.util.Locale.US, "%.2f", grossAmount));
 
         Files.writeString(xmlPath, xml, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
@@ -2756,7 +2797,7 @@ public class WebUiServer {
         Files.writeString(jsonPath, pretty, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig, String gutschriftNr) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -2774,11 +2815,11 @@ public class WebUiServer {
         }
 
         String displayName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
-        String subject = "Provisionszahlung für den Zeitraum " + periodLabel + " - " + displayName;
+        String subject = "Ihre VEMMiNA-Provisionsgutschrift " + gutschriftNr + " – " + periodLabel;
         message.setSubject(subject, StandardCharsets.UTF_8.name());
 
-        String plainTextBody = buildInvoiceMailBody(payment, affiliate, periodLabel);
-        String htmlBody = buildInvoiceMailHtml(payment, affiliate, periodLabel, configuredEmailTemplateHtml);
+        String plainTextBody = buildInvoiceMailBody(payment, affiliate, periodLabel, gutschriftNr);
+        String htmlBody = buildInvoiceMailHtml(payment, affiliate, periodLabel, configuredEmailTemplateHtml, gutschriftNr);
 
         MimeBodyPart contentPart = new MimeBodyPart();
         MimeMultipart alternative = new MimeMultipart("alternative");
@@ -2840,7 +2881,7 @@ public class WebUiServer {
     }
 
 
-    private static String buildInvoiceMailBody(JsonNode payment, JsonNode affiliate, String periodLabel) {
+    private static String buildInvoiceMailBody(JsonNode payment, JsonNode affiliate, String periodLabel, String gutschriftNr) {
         String affiliateName = affiliate != null ? asText(affiliate, "name") : "";
         String salutationName = (affiliateName == null || affiliateName.isBlank()) ? "liebe Beraterin" : ("liebe " + affiliateName.trim());
         String paymentId = payment != null ? asText(payment, "id") : "";
@@ -2855,24 +2896,26 @@ public class WebUiServer {
         return """
                 Hallo %s,
 
-                gerade hat ein neuer Zahllauf stattgefunden. Ihre Provision ist damit zur Auszahlung vorgesehen. Die Überweisung sollte in der Regel innerhalb der nächsten 2 Bankarbeitstage auf Ihrem Konto eingehen.
+                der Provisionslauf für %s wurde abgeschlossen.
 
-                Kurze Übersicht zu Ihrem aktuellen Zahllauf:
+                Im Anhang finden Sie Ihre Gutschrift %s (PDF) gemäß § 14 UStG sowie die Provisionsübersicht mit den vermittelten Aufträgen.
+
+                Kurze Übersicht:
+                - Gutschriftnummer: %s
                 - Zeitraum: %s
-                - Zahllauf-ID: %s
                 - Auszahlungsbetrag: %s
                 - Zahlungsmethode: %s
                 - Auszahlungsdatum (System): %s
                 - Anzahl Transaktionen: %s
 
-                Im Anhang finden Sie Ihren Provisionsnachweis als PDF sowie die zugehörige JSON-Datei.
+                Bitte prüfen Sie die Unterlagen. Falls Ihnen Abweichungen auffallen, melden Sie sich bitte zeitnah bei uns.
 
                 Viele Grüße
                 Ihr VEMMiNA Team
-                """.formatted(salutationName, periodLabel, paymentId, payout, method, created, txCount);
+                """.formatted(salutationName, periodLabel, gutschriftNr, gutschriftNr, periodLabel, payout, method, created, txCount);
     }
 
-    private static String buildInvoiceMailHtml(JsonNode payment, JsonNode affiliate, String periodLabel, String configuredTemplateHtml) {
+    private static String buildInvoiceMailHtml(JsonNode payment, JsonNode affiliate, String periodLabel, String configuredTemplateHtml, String gutschriftNr) {
         String affiliateName = affiliate != null ? asText(affiliate, "name") : "";
         String salutationName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
         String paymentId = payment != null ? asText(payment, "id") : "-";
@@ -2891,6 +2934,7 @@ public class WebUiServer {
         return template
                 .replace("{{salutationName}}", escapeHtmlEmail(salutationName))
                 .replace("{{periodLabel}}", escapeHtmlEmail(periodLabel))
+                .replace("{{gutschriftNr}}", escapeHtmlEmail(gutschriftNr))
                 .replace("{{paymentId}}", escapeHtmlEmail(paymentId))
                 .replace("{{payout}}", escapeHtmlEmail(payout))
                 .replace("{{method}}", escapeHtmlEmail(method))
@@ -2910,25 +2954,25 @@ public class WebUiServer {
                           <tr>
                             <td style="padding:26px 28px;background:linear-gradient(135deg,#6FA3C4 0%,#5c8fb1 100%);color:#ffffff;">
                               <p style="margin:0;font-size:13px;letter-spacing:1.2px;text-transform:uppercase;opacity:0.88;">VEMMiNA</p>
-                              <h1 style="margin:8px 0 6px 0;font-size:34px;line-height:1.2;">Provisionsinformation</h1>
-                              <p style="margin:0;font-size:16px;line-height:1.5;opacity:0.95;">Ihr aktueller Zahllauf wurde erfolgreich verarbeitet.</p>
+                              <h1 style="margin:8px 0 6px 0;font-size:34px;line-height:1.2;">Ihre Provisionsgutschrift</h1>
+                              <p style="margin:0;font-size:16px;line-height:1.5;opacity:0.95;">Der Provisionslauf für {{periodLabel}} wurde abgeschlossen.</p>
                             </td>
                           </tr>
                           <tr>
                             <td style="padding:28px;">
                               <p style="margin:0 0 14px 0;font-size:24px;line-height:1.35;color:#1e293b;">Hallo {{salutationName}},</p>
-                              <p style="margin:0 0 18px 0;font-size:16px;line-height:1.7;color:#334155;">wir haben einen neuen Zahllauf für Sie verarbeitet. Die Auszahlung sollte in der Regel innerhalb der nächsten 2 Bankarbeitstage auf Ihrem Konto eingehen.</p>
+                              <p style="margin:0 0 18px 0;font-size:16px;line-height:1.7;color:#334155;">im Anhang finden Sie Ihre Gutschrift gemäß § 14 UStG sowie die Provisionsübersicht mit den vermittelten Aufträgen. Bitte prüfen Sie die Unterlagen.</p>
 
                               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:separate;border-spacing:0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Gutschriftnummer</strong><br/>{{gutschriftNr}}</td></tr>
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Zeitraum</strong><br/>{{periodLabel}}</td></tr>
-                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Zahllauf-ID</strong><br/>{{paymentId}}</td></tr>
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Auszahlungsbetrag</strong><br/><span style="font-size:20px;font-weight:700;color:#108474;">{{payout}}</span></td></tr>
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Zahlungsmethode</strong><br/>{{method}}</td></tr>
-                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Auszahlungsdatum (System)</strong><br/>{{created}}</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Ausstellungsdatum</strong><br/>{{created}}</td></tr>
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;"><strong>Anzahl Transaktionen</strong><br/>{{txCount}}</td></tr>
                               </table>
 
-                              <p style="margin:18px 0 0 0;font-size:15px;line-height:1.7;color:#334155;">Im Anhang finden Sie Ihren Provisionsnachweis als PDF sowie die zugehörige JSON-Datei.</p>
+                              <p style="margin:18px 0 0 0;font-size:15px;line-height:1.7;color:#334155;">Falls Ihnen Abweichungen auffallen, melden Sie sich bitte zeitnah bei uns.</p>
                             </td>
                           </tr>
                           <tr>
@@ -3059,7 +3103,8 @@ public class WebUiServer {
         }
     }
 
-    private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config) throws IOException {
+    private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
+                                                         String gutschriftNr, String periodLabel, boolean isKleinunternehmer) throws IOException {
         // Extract variables
         String advisorName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
         String advisorAddressOneLiner = formatAffiliateAddress(affiliate);
@@ -3072,7 +3117,12 @@ public class WebUiServer {
         if (advisorAccountHolder.isBlank()) advisorAccountHolder = advisorName;
         String paymentId = payment != null ? asText(payment, "id") : "-";
         String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
-        String amount = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
+        double netAmount = parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0");
+        double vatAmount = calculateVat(netAmount, isKleinunternehmer);
+        double grossAmount = netAmount + vatAmount;
+        String amount = euroStatic(netAmount);
+        String vatAmountStr = euroStatic(vatAmount);
+        String grossAmountStr = euroStatic(grossAmount);
         String buyerCompanyName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "").trim();
         String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
         String buyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
@@ -3111,10 +3161,10 @@ public class WebUiServer {
                 float colR = left + usableW * 0.55f;
                 float startY2col = y;
 
-                // LEFT: buyer address block
+                // LEFT: buyer address block (Gutschriftausstellerin = VEMMiNA)
                 cs.setNonStrokingColor(new Color(130, 130, 130));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8f);
-                cs.newLineAtOffset(colL, y); cs.showText("Rechnungsempf\u00e4nger"); cs.endText();
+                cs.newLineAtOffset(colL, y); cs.showText("Gutschriftausstellerin (Leistungsempf\u00e4ngerin)"); cs.endText();
                 y -= 14f;
                 cs.setNonStrokingColor(new Color(15, 15, 15));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 12f);
@@ -3152,7 +3202,7 @@ public class WebUiServer {
                 if (!advisorEmail.isBlank()) metaRows.add(new String[]{"E-Mail:", advisorEmail});
                 if (!advisorPhone.isBlank()) metaRows.add(new String[]{"Telefon:", advisorPhone});
                 if (!advisorTaxNumber.isBlank()) metaRows.add(new String[]{"Steuernummer:", advisorTaxNumber});
-                metaRows.add(new String[]{"Rechnungsnummer:", paymentId});
+                metaRows.add(new String[]{"Gutschriftnummer:", gutschriftNr});
                 metaRows.add(new String[]{"Datum:", created});
                 float lblW = 82f;
                 for (String[] row : metaRows) {
@@ -3166,7 +3216,7 @@ public class WebUiServer {
                 }
                 y = Math.min(leftEndY, ry) - 14f;
 
-                // ── INVOICE TITLE BOX ──
+                // ── GUTSCHRIFT TITLE BOX ──
                 float boxH = 28f;
                 cs.setNonStrokingColor(new Color(235, 235, 235));
                 cs.addRect(left, y - boxH, usableW, boxH); cs.fill();
@@ -3175,12 +3225,19 @@ public class WebUiServer {
                 cs.setNonStrokingColor(new Color(15, 15, 15));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 13f);
                 cs.newLineAtOffset(left + 8f, y - 19f);
-                cs.showText("RECHNUNG  Nr. " + sanitizePdfText(paymentId)); cs.endText();
+                cs.showText("GUTSCHRIFT  Nr. " + sanitizePdfText(gutschriftNr)); cs.endText();
                 cs.setNonStrokingColor(new Color(80, 80, 80));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 9.5f);
                 cs.newLineAtOffset(right - 135f, y - 19f);
                 cs.showText("Datum: " + sanitizePdfText(created)); cs.endText();
-                y -= boxH + 14f;
+                y -= boxH + 6f;
+                // §14-Untertitel
+                cs.setNonStrokingColor(new Color(80, 80, 80));
+                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8f);
+                cs.newLineAtOffset(left + 8f, y - 2f);
+                cs.showText("Gutschrift gemäß § 14 Abs. 2 Satz 5 UStG – Provisionszeitraum: " + sanitizePdfText(periodLabel));
+                cs.endText();
+                y -= 16f;
 
                 // ── ITEM TABLE ──
                 float rowH = 22f;
@@ -3209,7 +3266,7 @@ public class WebUiServer {
                 cs.setNonStrokingColor(new Color(30, 30, 30));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
                 cs.newLineAtOffset(cx[0] + 4f, y - 16f); cs.showText("1"); cs.endText();
-                String desc = "Provisionsabrechnung Zahllauf " + sanitizePdfText(paymentId);
+                String desc = "Vermittlungsprovision – " + sanitizePdfText(periodLabel);
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
                 cs.newLineAtOffset(cx[1] + 4f, y - 16f);
                 cs.showText(sanitizePdfText(shortenForPdf(desc, 48))); cs.endText();
@@ -3234,18 +3291,29 @@ public class WebUiServer {
                 cs.newLineAtOffset(tValX, y - 14f); cs.showText(sanitizePdfText(amount)); cs.endText();
                 y -= 20f;
 
-                // VAT note
-                cs.setNonStrokingColor(new Color(242, 242, 242));
-                cs.addRect(tX, y - 26f, tW, 26f); cs.fill();
-                cs.setStrokingColor(new Color(200, 200, 200));
-                cs.addRect(tX, y - 26f, tW, 26f); cs.stroke();
-                cs.setNonStrokingColor(new Color(80, 80, 80));
-                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
-                cs.newLineAtOffset(tX + 4f, y - 11f);
-                cs.showText("Gem. \u00a7 19 UStG wird keine Umsatzsteuer"); cs.endText();
-                cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
-                cs.newLineAtOffset(tX + 4f, y - 20f); cs.showText("berechnet."); cs.endText();
-                y -= 26f;
+                // VAT row
+                if (isKleinunternehmer) {
+                    cs.setNonStrokingColor(new Color(242, 242, 242));
+                    cs.addRect(tX, y - 26f, tW, 26f); cs.fill();
+                    cs.setStrokingColor(new Color(200, 200, 200));
+                    cs.addRect(tX, y - 26f, tW, 26f); cs.stroke();
+                    cs.setNonStrokingColor(new Color(80, 80, 80));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
+                    cs.newLineAtOffset(tX + 4f, y - 11f);
+                    cs.showText("Gem. \u00a7 19 UStG wird keine Umsatzsteuer"); cs.endText();
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
+                    cs.newLineAtOffset(tX + 4f, y - 20f); cs.showText("berechnet."); cs.endText();
+                    y -= 26f;
+                } else {
+                    cs.setStrokingColor(new Color(200, 200, 200)); cs.setLineWidth(0.4f);
+                    cs.addRect(tX, y - 20f, tW, 20f); cs.stroke();
+                    cs.setNonStrokingColor(new Color(40, 40, 40));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                    cs.newLineAtOffset(tX + 4f, y - 14f); cs.showText("Umsatzsteuer (19 %)"); cs.endText();
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
+                    cs.newLineAtOffset(tValX, y - 14f); cs.showText(sanitizePdfText(vatAmountStr)); cs.endText();
+                    y -= 20f;
+                }
 
                 // Grand Total
                 cs.setNonStrokingColor(new Color(225, 225, 225));
@@ -3254,9 +3322,9 @@ public class WebUiServer {
                 cs.addRect(tX, y - 24f, tW, 24f); cs.stroke();
                 cs.setNonStrokingColor(new Color(15, 15, 15));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 11f);
-                cs.newLineAtOffset(tX + 4f, y - 16f); cs.showText("Gesamtbetrag"); cs.endText();
+                cs.newLineAtOffset(tX + 4f, y - 16f); cs.showText("Auszahlungsbetrag"); cs.endText();
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 11f);
-                cs.newLineAtOffset(tValX, y - 16f); cs.showText(sanitizePdfText(amount)); cs.endText();
+                cs.newLineAtOffset(tValX, y - 16f); cs.showText(sanitizePdfText(grossAmountStr)); cs.endText();
                 y -= 24f + 20f;
 
                 // ── PAYMENT TERMS ──
@@ -3289,6 +3357,22 @@ public class WebUiServer {
                     cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
                     cs.newLineAtOffset(left + 55f, y); cs.showText(sanitizePdfText(br[1])); cs.endText();
                     y -= 12f;
+                }
+
+                // ── WIDERSPRUCHSHINWEIS ──
+                y -= 8f;
+                cs.setStrokingColor(new Color(200, 200, 200)); cs.setLineWidth(0.4f);
+                cs.moveTo(left, y); cs.lineTo(right, y); cs.stroke();
+                y -= 12f;
+                String[] widerspruchLines = {
+                    "Bitte prüfen Sie diese Gutschrift. Abweichungen teilen Sie uns bitte unverzüglich mit.",
+                    "Die Gutschrift verliert ihre Wirkung als Rechnung, soweit ihr widersprochen wird."
+                };
+                for (String wl : widerspruchLines) {
+                    cs.setNonStrokingColor(new Color(80, 80, 80));
+                    cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7.5f);
+                    cs.newLineAtOffset(left, y); cs.showText(sanitizePdfText(wl)); cs.endText();
+                    y -= 10f;
                 }
 
                 // ── BOTTOM FOOTER ──
@@ -3391,7 +3475,8 @@ public class WebUiServer {
         return lines;
     }
 
-    private static String renderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate, Properties config) {
+    private static String renderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate, Properties config,
+                                                    String gutschriftNr, String periodLabel, boolean isKleinunternehmer) {
         String advisorName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
         String advisorAddress = formatAffiliateAddress(affiliate);
         String advisorEmail = affiliate != null ? asText(affiliate, "email") : "";
@@ -3399,7 +3484,13 @@ public class WebUiServer {
         String tax = affiliate != null ? asText(affiliate, "tax_identification_number") : "";
         String paymentId = payment != null ? asText(payment, "id") : "-";
         String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
-        String amount = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
+        double netAmountVal = parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0");
+        double vatAmountVal = calculateVat(netAmountVal, isKleinunternehmer);
+        double grossAmountVal = netAmountVal + vatAmountVal;
+        String amount = euroStatic(netAmountVal);
+        String vatAmountFormatted = euroStatic(vatAmountVal);
+        String grossAmountFormatted = euroStatic(grossAmountVal);
+        String vatLine = isKleinunternehmer ? "Gem. § 19 UStG keine USt." : "Umsatzsteuer (19 %)";
         String currency = payment != null ? asText(payment, "currency") : "EUR";
         String buyerCompanyName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
         String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
@@ -3431,8 +3522,13 @@ public class WebUiServer {
                 .replace("{{buyerAddress}}", escapeHtmlEmail(buyerAddress))
                 .replace("{{buyerVatId}}", escapeHtmlEmail(buyerVatId))
                 .replace("{{buyerTaxNumber}}", escapeHtmlEmail(buyerTaxNumber))
-                .replace("{{invoiceNumber}}", escapeHtmlEmail(paymentId))
+                .replace("{{gutschriftNr}}", escapeHtmlEmail(gutschriftNr))
+                .replace("{{invoiceNumber}}", escapeHtmlEmail(gutschriftNr))
                 .replace("{{paymentId}}", escapeHtmlEmail(paymentId))
+                .replace("{{periodLabel}}", escapeHtmlEmail(periodLabel))
+                .replace("{{vatLine}}", escapeHtmlEmail(vatLine))
+                .replace("{{vatAmount}}", escapeHtmlEmail(vatAmountFormatted))
+                .replace("{{grossAmount}}", escapeHtmlEmail(grossAmountFormatted))
                 .replace("{{created}}", escapeHtmlEmail(created))
                 .replace("{{amount}}", escapeHtmlEmail(amount))
                 .replace("{{currency}}", escapeHtmlEmail(currency));
@@ -3445,12 +3541,14 @@ public class WebUiServer {
                 <div style="max-width:900px;margin:0 auto;background:#fff;border:1px solid #d1d5db;padding:22px;">
                   <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
                     <div>
-                      <div style="font-size:22px;font-weight:700;letter-spacing:.3px;">RECHNUNG</div>
-                      <div style="margin-top:6px;font-size:13px;color:#374151;">Rechnungsnummer: <b>{{invoiceNumber}}</b></div>
+                      <div style="font-size:22px;font-weight:700;letter-spacing:.3px;">GUTSCHRIFT</div>
+                      <div style="margin-top:4px;font-size:12px;color:#6b7280;">Gutschrift gemäß § 14 Abs. 2 Satz 5 UStG</div>
+                      <div style="margin-top:6px;font-size:13px;color:#374151;">Gutschriftnummer: <b>{{gutschriftNr}}</b></div>
                       <div style="font-size:13px;color:#374151;">Datum: {{created}}</div>
+                      <div style="font-size:13px;color:#374151;">Provisionszeitraum: {{periodLabel}}</div>
                     </div>
                     <div style="text-align:right;font-size:12px;color:#4b5563;">
-                      <div><b>Rechnungsstellerin</b></div>
+                      <div><b>Gutschriftempfängerin (Leistungserbringerin)</b></div>
                       <div>{{advisorName}}</div>
                       <div>{{advisorAddress}}</div>
                       <div>E-Mail: {{advisorEmail}}</div>
@@ -3460,7 +3558,7 @@ public class WebUiServer {
                   </div>
 
                   <div style="margin-top:20px;padding:12px;border:1px solid #d1d5db;background:#fafafa;">
-                    <div style="font-size:12px;color:#6b7280;">Rechnungsempfänger</div>
+                    <div style="font-size:12px;color:#6b7280;">Gutschriftausstellerin (Leistungsempfängerin)</div>
                     <div style="font-size:16px;font-weight:700;">{{buyerCompanyName}}</div>
                     <div style="font-size:13px;">{{buyerAddress}}</div>
                     <div style="font-size:12px;color:#6b7280;">USt-IdNr: {{buyerVatId}} | Steuernummer: {{buyerTaxNumber}}</div>
@@ -3477,7 +3575,7 @@ public class WebUiServer {
                     <tbody>
                       <tr>
                         <td style="padding:8px;border:1px solid #d1d5db;">1</td>
-                        <td style="padding:8px;border:1px solid #d1d5db;">Provisionsabrechnung Zahllauf {{paymentId}}</td>
+                        <td style="padding:8px;border:1px solid #d1d5db;">Vermittlungsprovision – Provisionszeitraum {{periodLabel}}</td>
                         <td style="padding:8px;border:1px solid #d1d5db;text-align:right;">{{amount}} ({{currency}})</td>
                       </tr>
                     </tbody>
@@ -3485,15 +3583,15 @@ public class WebUiServer {
 
                   <div style="margin-top:18px;display:flex;justify-content:flex-end;">
                     <table style="min-width:280px;border-collapse:collapse;font-size:13px;">
-                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">Zwischensumme</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{amount}}</td></tr>
-                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">USt.</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">n. V. / laut Stammdaten</td></tr>
-                      <tr style="font-weight:700;"><td style="padding:6px 10px;border:1px solid #d1d5db;">Gesamtbetrag</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{amount}}</td></tr>
+                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">Nettobetrag</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{amount}}</td></tr>
+                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">{{vatLine}}</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{vatAmount}}</td></tr>
+                      <tr style="font-weight:700;"><td style="padding:6px 10px;border:1px solid #d1d5db;">Auszahlungsbetrag</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{grossAmount}}</td></tr>
                     </table>
                   </div>
 
                   <div style="margin-top:18px;font-size:12px;color:#374151;line-height:1.5;">
-                    <div><b>Bankverbindung der Rechnungsstellerin:</b> {{advisorAccountHolder}}, IBAN {{advisorIban}}, BIC {{advisorBic}}</div>
-                    <div style="margin-top:8px;">Hinweis: Diese Rechnung wird von der Beraterin an {{buyerCompanyName}} gestellt. Die App erzeugt die Unterlagen als Service.</div>
+                    <div><b>Bankverbindung der Gutschriftempfängerin:</b> {{advisorAccountHolder}}, IBAN {{advisorIban}}, BIC {{advisorBic}}</div>
+                    <div style="margin-top:10px;padding:8px;border:1px solid #d1d5db;background:#fffbeb;">Diese Gutschrift wird von {{buyerCompanyName}} gemäß § 14 Abs. 2 Satz 5 UStG ausgestellt. Bitte prüfen Sie die Unterlagen. Die Gutschrift verliert ihre Wirkung als Rechnung, soweit ihr widersprochen wird.</div>
                   </div>
                 </div>
                 </body></html>
@@ -3702,6 +3800,29 @@ public class WebUiServer {
         try (OutputStream os = Files.newOutputStream(CONFIG_PATH)) {
             forStore.store(os, "Updated by WebUiServer");
         }
+    }
+
+    private static String generateNextGutschriftNumber(Properties config) throws IOException {
+        synchronized (CONFIG_LOCK) {
+            int year = LocalDate.now().getYear();
+            int storedYear = 0;
+            try { storedYear = Integer.parseInt(config.getProperty("gutschriftCounterYear", "0")); } catch (NumberFormatException ignored) {}
+            int counter;
+            if (storedYear == year) {
+                try { counter = Integer.parseInt(config.getProperty("gutschriftCounter", "0")); } catch (NumberFormatException ignored) { counter = 0; }
+                counter++;
+            } else {
+                counter = 1;
+            }
+            config.setProperty("gutschriftCounter", String.valueOf(counter));
+            config.setProperty("gutschriftCounterYear", String.valueOf(year));
+            storeConfig(config);
+            return String.format("GS-%d-%04d", year, counter);
+        }
+    }
+
+    private static double calculateVat(double netAmount, boolean isKleinunternehmer) {
+        return isKleinunternehmer ? 0.0 : netAmount * 0.19;
     }
 
     private static final String[][] SECRET_ENV_MAPPINGS = {
@@ -4295,8 +4416,8 @@ private static String toGermanDate(String input) {
                 .replace("Workflow", "Ablauf")
                 .replace("mail-log", "Versandhistorie")
                 .replace("Mail-Log", "Versandhistorie")
-                .replace("invoice", "Rechnung")
-                .replace("Invoice", "Rechnung")
+                .replace("invoice", "Gutschrift")
+                .replace("Invoice", "Gutschrift")
                 .replace("settings", "Einstellungen")
                 .replace("Settings", "Einstellungen");
 
