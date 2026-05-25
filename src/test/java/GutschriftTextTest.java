@@ -1,5 +1,11 @@
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.Test;
 import java.lang.reflect.Method;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Properties;
 import java.util.regex.Pattern;
 
@@ -16,6 +22,12 @@ class GutschriftTextTest {
         Method m = WebUiServer.class.getDeclaredMethod(methodName);
         m.setAccessible(true);
         return (String) m.invoke(null);
+    }
+
+    private static String invokeStaticString(String methodName, Class<?>[] parameterTypes, Object... args) throws Exception {
+        Method m = WebUiServer.class.getDeclaredMethod(methodName, parameterTypes);
+        m.setAccessible(true);
+        return (String) m.invoke(null, args);
     }
 
     private static String invokeCalculateVat(double net, boolean isKlein) throws Exception {
@@ -80,6 +92,99 @@ class GutschriftTextTest {
         String html = invokeStaticString("getDefaultEInvoicePdfViewHtmlTemplate");
         assertTrue(html.contains("Gutschriftempfängerin"),
                 "E-Invoice-HTML-Template muss 'Gutschriftempfängerin' enthalten");
+    }
+
+    @Test
+    void eInvoiceHtmlTemplate_placesIssuerAndRecipientCorrectly() throws Exception {
+        String html = invokeStaticString("getDefaultEInvoicePdfViewHtmlTemplate");
+        assertTrue(html.contains("<div><b>Gutschriftausstellerin (Leistungsempfängerin)</b></div>"),
+                "Ausstellerin muss im Briefkopf stehen");
+        assertTrue(html.contains("<div>{{buyerCompanyName}}</div>"),
+                "Ausstellerin muss die eigene Firma verwenden");
+        assertTrue(html.contains("<div style=\"font-size:16px;font-weight:700;\">{{advisorName}}</div>"),
+                "Adressat muss die Beraterin sein");
+    }
+
+    @Test
+    void sanitizePdfText_replacesUnsupportedSymbolsInsteadOfQuestionMarks() throws Exception {
+        String text = invokeStaticString(
+                "sanitizePdfText",
+                new Class<?>[]{String.class},
+                "1,23 € – Provisionszeitraum …");
+
+        assertEquals("1,23 EUR - Provisionszeitraum ...", text);
+        assertFalse(text.contains("?"), "PDF-Text darf keine Fragezeichen als Ersatzzeichen enthalten");
+    }
+
+    @Test
+    void shortenForPdf_usesAsciiEllipsis() throws Exception {
+        String text = invokeStaticString(
+                "shortenForPdf",
+                new Class<?>[]{String.class, int.class},
+                "Vermittlungsprovision – 05.07.2024 bis 10.07.2024",
+                48);
+
+        assertTrue(text.endsWith("..."), "PDF-Kürzung muss ASCII-Ellipsis verwenden");
+        assertFalse(text.contains("?"), "PDF-Kürzung darf keine Fragezeichen erzeugen");
+    }
+
+    @Test
+    void eInvoicePdf_placesIssuerFirstAndAdvisorAsRecipient() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode payment = mapper.readTree("""
+                {
+                  "id": "123",
+                  "amount": "1.13",
+                  "currency": "EUR",
+                  "created_at": "2026-02-05T11:13:00Z"
+                }
+                """);
+        JsonNode affiliate = mapper.readTree("""
+                {
+                  "name": "Nicolas Influencer",
+                  "email": "nicolas@example.com",
+                  "address_1": "Hinter der Alten See 5",
+                  "zip": "64342",
+                  "city": "Seeheim-Jugenheim",
+                  "state": "Hessen",
+                  "country": "DE",
+                  "tax_identification_number": "12357895",
+                  "payment_details": {
+                    "iban": "DE02120300000000202051",
+                    "bic": "BYLADEM1001",
+                    "account_holder": "Nicolas Influencer"
+                  }
+                }
+                """);
+        Properties config = new Properties();
+        config.setProperty("eInvoiceBuyerName", "S+R Linear Technology GmbH");
+        config.setProperty("eInvoiceBuyerStreet", "Bleidernröder Str. 11");
+        config.setProperty("eInvoiceBuyerZip", "35315");
+        config.setProperty("eInvoiceBuyerCity", "Homberg/Ohm");
+        config.setProperty("eInvoiceBuyerCountry", "DE");
+        config.setProperty("eInvoiceBuyerVatId", "DE459084219");
+        config.setProperty("eInvoiceBuyerTaxNumber", "123456");
+        config.setProperty("contactEmail", "rechnung@example.com");
+
+        Path pdf = Files.createTempFile("gutschrift-layout", ".pdf");
+        Method m = WebUiServer.class.getDeclaredMethod(
+                "createEInvoicePdfWithEmbeddedXml",
+                Path.class, Path.class, JsonNode.class, JsonNode.class, Properties.class,
+                String.class, String.class, boolean.class);
+        m.setAccessible(true);
+        m.invoke(null, pdf, null, payment, affiliate, config, "GS-2026-0002", "05.07.2024 bis 10.07.2024", false);
+
+        String text;
+        try (PDDocument document = PDDocument.load(pdf.toFile())) {
+            text = new PDFTextStripper().getText(document);
+        }
+
+        assertTrue(text.indexOf("S+R Linear Technology GmbH") < text.indexOf("Nicolas Influencer"),
+                "Die eigene Firma muss im PDF-Kopf vor der Beraterin erscheinen");
+        assertTrue(text.contains("Gutschriftempfängerin (Leistungserbringerin)"),
+                "Die Beraterin muss als Gutschriftempfängerin beschriftet sein");
+        assertTrue(text.contains("1,13 EUR"), "Beträge müssen im PDF ohne Euro-Fragezeichen erscheinen");
+        assertFalse(text.contains("?"), "Das erzeugte PDF darf keine Ersatz-Fragezeichen enthalten");
     }
 
     // ── Tests: E-Mail-Template ──

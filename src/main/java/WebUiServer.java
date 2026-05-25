@@ -41,6 +41,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
+import java.text.Normalizer;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -1959,7 +1960,7 @@ public class WebUiServer {
         }
 
         private String euro(double value) {
-            return String.format(java.util.Locale.GERMANY, "%.2f €", value);
+            return euroPdf(value);
         }
 
         private double parseDoubleSafe(String raw) {
@@ -2193,8 +2194,8 @@ public class WebUiServer {
         }
 
     private static String shortenForPdf(String text, int maxLen) {
-            String safe = text == null ? "" : text.replaceAll("[\r\n]+", " ");
-            return safe.length() > maxLen ? safe.substring(0, maxLen - 1) + "…" : safe;
+            String safe = sanitizePdfText(text == null ? "" : text).replaceAll("[\r\n]+", " ");
+            return safe.length() > maxLen ? safe.substring(0, Math.max(0, maxLen - 3)) + "..." : safe;
         }
     private static class VersionHandler implements HttpHandler {
         @Override
@@ -3120,16 +3121,25 @@ public class WebUiServer {
         double netAmount = parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0");
         double vatAmount = calculateVat(netAmount, isKleinunternehmer);
         double grossAmount = netAmount + vatAmount;
-        String amount = euroStatic(netAmount);
-        String vatAmountStr = euroStatic(vatAmount);
-        String grossAmountStr = euroStatic(grossAmount);
-        String buyerCompanyName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "").trim();
+        String amount = euroPdf(netAmount);
+        String vatAmountStr = euroPdf(vatAmount);
+        String grossAmountStr = euroPdf(grossAmount);
+        String buyerCompanyName = firstNonBlank(
+                Objects.toString(config.getProperty("eInvoiceBuyerName"), ""),
+                Objects.toString(config.getProperty("nachweisFirmenname"), ""),
+                "S+R Linear Technology GmbH");
         String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
         String buyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
         String buyerCity = Objects.toString(config.getProperty("eInvoiceBuyerCity"), "").trim();
         String buyerCountry = Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE").trim();
         String buyerVatId = Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "").trim();
         String buyerTaxNumber = Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "").trim();
+        String buyerAddressOneLiner = String.join(", ", List.of(
+                buyerStreet,
+                (buyerZip + " " + buyerCity).trim(),
+                buyerCountry
+        ).stream().filter(v -> v != null && !v.isBlank()).toList());
+        String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
         String paymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
 
         try (PDDocument document = new PDDocument()) {
@@ -3144,8 +3154,8 @@ public class WebUiServer {
             try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
                 float y = pageHeight - 38f;
 
-                // ── HEADER: advisor name + address as small letterhead line ──
-                String hdrLine = advisorName + (advisorAddressOneLiner.isBlank() ? "" : " \u00b7 " + advisorAddressOneLiner);
+                // Header: issuing company as sender line.
+                String hdrLine = buyerCompanyName + (buyerAddressOneLiner.isBlank() ? "" : " - " + buyerAddressOneLiner);
                 cs.setNonStrokingColor(new Color(100, 100, 100));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8f);
                 cs.newLineAtOffset(left, y);
@@ -3161,47 +3171,57 @@ public class WebUiServer {
                 float colR = left + usableW * 0.55f;
                 float startY2col = y;
 
-                // LEFT: buyer address block (Gutschriftausstellerin = VEMMiNA)
+                // LEFT: recipient address block (affiliate).
                 cs.setNonStrokingColor(new Color(130, 130, 130));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8f);
-                cs.newLineAtOffset(colL, y); cs.showText("Gutschriftausstellerin (Leistungsempf\u00e4ngerin)"); cs.endText();
+                cs.newLineAtOffset(colL, y); cs.showText("Gutschriftempfängerin (Leistungserbringerin)"); cs.endText();
                 y -= 14f;
                 cs.setNonStrokingColor(new Color(15, 15, 15));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 12f);
                 cs.newLineAtOffset(colL, y);
-                cs.showText(sanitizePdfText(shortenForPdf(buyerCompanyName, 32))); cs.endText();
+                cs.showText(sanitizePdfText(shortenForPdf(advisorName, 38))); cs.endText();
                 y -= 14f;
-                List<String> buyerLines = new ArrayList<>();
-                if (!buyerStreet.isBlank()) buyerLines.add(buyerStreet);
-                String cLine = (buyerZip + " " + buyerCity).trim();
-                if (!cLine.isBlank()) buyerLines.add(cLine);
-                if (!buyerCountry.isBlank()) buyerLines.add(buyerCountry);
-                for (String bl : buyerLines) {
+                List<String> advisorLines = new ArrayList<>();
+                if (affiliate != null) {
+                    String address1 = asText(affiliate, "address_1").trim();
+                    String address2 = asText(affiliate, "address_2").trim();
+                    String zip = asText(affiliate, "zip").trim();
+                    String city = asText(affiliate, "city").trim();
+                    String state = asText(affiliate, "state").trim();
+                    String country = asText(affiliate, "country").trim();
+                    if (!address1.isBlank()) advisorLines.add(address1);
+                    if (!address2.isBlank()) advisorLines.add(address2);
+                    String advisorCityLine = (zip + " " + city).trim();
+                    if (!state.isBlank()) advisorCityLine = advisorCityLine.isBlank() ? state : advisorCityLine + ", " + state;
+                    if (!advisorCityLine.isBlank()) advisorLines.add(advisorCityLine);
+                    if (!country.isBlank()) advisorLines.add(country);
+                }
+                for (String bl : advisorLines) {
                     cs.setNonStrokingColor(new Color(40, 40, 40));
                     cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
                     cs.newLineAtOffset(colL, y); cs.showText(sanitizePdfText(bl)); cs.endText();
                     y -= 13f;
                 }
-                if (!buyerVatId.isBlank()) {
+                if (!advisorTaxNumber.isBlank()) {
                     cs.setNonStrokingColor(new Color(100, 100, 100));
                     cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
-                    cs.newLineAtOffset(colL, y); cs.showText("USt-IdNr: " + sanitizePdfText(buyerVatId)); cs.endText();
+                    cs.newLineAtOffset(colL, y); cs.showText("Steuernummer: " + sanitizePdfText(advisorTaxNumber)); cs.endText();
                     y -= 11f;
                 }
-                if (!buyerTaxNumber.isBlank()) {
+                if (!advisorEmail.isBlank()) {
                     cs.setNonStrokingColor(new Color(100, 100, 100));
                     cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8.5f);
-                    cs.newLineAtOffset(colL, y); cs.showText("Steuernummer: " + sanitizePdfText(buyerTaxNumber)); cs.endText();
+                    cs.newLineAtOffset(colL, y); cs.showText("E-Mail: " + sanitizePdfText(shortenForPdf(advisorEmail, 46))); cs.endText();
                     y -= 11f;
                 }
                 float leftEndY = y;
 
-                // RIGHT: contact info + invoice metadata
+                // RIGHT: issuer contact + document metadata.
                 float ry = startY2col;
                 List<String[]> metaRows = new ArrayList<>();
-                if (!advisorEmail.isBlank()) metaRows.add(new String[]{"E-Mail:", advisorEmail});
-                if (!advisorPhone.isBlank()) metaRows.add(new String[]{"Telefon:", advisorPhone});
-                if (!advisorTaxNumber.isBlank()) metaRows.add(new String[]{"Steuernummer:", advisorTaxNumber});
+                if (!contactEmail.isBlank()) metaRows.add(new String[]{"E-Mail:", contactEmail});
+                if (!buyerVatId.isBlank()) metaRows.add(new String[]{"USt-IdNr:", buyerVatId});
+                if (!buyerTaxNumber.isBlank()) metaRows.add(new String[]{"Steuernummer:", buyerTaxNumber});
                 metaRows.add(new String[]{"Gutschriftnummer:", gutschriftNr});
                 metaRows.add(new String[]{"Datum:", created});
                 float lblW = 82f;
@@ -3235,7 +3255,7 @@ public class WebUiServer {
                 cs.setNonStrokingColor(new Color(80, 80, 80));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 8f);
                 cs.newLineAtOffset(left + 8f, y - 2f);
-                cs.showText("Gutschrift gemäß § 14 Abs. 2 Satz 5 UStG – Provisionszeitraum: " + sanitizePdfText(periodLabel));
+                cs.showText("Gutschrift gemäß § 14 Abs. 2 Satz 5 UStG - Provisionszeitraum: " + sanitizePdfText(periodLabel));
                 cs.endText();
                 y -= 16f;
 
@@ -3266,7 +3286,7 @@ public class WebUiServer {
                 cs.setNonStrokingColor(new Color(30, 30, 30));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
                 cs.newLineAtOffset(cx[0] + 4f, y - 16f); cs.showText("1"); cs.endText();
-                String desc = "Vermittlungsprovision – " + sanitizePdfText(periodLabel);
+                String desc = "Vermittlungsprovision - " + sanitizePdfText(periodLabel);
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 10f);
                 cs.newLineAtOffset(cx[1] + 4f, y - 16f);
                 cs.showText(sanitizePdfText(shortenForPdf(desc, 48))); cs.endText();
@@ -3343,7 +3363,7 @@ public class WebUiServer {
                 y -= 14f;
                 cs.setNonStrokingColor(new Color(40, 40, 40));
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA_BOLD, 9f);
-                cs.newLineAtOffset(left, y); cs.showText("Bankverbindung"); cs.endText();
+                cs.newLineAtOffset(left, y); cs.showText("Bankverbindung der Gutschriftempfängerin"); cs.endText();
                 y -= 12f;
                 List<String[]> bankRows = new ArrayList<>();
                 bankRows.add(new String[]{"Kontoinhaber:", advisorAccountHolder});
@@ -3383,10 +3403,10 @@ public class WebUiServer {
                 cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
                 cs.newLineAtOffset(left, footerY);
                 cs.showText(sanitizePdfText(shortenForPdf(hdrLine, 95))); cs.endText();
-                if (!advisorTaxNumber.isBlank()) {
+                if (!buyerTaxNumber.isBlank()) {
                     cs.beginText(); cs.setFont(PDType1Font.HELVETICA, 7f);
                     cs.newLineAtOffset(left, footerY - 9f);
-                    cs.showText("Steuernummer: " + sanitizePdfText(advisorTaxNumber)); cs.endText();
+                    cs.showText("Steuernummer: " + sanitizePdfText(buyerTaxNumber)); cs.endText();
                 }
             }
             if (xmlPath != null && Files.exists(xmlPath)) {
@@ -3435,8 +3455,23 @@ public class WebUiServer {
 
     private static String sanitizePdfText(String value) {
         if (value == null || value.isEmpty()) return "";
-        StringBuilder out = new StringBuilder(value.length());
-        value.codePoints().forEach(cp -> {
+        String normalized = value
+                .replace("\u20ac", "EUR")
+                .replace("\u2010", "-")
+                .replace("\u2011", "-")
+                .replace("\u2012", "-")
+                .replace("\u2013", "-")
+                .replace("\u2014", "-")
+                .replace("\u2212", "-")
+                .replace("\u2026", "...")
+                .replace("\u2018", "'")
+                .replace("\u2019", "'")
+                .replace("\u201c", "\"")
+                .replace("\u201d", "\"")
+                .replace("\u2022", "-")
+                .replace('\u00a0', ' ');
+        StringBuilder out = new StringBuilder(normalized.length());
+        normalized.codePoints().forEach(cp -> {
             if (cp == '\n' || cp == '\r' || cp == '\t') {
                 out.append(' ');
                 return;
@@ -3446,7 +3481,17 @@ public class WebUiServer {
                 return;
             }
             if (cp > 255) {
-                out.append('?');
+                String fallback = Normalizer.normalize(new String(Character.toChars(cp)), Normalizer.Form.NFKD)
+                        .replaceAll("\\p{M}", "");
+                boolean appended = false;
+                for (int i = 0; i < fallback.length(); i++) {
+                    char ch = fallback.charAt(i);
+                    if (ch >= 32 && ch <= 255) {
+                        out.append(ch);
+                        appended = true;
+                    }
+                }
+                if (!appended) out.append(' ');
                 return;
             }
             out.append((char) cp);
@@ -3548,20 +3593,19 @@ public class WebUiServer {
                       <div style="font-size:13px;color:#374151;">Provisionszeitraum: {{periodLabel}}</div>
                     </div>
                     <div style="text-align:right;font-size:12px;color:#4b5563;">
-                      <div><b>Gutschriftempfängerin (Leistungserbringerin)</b></div>
-                      <div>{{advisorName}}</div>
-                      <div>{{advisorAddress}}</div>
-                      <div>E-Mail: {{advisorEmail}}</div>
-                      <div>Telefon: {{advisorPhone}}</div>
-                      <div>Steuernummer: {{advisorTaxNumber}}</div>
+                      <div><b>Gutschriftausstellerin (Leistungsempfängerin)</b></div>
+                      <div>{{buyerCompanyName}}</div>
+                      <div>{{buyerAddress}}</div>
+                      <div>USt-IdNr: {{buyerVatId}}</div>
+                      <div>Steuernummer: {{buyerTaxNumber}}</div>
                     </div>
                   </div>
 
                   <div style="margin-top:20px;padding:12px;border:1px solid #d1d5db;background:#fafafa;">
-                    <div style="font-size:12px;color:#6b7280;">Gutschriftausstellerin (Leistungsempfängerin)</div>
-                    <div style="font-size:16px;font-weight:700;">{{buyerCompanyName}}</div>
-                    <div style="font-size:13px;">{{buyerAddress}}</div>
-                    <div style="font-size:12px;color:#6b7280;">USt-IdNr: {{buyerVatId}} | Steuernummer: {{buyerTaxNumber}}</div>
+                    <div style="font-size:12px;color:#6b7280;">Gutschriftempfängerin (Leistungserbringerin)</div>
+                    <div style="font-size:16px;font-weight:700;">{{advisorName}}</div>
+                    <div style="font-size:13px;">{{advisorAddress}}</div>
+                    <div style="font-size:12px;color:#6b7280;">E-Mail: {{advisorEmail}} | Telefon: {{advisorPhone}} | Steuernummer: {{advisorTaxNumber}}</div>
                   </div>
 
                   <table style="width:100%;margin-top:22px;border-collapse:collapse;font-size:13px;">
@@ -3645,6 +3689,10 @@ public class WebUiServer {
 
     private static String euroStatic(double value) {
         return String.format(java.util.Locale.GERMANY, "%.2f €", value);
+    }
+
+    private static String euroPdf(double value) {
+        return String.format(java.util.Locale.GERMANY, "%.2f EUR", value);
     }
 
 
