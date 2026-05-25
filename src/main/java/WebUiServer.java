@@ -1,6 +1,7 @@
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -16,6 +17,9 @@ import org.apache.pdfbox.cos.COSArray;
 import org.apache.pdfbox.cos.COSDictionary;
 import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Entities;
 
 import jakarta.activation.DataHandler;
 import jakarta.activation.FileDataSource;
@@ -29,6 +33,7 @@ import jakarta.mail.internet.MimeMultipart;
 
 import java.awt.Color;
 import java.awt.Desktop;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -74,6 +79,30 @@ public class WebUiServer {
             System.getenv().getOrDefault("UI_PATH", "src/main/resources/ui/dashboard.html"));
     private static final Path HELP_DOC_PATH = Paths.get(
             System.getenv().getOrDefault("HELP_DOC_PATH", "docs/HILFE.md"));
+    private static final String VEMMINA_LOGO_DATA_URI = "data:image/png;base64,"
+            + "iVBORw0KGgoAAAANSUhEUgAAAMgAAAAwBAMAAACmtyjZAAAAMFBMVEUADCcEjM4chLcegrIld58cgrMofqgpfaef6/wDi85artcr"
+            + "fqfL//9rzvgagbNWlLI1RuKaAAAAAXRSTlMAQObYZgAABfVJREFUeNqlmFFsFFUUhr+ZnXULlnZmqQFqA1vERI3KAAEVoQ6ExBCJ"
+            + "KTXEFyMlxCcfWI1CUERM+mjMEoNJiQ8kPhiNDw3EAKJ13FZITAxr5IXE1A2WQIPQqYnQprM7PtzZmXtnFilwkmZn7t65/5zzn/Of"
+            + "s9UGAb50UWx74l6xlkPc2fw3AZy+wz8UQLMAllXULd0e92srXTC6Cm0XL4IBwLi6Iadi7KNzj7qhq38gWm19o+WL8TSICfR8k+9d"
+            + "tsRFtywgSPiq3C16ZfAqaGa8os3+G64C5tbFH5bSIBeAtkLp8nAR9LGxf6DuKBt6lLuBdVMc6Np/Zt+Sk6ev7TvNkn2nBloYWDfF"
+            + "/q63zr0Pj1Un3luUBJkCOnB/8wdABw1Q4+OlPK+xZbx48NwwR6H+yOpti0U82PpX8QNuFhdvSSVDDdh28/IqNNDBLyRIMarK9gMf"
+            + "nXKo0VIyZqI1u7G6vZQBiqcvJUGCIrzDH8+xEnTxpgopCYayV8vZ+kGftw/klviTwJ8f20G4agwXcOd/X1rxbIoUFzrnb/GMbQKk"
+            + "nCBFpYTxpdqZI2tP7vh0Yqv9KC4TL2/NOuHqiTGt9qL77srWdGGNg7HuWkfGFYTk5quVskoNF5o5fcuaxPQ04aP4EKvWJID22Uwx"
+            + "CaJfJ/dM2ej7WngyYyqkJCiBYPIWk+A14hhIq5Pi+nIKg7rDjLH2k04ECLbwqDklczHtiJlY8cCDYbOvRHi43i5kQNimCnrBFtcV"
+            + "8VnBzlAjQy3Dr3YGqFUydo0MNaCyRmQsFVhDjacP0fL4eRaoGZezLKs3pkS+uRfTLGtp1rIWxvQQkjIqU3J/+liCfGBKGSsE0nZj"
+            + "UjQwXHaLbMusL+31tEGA3RiDxs7Kqs8BY+fvv2DszBxl7/XMUSD6BIxDYPq2m3xV3bLyDdxNltUB3ZZlWZaVL7JKfJWzrIcwukUQ"
+            + "9O78ELnufD+7wgd3WfnGYRnLWgibLatDCRdZCMxYqbrUTAs8YH2YNHUH2OMFUPeCChWCasi5VMs6jEgZK0BqptBmwHBD7ZPssiya"
+            + "HhhD8re30p2kHQIT31FAfFtos6BET2qE75CLKvRK6Bq6qdkAs2qfMFx4UhxpKiB4YabDRqUwo7d/PrqedUJxqz21ugpSoKO3xBMN"
+            + "ZVTJLs7OJyiWANqh628AJm/AzdcAuEF7TJNnCAL841ITjG3jeRGKkdbobfW4xQyFxd3wsprP57tE5GYNKYI3Ik8NJ2qCsbWHoQhM"
+            + "ao4C4jshgTkPLTywP35wOiudMtsYAY4vLUQPx1YJs9O3o0AacUv2AWYh22zWkq6nw0dze6akySTyzmvcT0WJHXrCSNi4XoB5c5UP"
+            + "r6HXo2pbDUMxEmW3LlWdJ/7sVLtONYCWJhtCG4NMuGo2Zis9LgXGb6eOHlCQD7yS6k+R9UaYvt34QpcOCiAQxQTAsejBB6S4mxVo"
+            + "yTZ5i1jDNyiNSyKe0VbqjttTiX3/dkeBSxMuZL0nqgvccD4urWglqysIptS8A6C8PMqzcRVEkOJFpQgHAO11V6RPXzSJzhaqyydk"
+            + "kE3nJVJ6KhBMJtjSkUkxqgl1FBLLSF6advMdqrb9DHWnv0k2R2zpclyzQRN1BPC7pZufXlK1aqYQk2K4zdiKwkW5jem6oo5WnFTf"
+            + "y4iltLZXJXVMjngyiBY2rAYlnC+Ifn1HK7dFh9fA2NzI9vrYsCAlBvELVTWo/XOeToBwqt9zjIe/ivN5AXXHlTkRx+vu3U8nfiG6"
+            + "HAJHaXaYCvGUVc/uwkxJHbWSSvuoCqLBXaijbGelssgobIlT9YTXd5wdi03WamY8qAQJtnxHAcEErXIvnvi9cXg2JNkyVZAyZObM"
+            + "u+LR4dtNuENwQQXRVGePzd0VPaIkkZ3LYUrNJr9QjUsRTqyxiQbceJruBeqpJK6G6vjgdXUIA//VgqGmoqxvBxlDK5buIolNyKs/"
+            + "SmY6Pb5TwkU5VYrBbcOjgosaq6QnXFtVYRr/zbmt1f9fWch4acHwUiD+tqYnzFPpbXa+7wgCUlt+BPgPQKv0SnQ63XcAAAAASUVO"
+            + "RK5CYII=";
     private static final String COMMISSION_HISTORY_KEY = "lastImportedComissionHistory";
     private static final String COMMISSION_HISTORY_DATES_KEY = "lastImportedComissionHistoryDates";
     private static final String MAIL_LOG_KEY = "sentMailLogJson";
@@ -3106,6 +3135,11 @@ public class WebUiServer {
 
     private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
                                                          String gutschriftNr, String periodLabel, boolean isKleinunternehmer) throws IOException {
+        if (!Boolean.getBoolean("goaffpro.legacyEInvoicePdfRenderer")) {
+            createEInvoicePdfFromHtmlTemplate(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer);
+            return;
+        }
+
         // Extract variables
         String advisorName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
         String advisorAddressOneLiner = formatAffiliateAddress(affiliate);
@@ -3416,6 +3450,44 @@ public class WebUiServer {
         }
     }
 
+    private static void createEInvoicePdfFromHtmlTemplate(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
+                                                         String gutschriftNr, String periodLabel, boolean isKleinunternehmer) throws IOException {
+        String configuredTemplate = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "").trim();
+        String template = configuredTemplate.isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : configuredTemplate;
+        String renderedHtml = renderEInvoicePdfViewHtml(template, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer);
+        String xhtml = normalizeHtmlForPdf(renderedHtml);
+        String baseUri = pdfPath.toAbsolutePath().getParent() == null
+                ? Paths.get(".").toAbsolutePath().toUri().toString()
+                : pdfPath.toAbsolutePath().getParent().toUri().toString();
+
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            PdfRendererBuilder builder = new PdfRendererBuilder();
+            builder.useFastMode();
+            builder.withHtmlContent(xhtml, baseUri);
+            builder.toStream(out);
+            builder.run();
+
+            try (PDDocument document = PDDocument.load(out.toByteArray())) {
+                if (xmlPath != null && Files.exists(xmlPath)) {
+                    attachZugferdXmlToPdf(document, xmlPath);
+                }
+                document.save(pdfPath.toFile());
+            }
+        } catch (Exception e) {
+            throw new IOException("E-Gutschrift-PDF konnte nicht aus der gespeicherten HTML-Vorlage gerendert werden: " + e.getMessage(), e);
+        }
+    }
+
+    private static String normalizeHtmlForPdf(String html) {
+        Document document = Jsoup.parse(html == null ? "" : html);
+        document.outputSettings(new Document.OutputSettings()
+                .syntax(Document.OutputSettings.Syntax.xml)
+                .escapeMode(Entities.EscapeMode.xhtml)
+                .charset(StandardCharsets.UTF_8)
+                .prettyPrint(false));
+        return document.html();
+    }
+
 
     private static void attachZugferdXmlToPdf(PDDocument document, Path xmlPath) throws IOException {
         byte[] xmlBytes = Files.readAllBytes(xmlPath);
@@ -3582,64 +3654,105 @@ public class WebUiServer {
     private static String getDefaultEInvoicePdfViewHtmlTemplate() {
         return """
                 <!doctype html>
-                <html lang="de"><body style="font-family:Arial,sans-serif;background:#f3f4f6;color:#111827;padding:20px;">
-                <div style="max-width:900px;margin:0 auto;background:#fff;border:1px solid #d1d5db;padding:22px;">
-                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:16px;">
-                    <div>
-                      <div style="font-size:22px;font-weight:700;letter-spacing:.3px;">GUTSCHRIFT</div>
-                      <div style="margin-top:4px;font-size:12px;color:#6b7280;">Gutschrift gemäß § 14 Abs. 2 Satz 5 UStG</div>
-                      <div style="margin-top:6px;font-size:13px;color:#374151;">Gutschriftnummer: <b>{{gutschriftNr}}</b></div>
-                      <div style="font-size:13px;color:#374151;">Datum: {{created}}</div>
-                      <div style="font-size:13px;color:#374151;">Provisionszeitraum: {{periodLabel}}</div>
-                    </div>
-                    <div style="text-align:right;font-size:12px;color:#4b5563;">
-                      <div><b>Gutschriftausstellerin (Leistungsempfängerin)</b></div>
-                      <div>{{buyerCompanyName}}</div>
-                      <div>{{buyerAddress}}</div>
-                      <div>USt-IdNr: {{buyerVatId}}</div>
-                      <div>Steuernummer: {{buyerTaxNumber}}</div>
-                    </div>
+                <html lang="de">
+                <head>
+                  <meta charset="UTF-8" />
+                  <style>
+                    @page { size: A4; margin: 18mm 16mm; }
+                    body { font-family: Arial, sans-serif; color:#111827; font-size:10px; line-height:1.35; }
+                    table { border-collapse: collapse; }
+                    .muted { color:#5f6b7a; }
+                    .rule { border-top:1px solid #d6dbe2; }
+                  </style>
+                </head>
+                <body>
+                  <table style="width:100%;margin-bottom:42px;">
+                    <tr>
+                      <td style="vertical-align:top;width:48%;">
+                        <img src="{{vemminaLogoDataUri}}" alt="VEMMiNA" style="width:150px;height:auto;" />
+                      </td>
+                      <td style="vertical-align:top;text-align:right;width:52%;font-size:10px;">
+                        <div style="font-weight:700;">{{buyerCompanyName}}</div>
+                        <div>{{buyerAddress}}</div>
+                        <div style="margin-top:8px;font-weight:700;">Gutschriftausstellerin (Leistungsempf&auml;ngerin)</div>
+                        <div>USt-IdNr: {{buyerVatId}}</div>
+                        <div>Steuernummer: {{buyerTaxNumber}}</div>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <div class="muted" style="font-size:8px;border-bottom:1px solid #cfd5dd;padding-bottom:4px;width:64%;margin-bottom:10px;">
+                    {{buyerCompanyName}}, {{buyerAddress}}
                   </div>
 
-                  <div style="margin-top:20px;padding:12px;border:1px solid #d1d5db;background:#fafafa;">
-                    <div style="font-size:12px;color:#6b7280;">Gutschriftempfängerin (Leistungserbringerin)</div>
-                    <div style="font-size:16px;font-weight:700;">{{advisorName}}</div>
-                    <div style="font-size:13px;">{{advisorAddress}}</div>
-                    <div style="font-size:12px;color:#6b7280;">E-Mail: {{advisorEmail}} | Telefon: {{advisorPhone}} | Steuernummer: {{advisorTaxNumber}}</div>
-                  </div>
+                  <table style="width:100%;margin-bottom:42px;">
+                    <tr>
+                      <td style="vertical-align:top;width:58%;font-size:10px;">
+                        <div style="font-weight:700;">{{advisorName}}</div>
+                        <div>{{advisorAddress}}</div>
+                        <div style="margin-top:8px;" class="muted">Gutschriftempf&auml;ngerin (Leistungserbringerin)</div>
+                        <div class="muted">E-Mail: {{advisorEmail}}</div>
+                        <div class="muted">Telefon: {{advisorPhone}}</div>
+                        <div class="muted">Steuernummer: {{advisorTaxNumber}}</div>
+                      </td>
+                      <td style="vertical-align:top;width:42%;">
+                        <table style="width:100%;font-size:10px;">
+                          <tr><td class="muted" style="padding:0 0 5px 0;">Gutschriftnummer</td><td style="text-align:right;padding:0 0 5px 0;">{{gutschriftNr}}</td></tr>
+                          <tr><td class="muted" style="padding:0 0 5px 0;">Datum</td><td style="text-align:right;padding:0 0 5px 0;">{{created}}</td></tr>
+                          <tr><td class="muted" style="padding:0 0 5px 0;">Zahllauf-ID</td><td style="text-align:right;padding:0 0 5px 0;">{{paymentId}}</td></tr>
+                          <tr><td class="muted" style="padding:0 0 5px 0;">Leistungszeitraum</td><td style="text-align:right;padding:0 0 5px 0;">{{periodLabel}}</td></tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
 
-                  <table style="width:100%;margin-top:22px;border-collapse:collapse;font-size:13px;">
+                  <div style="font-size:18px;margin-bottom:30px;">Gutschrift</div>
+
+                  <table style="width:100%;font-size:10px;margin-bottom:34px;">
                     <thead>
-                      <tr style="background:#f3f4f6;">
-                        <th style="text-align:left;padding:8px;border:1px solid #d1d5db;">Pos.</th>
-                        <th style="text-align:left;padding:8px;border:1px solid #d1d5db;">Beschreibung</th>
-                        <th style="text-align:right;padding:8px;border:1px solid #d1d5db;">Betrag</th>
+                      <tr class="rule">
+                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:48px;">Pos</th>
+                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;">Beschreibung</th>
+                        <th style="text-align:right;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:140px;">Betrag</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr>
-                        <td style="padding:8px;border:1px solid #d1d5db;">1</td>
-                        <td style="padding:8px;border:1px solid #d1d5db;">Vermittlungsprovision – Provisionszeitraum {{periodLabel}}</td>
-                        <td style="padding:8px;border:1px solid #d1d5db;text-align:right;">{{amount}} ({{currency}})</td>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">1</td>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">Vermittlungsprovision - Provisionszeitraum {{periodLabel}}</td>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">{{amount}} ({{currency}})</td>
                       </tr>
                     </tbody>
                   </table>
 
-                  <div style="margin-top:18px;display:flex;justify-content:flex-end;">
-                    <table style="min-width:280px;border-collapse:collapse;font-size:13px;">
-                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">Nettobetrag</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{amount}}</td></tr>
-                      <tr><td style="padding:6px 10px;border:1px solid #d1d5db;">{{vatLine}}</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{vatAmount}}</td></tr>
-                      <tr style="font-weight:700;"><td style="padding:6px 10px;border:1px solid #d1d5db;">Auszahlungsbetrag</td><td style="padding:6px 10px;border:1px solid #d1d5db;text-align:right;">{{grossAmount}}</td></tr>
-                    </table>
+                  <table style="width:42%;margin-left:58%;font-size:10px;margin-bottom:28px;">
+                    <tr><td style="padding:4px 0;">Zwischensumme (netto)</td><td style="padding:4px 0;text-align:right;">{{amount}}</td></tr>
+                    <tr><td style="padding:4px 0;">{{vatLine}}</td><td style="padding:4px 0;text-align:right;">{{vatAmount}}</td></tr>
+                    <tr><td style="padding:4px 0;border-top:1px solid #d6dbe2;">Gesamtsumme</td><td style="padding:4px 0;border-top:1px solid #d6dbe2;text-align:right;">{{grossAmount}}</td></tr>
+                    <tr><td style="padding:5px 0;font-weight:700;">Auszahlungsbetrag</td><td style="padding:5px 0;text-align:right;font-weight:700;">{{grossAmount}}</td></tr>
+                  </table>
+
+                  <div style="margin-bottom:20px;">
+                    <div>Gutschrift gem&auml;&szlig; &sect; 14 Abs. 2 Satz 5 UStG.</div>
+                    <div>Bitte pr&uuml;fen Sie diese Gutschrift. Die Gutschrift verliert ihre Wirkung als Rechnung, soweit ihr widersprochen wird.</div>
                   </div>
 
-                  <div style="margin-top:18px;font-size:12px;color:#374151;line-height:1.5;">
-                    <div><b>Bankverbindung der Gutschriftempfängerin:</b> {{advisorAccountHolder}}, IBAN {{advisorIban}}, BIC {{advisorBic}}</div>
-                    <div style="margin-top:10px;padding:8px;border:1px solid #d1d5db;background:#fffbeb;">Diese Gutschrift wird von {{buyerCompanyName}} gemäß § 14 Abs. 2 Satz 5 UStG ausgestellt. Bitte prüfen Sie die Unterlagen. Die Gutschrift verliert ihre Wirkung als Rechnung, soweit ihr widersprochen wird.</div>
+                  <div style="margin-top:18px;border-top:1px solid #d6dbe2;padding-top:10px;font-size:10px;">
+                    <div style="font-weight:700;">Bankverbindung der Gutschriftempf&auml;ngerin</div>
+                    <div>Kontoinhaber: {{advisorAccountHolder}}</div>
+                    <div>IBAN: {{advisorIban}}</div>
+                    <div>BIC: {{advisorBic}}</div>
                   </div>
-                </div>
-                </body></html>
-                """;
+
+                  <div style="margin-top:42px;border-top:1px solid #d6dbe2;padding-top:10px;text-align:center;font-size:9px;line-height:1.45;" class="muted">
+                    <div>{{buyerCompanyName}}</div>
+                    <div>{{buyerAddress}}</div>
+                    <div>USt-IdNr: {{buyerVatId}}</div>
+                    <div>Steuernummer: {{buyerTaxNumber}}</div>
+                  </div>
+                </body>
+                </html>
+                """.replace("{{vemminaLogoDataUri}}", VEMMINA_LOGO_DATA_URI);
     }
 
     private static String buildValidationReminderMailBody(String advisorName, String missingFields) {

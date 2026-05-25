@@ -1,9 +1,14 @@
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.pdfbox.cos.COSArray;
+import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDResources;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.Test;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Properties;
@@ -36,6 +41,39 @@ class GutschriftTextTest {
         return m.invoke(null, net, isKlein).toString();
     }
 
+    private static String invokeRenderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate,
+                                                         Properties config, String gutschriftNr,
+                                                         String periodLabel, boolean isKlein) throws Exception {
+        Method m = WebUiServer.class.getDeclaredMethod(
+                "renderEInvoicePdfViewHtml",
+                String.class, JsonNode.class, JsonNode.class, Properties.class,
+                String.class, String.class, boolean.class);
+        m.setAccessible(true);
+        return (String) m.invoke(null, template, payment, affiliate, config, gutschriftNr, periodLabel, isKlein);
+    }
+
+    private static void invokeCreateEInvoicePdf(Path pdf, Path xml, JsonNode payment, JsonNode affiliate,
+                                                Properties config, String gutschriftNr,
+                                                String periodLabel, boolean isKlein) throws Exception {
+        Method m = WebUiServer.class.getDeclaredMethod(
+                "createEInvoicePdfWithEmbeddedXml",
+                Path.class, Path.class, JsonNode.class, JsonNode.class, Properties.class,
+                String.class, String.class, boolean.class);
+        m.setAccessible(true);
+        m.invoke(null, pdf, xml, payment, affiliate, config, gutschriftNr, periodLabel, isKlein);
+    }
+
+    private static boolean hasImageXObject(PDDocument document) throws Exception {
+        for (PDPage page : document.getPages()) {
+            PDResources resources = page.getResources();
+            if (resources == null) continue;
+            for (COSName name : resources.getXObjectNames()) {
+                if (resources.isImageXObject(name)) return true;
+            }
+        }
+        return false;
+    }
+
     private static String invokeZugferdXml() throws Exception {
         // Wir testen den TypeCode im Template-String direkt über getDefaultEInvoicePdfViewHtmlTemplate
         // Für ZUGFeRD prüfen wir über createZugferdInvoiceXml – aber das braucht file I/O.
@@ -48,8 +86,8 @@ class GutschriftTextTest {
     @Test
     void eInvoiceHtmlTemplate_containsGUTSCHRIFT() throws Exception {
         String html = invokeStaticString("getDefaultEInvoicePdfViewHtmlTemplate");
-        assertTrue(html.contains("GUTSCHRIFT"),
-                "E-Invoice-HTML-Template muss 'GUTSCHRIFT' enthalten");
+        assertTrue(html.contains("Gutschrift"),
+                "E-Invoice-HTML-Template muss 'Gutschrift' enthalten");
     }
 
     @Test
@@ -69,7 +107,7 @@ class GutschriftTextTest {
     @Test
     void eInvoiceHtmlTemplate_containsParagraph14() throws Exception {
         String html = invokeStaticString("getDefaultEInvoicePdfViewHtmlTemplate");
-        assertTrue(html.contains("§ 14"),
+        assertTrue(html.contains("&sect; 14"),
                 "E-Invoice-HTML-Template muss Verweis auf § 14 UStG enthalten");
     }
 
@@ -90,19 +128,28 @@ class GutschriftTextTest {
     @Test
     void eInvoiceHtmlTemplate_containsGutschriftempfaengerin() throws Exception {
         String html = invokeStaticString("getDefaultEInvoicePdfViewHtmlTemplate");
-        assertTrue(html.contains("Gutschriftempfängerin"),
+        assertTrue(html.contains("Gutschriftempf&auml;ngerin"),
                 "E-Invoice-HTML-Template muss 'Gutschriftempfängerin' enthalten");
     }
 
     @Test
     void eInvoiceHtmlTemplate_placesIssuerAndRecipientCorrectly() throws Exception {
         String html = invokeStaticString("getDefaultEInvoicePdfViewHtmlTemplate");
-        assertTrue(html.contains("<div><b>Gutschriftausstellerin (Leistungsempfängerin)</b></div>"),
+        assertTrue(html.contains("Gutschriftausstellerin (Leistungsempf&auml;ngerin)"),
                 "Ausstellerin muss im Briefkopf stehen");
-        assertTrue(html.contains("<div>{{buyerCompanyName}}</div>"),
+        assertTrue(html.contains("{{buyerCompanyName}}, {{buyerAddress}}"),
                 "Ausstellerin muss die eigene Firma verwenden");
-        assertTrue(html.contains("<div style=\"font-size:16px;font-weight:700;\">{{advisorName}}</div>"),
+        assertTrue(html.contains("<div style=\"font-weight:700;\">{{advisorName}}</div>"),
                 "Adressat muss die Beraterin sein");
+    }
+
+    @Test
+    void eInvoiceHtmlTemplate_embedsLocalLogoDataUri() throws Exception {
+        String html = invokeStaticString("getDefaultEInvoicePdfViewHtmlTemplate");
+        assertTrue(html.contains("alt=\"VEMMiNA\""), "Standardvorlage muss das VEMMiNA-Logo enthalten");
+        assertTrue(html.contains("data:image/png;base64,"), "Logo muss lokal als Data-URI eingebettet sein");
+        assertFalse(html.contains("src=\"http://"), "Logo darf keine externe HTTP-Ressource laden");
+        assertFalse(html.contains("src=\"https://"), "Logo darf keine externe HTTPS-Ressource laden");
     }
 
     @Test
@@ -167,24 +214,127 @@ class GutschriftTextTest {
         config.setProperty("contactEmail", "rechnung@example.com");
 
         Path pdf = Files.createTempFile("gutschrift-layout", ".pdf");
-        Method m = WebUiServer.class.getDeclaredMethod(
-                "createEInvoicePdfWithEmbeddedXml",
-                Path.class, Path.class, JsonNode.class, JsonNode.class, Properties.class,
-                String.class, String.class, boolean.class);
-        m.setAccessible(true);
-        m.invoke(null, pdf, null, payment, affiliate, config, "GS-2026-0002", "05.07.2024 bis 10.07.2024", false);
+        invokeCreateEInvoicePdf(pdf, null, payment, affiliate, config, "GS-2026-0002", "05.07.2024 bis 10.07.2024", false);
 
         String text;
+        boolean hasLogoImage;
         try (PDDocument document = PDDocument.load(pdf.toFile())) {
             text = new PDFTextStripper().getText(document);
+            hasLogoImage = hasImageXObject(document);
         }
 
         assertTrue(text.indexOf("S+R Linear Technology GmbH") < text.indexOf("Nicolas Influencer"),
                 "Die eigene Firma muss im PDF-Kopf vor der Beraterin erscheinen");
-        assertTrue(text.contains("Gutschriftempfängerin (Leistungserbringerin)"),
+        assertTrue(text.contains("Gutschriftempf\u00e4ngerin (Leistungserbringerin)"),
                 "Die Beraterin muss als Gutschriftempfängerin beschriftet sein");
-        assertTrue(text.contains("1,13 EUR"), "Beträge müssen im PDF ohne Euro-Fragezeichen erscheinen");
+        assertTrue(text.contains("1,13"), "Beträge müssen im PDF erscheinen");
+        assertTrue(text.contains("EUR"), "Die Währung muss im PDF erscheinen");
+        assertTrue(hasLogoImage, "Das Standard-PDF muss das lokal eingebettete Logo rendern");
+        assertFalse(text.contains("{{"), "Das erzeugte PDF darf keine rohen Template-Platzhalter enthalten");
         assertFalse(text.contains("?"), "Das erzeugte PDF darf keine Ersatz-Fragezeichen enthalten");
+    }
+
+    @Test
+    void eInvoicePdf_renderingReplacesAllGutschriftPlaceholders() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode payment = mapper.readTree("""
+                {
+                  "id": "999",
+                  "amount": "123.45",
+                  "currency": "EUR",
+                  "created_at": "2026-02-05T11:13:00Z"
+                }
+                """);
+        JsonNode affiliate = mapper.readTree("""
+                {
+                  "name": "Beraterin Beispiel",
+                  "email": "beraterin@example.com",
+                  "payment_details": {
+                    "iban": "DE00123456780000000000",
+                    "bic": "GENODEF1XXX",
+                    "account_holder": "Beraterin Beispiel"
+                  }
+                }
+                """);
+        Properties config = new Properties();
+        config.setProperty("eInvoiceBuyerName", "S+R Linear Technology GmbH");
+
+        String rendered = invokeRenderEInvoicePdfViewHtml(
+                "Nr {{gutschriftNr}} Legacy {{invoiceNumber}} USt {{vatLine}} {{vatAmount}} Brutto {{grossAmount}} Netto {{amount}} {{currency}}",
+                payment, affiliate, config, "GS-2026-0001", "01.01.2026 bis 31.01.2026", false);
+
+        assertTrue(rendered.contains("GS-2026-0001"));
+        assertTrue(rendered.contains("Umsatzsteuer (19 %)"));
+        assertTrue(rendered.contains("23,46"));
+        assertTrue(rendered.contains("146,91"));
+        assertTrue(rendered.contains("123,45"));
+        assertFalse(rendered.contains("{{gutschriftNr}}"));
+        assertFalse(rendered.contains("{{invoiceNumber}}"));
+        assertFalse(rendered.contains("{{vatLine}}"));
+        assertFalse(rendered.contains("{{vatAmount}}"));
+        assertFalse(rendered.contains("{{grossAmount}}"));
+    }
+
+    @Test
+    void eInvoicePdf_usesConfiguredDesignerTemplateAndKeepsXmlAttachment() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode payment = mapper.readTree("""
+                {
+                  "id": "123",
+                  "amount": "123.45",
+                  "currency": "EUR",
+                  "created_at": "2026-02-05T11:13:00Z"
+                }
+                """);
+        JsonNode affiliate = mapper.readTree("""
+                {
+                  "name": "Beraterin Beispiel",
+                  "email": "beraterin@example.com",
+                  "payment_details": {
+                    "iban": "DE00123456780000000000",
+                    "bic": "GENODEF1XXX",
+                    "account_holder": "Beraterin Beispiel"
+                  }
+                }
+                """);
+        Properties config = new Properties();
+        config.setProperty("eInvoiceBuyerName", "S+R Linear Technology GmbH");
+        config.setProperty("eInvoicePdfTemplateHtml", """
+                <!doctype html>
+                <html>
+                <head><meta charset="UTF-8" /><style>@page { size: A4; margin: 20mm; } body { font-family: Arial, sans-serif; }</style></head>
+                <body>
+                  <h1>GUTSCHRIFT 2</h1>
+                  <p>Nummer {{gutschriftNr}}</p>
+                  <p>Steuer {{vatLine}} {{vatAmount}}</p>
+                  <p>Auszahlung {{grossAmount}}</p>
+                </body>
+                </html>
+                """);
+
+        Path xml = Files.createTempFile("zugferd-test", ".xml");
+        Files.writeString(xml, "<invoice>ok</invoice>", StandardCharsets.UTF_8);
+        Path pdf = Files.createTempFile("gutschrift-designer-template", ".pdf");
+
+        invokeCreateEInvoicePdf(pdf, xml, payment, affiliate, config, "GS-2026-0002", "01.01.2026 bis 31.01.2026", false);
+
+        try (PDDocument document = PDDocument.load(pdf.toFile())) {
+            String text = new PDFTextStripper().getText(document);
+            assertTrue(text.contains("GUTSCHRIFT 2"),
+                    "Die gespeicherte Designer-Vorlage muss die erzeugte PDF steuern");
+            assertTrue(text.contains("GS-2026-0002"));
+            assertTrue(text.contains("146,91"));
+            assertFalse(hasImageXObject(document),
+                    "Custom-Vorlagen dürfen nicht still durch die neue Standardvorlage ersetzt werden");
+
+            assertNotNull(document.getDocumentCatalog().getNames(),
+                    "Die ZUGFeRD/XML-Anlage muss im PDF-Katalog vorhanden bleiben");
+            assertNotNull(document.getDocumentCatalog().getNames().getEmbeddedFiles(),
+                    "Die XML-Anlage muss als Embedded File eingetragen werden");
+            COSArray associatedFiles = (COSArray) document.getDocumentCatalog().getCOSObject().getDictionaryObject(COSName.AF);
+            assertNotNull(associatedFiles, "Die XML-Anlage muss auch als Associated File referenziert sein");
+            assertEquals(1, associatedFiles.size());
+        }
     }
 
     // ── Tests: E-Mail-Template ──
