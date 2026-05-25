@@ -3,7 +3,7 @@ services:
     build: .
     container_name: goaffpro-rechnungen
     ports:
-      - "8090:8080"
+      - "8104:8080"
     volumes:
       - goaffpro-config:/app/config
       - ${EXPORT_PATH:-/volume1/docker/goaffpro_rechnungen/export}:/app/exports
