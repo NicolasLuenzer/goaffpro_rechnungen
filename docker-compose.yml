@@ -6,6 +6,7 @@ services:
       - "8104:8080"
     volumes:
       - goaffpro-config:/app/config
+      - goaffpro-data:/app/data
       - ${EXPORT_PATH:-/volume1/docker/goaffpro_rechnungen/export}:/app/exports
     environment:
       - TZ=Europe/Berlin
@@ -15,7 +16,9 @@ services:
       - GOAFFPRO_SMTP_PORT=${GOAFFPRO_SMTP_PORT:-}
       - GOAFFPRO_SMTP_TLS=${GOAFFPRO_SMTP_TLS:-}
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - GOAFFPRO_SYNC_DATA_PATH=/app/data
     restart: unless-stopped
 
 volumes:
   goaffpro-config:
+  goaffpro-data:

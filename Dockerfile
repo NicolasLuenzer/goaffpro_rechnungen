@@ -19,6 +19,7 @@ ENV CONFIG_PATH=/app/config/config.properties
 ENV UI_PATH=/app/ui/dashboard.html
 ENV HELP_DOC_PATH=/app/docs/HILFE.md
 ENV PDF_EXPORT_PATH=/app/exports
+ENV GOAFFPRO_SYNC_DATA_PATH=/app/data
 
 EXPOSE 8080
 CMD ["java", "-jar", "/app/app.jar"]
