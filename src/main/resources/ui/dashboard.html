@@ -223,6 +223,26 @@
     .kpi-card:nth-child(4n+3) { background: linear-gradient(135deg, var(--clr-accent-3), var(--clr-accent-3-end)); }
     .kpi-card:nth-child(4n+4) { background: linear-gradient(135deg, var(--clr-accent-4), var(--clr-accent-4-dark)); }
     .kpi-card b { color:#fff; }
+    .sync-status-card { border:1px solid var(--clr-border); border-radius:var(--radius-md); background:#fff; padding:18px; box-shadow:var(--shadow-sm); }
+    .sync-status-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+    .sync-state-badge { display:inline-flex; align-items:center; padding:6px 12px; border-radius:999px; font-weight:800; font-size:var(--fs-sm); border:1px solid var(--clr-border-neutral); }
+    .sync-state-badge.ok { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .sync-state-badge.running { background:#dbeafe; color:#1d4ed8; border-color:#93c5fd; }
+    .sync-state-badge.warning { background:#fef3c7; color:#92400e; border-color:#fcd34d; }
+    .sync-state-badge.error { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .sync-progress-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:12px 0; }
+    .sync-progress-item { border:1px solid var(--clr-border); border-radius:var(--radius-sm); padding:12px; background:var(--clr-surface-tint); }
+    .sync-progress-item strong { display:block; margin-bottom:4px; }
+    .sync-bar { height:8px; border-radius:99px; background:#e5e7eb; overflow:hidden; margin-top:8px; }
+    .sync-bar span { display:block; height:100%; background:linear-gradient(135deg,var(--clr-accent-1),var(--clr-accent-2)); }
+    .sync-bar.large { height:18px; }
+    .sync-bar.indeterminate span { width:30% !important; animation:syncSlide 1.4s ease-in-out infinite alternate; }
+    @keyframes syncSlide { from { margin-left:0; } to { margin-left:70%; } }
+    .sync-progress-item.pending .sync-bar span { background:#cbd5e1; }
+    .sync-progress-item.done .sync-bar span { background:#16a34a; }
+    .sync-progress-item.warning .sync-bar span { background:#d97706; }
+    .sync-progress-item.skipped { opacity:0.6; }
+    .sync-progress-eta { margin:8px 0 4px 0; font-weight:600; }
 
     /* ── Validation Table – kompaktes Layout ── */
     .validation-table-wrap { overflow-x: auto; }
@@ -236,6 +256,13 @@
     .mail-log-badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:var(--fs-sm); font-weight:700; }
     .mail-log-badge.sent { background:#d1fae5; color:#065f46; border:1px solid #6ee7b7; }
     .mail-log-badge.none { background:#f3f4f6; color:#6b7280; border:1px solid #d1d5db; }
+    .risk-badge { display:inline-block; min-width:76px; text-align:center; padding:4px 10px; border-radius:999px; font-size:var(--fs-sm); font-weight:800; border:1px solid transparent; }
+    .risk-ok { background:#dcfce7; color:#166534; border-color:#86efac; }
+    .risk-hint { background:#fef3c7; color:#92400e; border-color:#fcd34d; }
+    .risk-review { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .party-detail-box { margin-top:14px; border:1px solid var(--clr-border); border-radius:var(--radius-md); background:var(--clr-surface-tint); padding:14px; }
+    .party-detail-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin:10px 0; }
+    .party-detail-card { border:1px solid var(--clr-border); border-radius:var(--radius-sm); background:#fff; padding:12px; }
     .mail-log-modal { position:fixed; inset:0; background:rgba(15,7,35,.6); backdrop-filter:blur(6px); z-index:3500; display:flex; align-items:center; justify-content:center; }
     .mail-log-modal-card { width:min(920px,95vw); max-height:85vh; overflow:auto; background:var(--clr-surface); border-radius:var(--radius-lg); border:1.5px solid var(--clr-border-strong); box-shadow:var(--shadow-lg); padding:20px; }
 
@@ -384,7 +411,7 @@
       <h1>VEMMiNA Assistent</h1>
       <p class="app-subtitle">Gutschriftservice, Validierungen und Auswertungen für VEMMiNA-Beraterinnen.</p>
     </div>
-    <button id="hamburgerBtn" class="hamburger-btn" type="button" aria-label="Navigation oeffnen" title="Navigation">&#9776;</button>
+    <button id="hamburgerBtn" class="hamburger-btn" type="button" aria-label="Navigation öffnen" title="Navigation">&#9776;</button>
     <div class="header-spacer"></div>
     <button id="headerSettingsBtn" class="header-btn" type="button">Einstellungen</button>
     <button id="headerHelpBtn" class="header-btn" type="button">Hilfe</button>
@@ -457,12 +484,18 @@
     let defaultEmailTemplateHtml = '';
     let defaultValidationReminderTemplateHtml = '';
     let defaultEInvoicePdfTemplateHtml = '';
+    let defaultLeaderWeeklyReportTemplateHtml = '';
     let activeEmailTemplateType = 'invoice';
     let emailTemplateHtmlMode = false;
     let emailPreviewAdvisors = [];
     let mailLogByPayment = new Map();
     let reminderLogByAdvisor = new Map();
     let analyticsLastPayload = null;
+    let analyticsPartyRowsCache = [];
+    let analyticsNewCustomerLeaderCache = null;
+    let leaderWeeklyMailPreviewCache = null;
+    let syncDiagnosticsPollTimer = null;
+    let syncFastPollTimer = null;
 
     async function apiGet(path) {
       const response = await fetch(`${API_BASE}${path}`);
@@ -679,6 +712,69 @@
                   </div>
                 </div>
 
+                <div class="settings-group">
+                  <h3>GoAffPro Sync</h3>
+                  <div class="toolbar">
+                    <label><input id="goaffproSyncEnabled" type="checkbox" checked /> Sync aktiv</label>
+                    <label><input id="goaffproSyncHourlyEnabled" type="checkbox" /> Stündlichen Delta-Sync aktivieren</label>
+                    <label><input id="goaffproSyncDeepEnabled" type="checkbox" /> Nächtlichen Deep-Check aktivieren</label>
+                  </div>
+                  <div class="toolbar">
+                    <label><input id="goaffproSyncAssetDownloadEnabled" type="checkbox" checked /> Dateien und Assets herunterladen</label>
+                  </div>
+                  <div class="toolbar">
+                    <label for="goaffproSyncMaxCallsPerHour">API-Call-Limit/Stunde:</label>
+                    <input id="goaffproSyncMaxCallsPerHour" type="number" min="10" step="10" style="max-width:140px" />
+                    <label for="goaffproSyncDeltaLookbackDays">Delta-Lookback Tage:</label>
+                    <input id="goaffproSyncDeltaLookbackDays" type="number" min="1" step="1" style="max-width:120px" />
+                  </div>
+                  <div class="toolbar">
+                    <label><input id="goaffproSyncSlidingWindowEnabled" type="checkbox" checked /> Gleitendes Stunden-Budget (Calls sofort, solange Budget frei)</label>
+                    <label for="goaffproSyncMinCallSpacingMs">Min. Abstand zwischen Calls (ms):</label>
+                    <input id="goaffproSyncMinCallSpacingMs" type="number" min="0" step="100" style="max-width:120px" />
+                  </div>
+                  <div class="toolbar">
+                    <label><input id="goaffproSyncDeltaDownloadsEnabled" type="checkbox" /> Delta: Datei-Downloads prüfen</label>
+                    <label><input id="goaffproSyncDownloadSkipExistingEnabled" type="checkbox" checked /> Vorhandene Dateien nicht erneut laden</label>
+                  </div>
+                  <div class="settings-hint">Der Delta-Sync erfasst nur neu erstellte Datensätze (created_at); Änderungen und Datei-Downloads deckt der nächtliche Deep-Check ab.</div>
+                  <div class="toolbar">
+                    <label for="goaffproSyncMinFreeBytes">Mindestfreier Speicher (Bytes):</label>
+                    <input id="goaffproSyncMinFreeBytes" type="number" min="0" step="1048576" style="max-width:220px" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="goaffproSyncDataPath">Lokaler Datenpfad:</label>
+                    <input id="goaffproSyncDataPath" type="text" placeholder="/app/data" />
+                  </div>
+                  <div id="goaffproSyncDbPathHint" class="settings-hint">SQLite-Datenbank: -</div>
+                </div>
+
+                <div class="settings-group">
+                  <h3>Führungskräfte-Wochenmail</h3>
+                  <div class="toolbar">
+                    <label><input id="leaderWeeklyMailSchedulerEnabled" type="checkbox" /> Automatischen Wochenversand aktivieren</label>
+                  </div>
+                  <div class="toolbar">
+                    <label for="leaderWeeklyMailScheduleDay">Versandtag:</label>
+                    <select id="leaderWeeklyMailScheduleDay" style="max-width:180px">
+                      <option value="MONDAY">Montag</option>
+                      <option value="TUESDAY">Dienstag</option>
+                      <option value="WEDNESDAY">Mittwoch</option>
+                      <option value="THURSDAY">Donnerstag</option>
+                      <option value="FRIDAY">Freitag</option>
+                      <option value="SATURDAY">Samstag</option>
+                      <option value="SUNDAY">Sonntag</option>
+                    </select>
+                    <label for="leaderWeeklyMailScheduleTime">Uhrzeit:</label>
+                    <input id="leaderWeeklyMailScheduleTime" type="time" value="08:00" style="max-width:130px" />
+                  </div>
+                  <div class="toolbar">
+                    <label style="color:#991b1b;"><input id="leaderWeeklyMailProductionEnabled" type="checkbox" /> Produktivversand an echte Führungskräfte freigeben</label>
+                  </div>
+                  <div id="leaderWeeklyMailLastSentHint" class="settings-hint">Letzter automatischer Versand: -</div>
+                  <div class="settings-hint">Solange der Produktivschalter aus ist, gehen alle Wochenmails ausschließlich an die Kontakt-E-Mail.</div>
+                </div>
+
               </div>
               <div class="toolbar"><button id="saveSettingsBtn" class="secondary">Speichern</button></div>
               <div class="settings-hint">Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</div>
@@ -688,7 +784,7 @@
           <div id="main-email-designer" class="section-panel">
             <div class="settings">
               <strong>E-Mail Designer</strong>
-              <div class="toolbar"><label for="emailTemplateTypeSelect">Vorlage:</label><select id="emailTemplateTypeSelect" style="min-width:280px"><option value="invoice">Gutschriftservice (Provisionsmail)</option><option value="validationReminder">Stammdaten-Erinnerung</option><option value="eInvoicePdf">E-Gutschrift PDF-Ansicht</option></select></div>
+              <div class="toolbar"><label for="emailTemplateTypeSelect">Vorlage:</label><select id="emailTemplateTypeSelect" style="min-width:280px"><option value="invoice">Gutschriftservice (Provisionsmail)</option><option value="validationReminder">Stammdaten-Erinnerung</option><option value="eInvoicePdf">E-Gutschrift PDF-Ansicht</option><option value="leaderWeeklyReport">Führungskräfte-Neukundenreport</option></select></div>
               <div class="email-designer-layout">
                 <div>
                   <div class="toolbar email-editor-toolbar">
@@ -707,7 +803,7 @@
                   </div>
                   <div id="emailTemplateEditor" class="email-editor" contenteditable="true"></div>
                   <textarea id="emailTemplateSource" class="email-editor-source" style="display:none"></textarea>
-                  <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{gutschriftNr}}</code>, <code>{{invoiceNumber}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>, <code>{{missingFields}}</code>, <code>{{advisorName}}</code>, <code>{{advisorAddress}}</code>, <code>{{advisorEmail}}</code>, <code>{{advisorPhone}}</code>, <code>{{advisorTaxNumber}}</code>, <code>{{advisorIban}}</code>, <code>{{advisorBic}}</code>, <code>{{advisorAccountHolder}}</code>, <code>{{buyerCompanyName}}</code>, <code>{{buyerAddress}}</code>, <code>{{buyerVatId}}</code>, <code>{{buyerTaxNumber}}</code>, <code>{{amount}}</code>, <code>{{vatLine}}</code>, <code>{{vatAmount}}</code>, <code>{{grossAmount}}</code>, <code>{{currency}}</code>.</div>
+                  <div class="settings-hint">Verfügbare Platzhalter: <code>{{salutationName}}</code>, <code>{{periodLabel}}</code>, <code>{{paymentId}}</code>, <code>{{gutschriftNr}}</code>, <code>{{invoiceNumber}}</code>, <code>{{payout}}</code>, <code>{{method}}</code>, <code>{{created}}</code>, <code>{{txCount}}</code>, <code>{{missingFields}}</code>, <code>{{advisorName}}</code>, <code>{{advisorAddress}}</code>, <code>{{advisorEmail}}</code>, <code>{{advisorPhone}}</code>, <code>{{advisorTaxNumber}}</code>, <code>{{advisorIban}}</code>, <code>{{advisorBic}}</code>, <code>{{advisorAccountHolder}}</code>, <code>{{buyerCompanyName}}</code>, <code>{{buyerAddress}}</code>, <code>{{buyerVatId}}</code>, <code>{{buyerTaxNumber}}</code>, <code>{{amount}}</code>, <code>{{vatLine}}</code>, <code>{{vatAmount}}</code>, <code>{{grossAmount}}</code>, <code>{{currency}}</code>, <code>{{leaderName}}</code>, <code>{{currentWeekNewCustomers}}</code>, <code>{{previousWeekNewCustomers}}</code>, <code>{{secondPreviousWeekNewCustomers}}</code>, <code>{{monthNewCustomers}}</code>, <code>{{monthlyTarget}}</code>, <code>{{statusLabel}}</code>, <code>{{teamRows}}</code>.</div>
                 </div>
                 <div>
                   <div class="toolbar" style="width:100%;margin-top:0;">
@@ -773,6 +869,8 @@
         <div class="validation-subtabs">
           <button type="button" class="validation-subtab active" data-analytics-target="analytics-overview-section">Gesamt-Auswertung</button>
           <button type="button" class="validation-subtab" data-analytics-target="analytics-advisor360-section">Beraterinnenebene (360°)</button>
+          <button type="button" class="validation-subtab" data-analytics-target="analytics-parties-section">Backtreff / Party-Fraud</button>
+          <button type="button" class="validation-subtab" data-analytics-target="analytics-new-customers-section">Neukunden pro Woche</button>
         </div>
 
         <div id="analytics-overview-section" class="validation-section active">
@@ -811,6 +909,114 @@
           <div class="toolbar"><strong>Verkaufte Artikel (direkt + indirekt)</strong></div>
           <table><thead><tr><th>Artikel</th><th>Menge</th><th>Umsatz (geschätzt)</th></tr></thead><tbody id="analyticsAdvisorProductBody"></tbody></table>
         </div>
+
+        <div id="analytics-parties-section" class="validation-section">
+          <div class="toolbar">
+            <button id="fetchPartyAnalyticsBtn" class="secondary" type="button">Backtreff-Auswertung laden</button>
+          </div>
+          <p id="analyticsPartyStatus" class="status">Noch keine Backtreff-Auswertung geladen.</p>
+          <div id="analyticsPartyWarnings" class="warning-banner" style="display:none"></div>
+          <div id="analyticsPartyKpiGrid" class="kpi-grid"></div>
+          <div class="toolbar"><strong>Beraterinnen / Mitarbeiterinnen</strong></div>
+          <table><thead><tr><th>Beraterin</th><th>Affiliate-ID</th><th>Partys</th><th>Aktiv</th><th>Geschlossen</th><th>Orders</th><th>Kunden</th><th>Umsatz</th><th>Auffällige Partys</th><th>Max. Score</th></tr></thead><tbody id="analyticsPartyAdvisorBody"></tbody></table>
+          <div class="toolbar"><strong>Backtreffs / Partys</strong></div>
+          <table><thead><tr><th>Risiko</th><th>Score</th><th>Party</th><th>Host</th><th>Beraterin</th><th>Status</th><th>Orders</th><th>Kunden</th><th>Artikel</th><th>Umsatz</th><th>Gründe</th><th>Details</th></tr></thead><tbody id="analyticsPartyBody"></tbody></table>
+          <div id="analyticsPartyDetail" class="party-detail-box">
+            <p class="status">Wähle eine Party aus, um Order- und Produktdetails zu sehen.</p>
+          </div>
+        </div>
+
+        <div id="analytics-new-customers-section" class="validation-section">
+          <div class="toolbar">
+            <button id="fetchNewCustomerAnalyticsBtn" class="secondary" type="button">Neukunden-Führungsreport laden</button>
+          </div>
+          <p id="analyticsNewCustomerStatus" class="status">Noch kein Neukunden-Wochenreport geladen.</p>
+          <div id="analyticsNewCustomerWarnings" class="warning-banner" style="display:none"></div>
+          <div id="analyticsNewCustomerKpiGrid" class="kpi-grid"></div>
+          <div class="toolbar"><strong>Führungskräfte-Zielerreichung</strong></div>
+          <table><thead><tr><th>Status</th><th>Führungskraft</th><th>Teamgröße</th><th>Vorvergangener Monat</th><th>Letzter Monat</th><th>Laufender Monat</th><th>Ziel</th><th>Handlungsbedarf</th><th>Details</th></tr></thead><tbody id="analyticsNewCustomerLeaderBody"></tbody></table>
+          <div id="analyticsNewCustomerLeaderDetail" class="party-detail-box">
+            <p class="status">Wähle eine Führungskraft aus, um Monatsverlauf, Wochenwerte und Team-Beiträge zu sehen.</p>
+          </div>
+          <div class="settings-group" style="margin:18px 0;">
+            <h3>Wochenmail an Führungskräfte</h3>
+            <div class="toolbar">
+              <button id="previewLeaderWeeklyMailBtn" class="secondary" type="button">Vorschau erzeugen</button>
+              <button id="sendLeaderWeeklyMailTestBtn" class="secondary" type="button">Testmails an Kontakt-E-Mail senden</button>
+              <button id="sendLeaderWeeklyMailProductionBtn" class="danger" type="button" disabled>Produktiv senden</button>
+            </div>
+            <p id="leaderWeeklyMailStatus" class="status">Noch keine Wochenmail-Vorschau erzeugt.</p>
+            <div id="leaderWeeklyMailWarnings" class="warning-banner" style="display:none"></div>
+            <table><thead><tr><th>Modus</th><th>Führungskraft</th><th>Empfänger</th><th>Letzte 7 Tage</th><th>Vorwoche</th><th>2. Vorwoche</th><th>Monatsfortschritt</th><th>Status</th><th>Details</th></tr></thead><tbody id="leaderWeeklyMailPreviewBody"></tbody></table>
+            <div id="leaderWeeklyMailPreviewDetail" class="party-detail-box">
+              <p class="status">Wähle eine Vorschau aus, um die gerenderte Mail zu sehen.</p>
+            </div>
+          </div>
+          <div class="toolbar"><strong>Wochenübersicht</strong></div>
+          <table><thead><tr><th>Woche</th><th>Zeitraum</th><th>Orders</th><th>Neukunden-Orders</th><th>Bestandskunden-Orders</th><th>Neukundenquote</th><th>Umsatz</th><th>Neukundenumsatz</th></tr></thead><tbody id="analyticsNewCustomerWeekBody"></tbody></table>
+          <div class="toolbar"><strong>Beraterin pro Woche</strong></div>
+          <table><thead><tr><th>Woche</th><th>Beraterin</th><th>Affiliate-ID</th><th>Orders</th><th>Neukunden-Orders</th><th>Bestandskunden-Orders</th><th>Neukundenquote</th><th>Umsatz</th><th>Neukundenumsatz</th></tr></thead><tbody id="analyticsNewCustomerAdvisorWeekBody"></tbody></table>
+        </div>
+      `;
+      panels.appendChild(panel);
+    }
+
+    function createSyncTabAndPanel() {
+      const tabs = document.getElementById('tabs');
+      const panels = document.getElementById('panels');
+
+      const tab = document.createElement('button');
+      tab.className = 'tab';
+      tab.textContent = 'GoAffPro Sync';
+      tab.dataset.target = 'sync-panel';
+      tabs.appendChild(tab);
+
+      const panel = document.createElement('section');
+      panel.className = 'panel';
+      panel.id = 'sync-panel';
+      panel.innerHTML = `
+        <h2>GoAffPro Sync</h2>
+        <div class="toolbar">
+          <button id="syncRefreshBtn" class="secondary" type="button">Status aktualisieren</button>
+          <button id="syncInitialBtn" class="secondary" type="button">Initialsync starten</button>
+          <button id="syncDeltaBtn" class="secondary" type="button">Delta-Sync starten</button>
+          <button id="syncDeepBtn" class="secondary" type="button">Deep-Check starten</button>
+          <button id="syncPauseBtn" class="danger" type="button">Sync pausieren</button>
+          <button id="syncResumeBtn" class="secondary" type="button">Sync fortsetzen</button>
+        </div>
+        <p id="syncStatusText" class="status">Noch kein Syncstatus geladen.</p>
+        <div id="syncWarnings" class="warning-banner" style="display:none"></div>
+        <div id="syncStatusCard" class="sync-status-card"></div>
+        <div id="syncProgressCard" class="sync-status-card" style="display:none"></div>
+        <div id="syncKpiGrid" class="kpi-grid"></div>
+        <div class="toolbar"><strong>Diagnose</strong></div>
+        <div class="settings-group" style="background:#fff;margin-bottom:16px;">
+          <p class="settings-hint">Die Diagnose schreibt nicht in den produktiven Sync-Bestand. Sie prüft ausgewählte Problem-Endpunkte mit kleinen Testabfragen.</p>
+          <div class="toolbar" id="syncDiagnosticsEndpointChecks">
+            <label><input type="checkbox" class="sync-diagnostic-endpoint" value="affiliates" checked /> Affiliates</label>
+            <label><input type="checkbox" class="sync-diagnostic-endpoint" value="payments" checked /> Payments</label>
+            <label><input type="checkbox" class="sync-diagnostic-endpoint" value="connections" checked /> Connections</label>
+            <label><input type="checkbox" class="sync-diagnostic-endpoint" value="traffic" checked /> Traffic</label>
+            <label><input type="checkbox" class="sync-diagnostic-endpoint" value="groups" checked /> Groups</label>
+            <label><input type="checkbox" class="sync-diagnostic-endpoint" value="creatives" checked /> Creatives</label>
+            <label><input type="checkbox" class="sync-diagnostic-endpoint" value="store_logs" checked /> Store Logs</label>
+          </div>
+          <div class="toolbar">
+            <button id="syncDiagnosticsRunBtn" class="secondary" type="button">Problem-Endpunkte diagnostizieren</button>
+            <button id="syncDiagnosticsRefreshBtn" class="secondary" type="button">Diagnose aktualisieren</button>
+            <span id="syncDiagnosticsEstimate" class="status">Noch keine Diagnose geladen.</span>
+          </div>
+          <div id="syncDiagnosticsStatus" class="status"></div>
+          <table><thead><tr><th>Endpoint</th><th>Empfehlung</th><th>OK-Responses</th><th>Max. Items</th><th>Leere Items</th><th>Warnungen</th></tr></thead><tbody id="syncDiagnosticsSummaryBody"></tbody></table>
+          <table><thead><tr><th>Endpoint</th><th>Variante</th><th>HTTP</th><th>ms</th><th>Bytes</th><th>Array</th><th>Items</th><th>Leer</th><th>Wiederholt</th><th>Fields</th><th>IDs/Hashes</th><th>Warnung</th></tr></thead><tbody id="syncDiagnosticsResultBody"></tbody></table>
+        </div>
+        <div class="toolbar"><strong>Dateninventar</strong></div>
+        <div id="syncInventoryGrid" class="sync-progress-grid"></div>
+        <table><thead><tr><th>Datenbereich</th><th>Datensätze</th><th>Remote fehlt</th><th>Ungültig</th><th>Dateien</th><th>Dateigröße</th><th>Zuletzt gesehen</th><th>Status</th></tr></thead><tbody id="syncInventoryBody"></tbody></table>
+        <div class="toolbar"><strong>Endpoint-Details</strong></div>
+        <table><thead><tr><th>Endpoint</th><th>Entität</th><th>Gelesen</th><th>Neu</th><th>Geändert</th><th>Unverändert</th><th>Downloads</th><th>API-Calls</th><th>Vollständig</th><th>Warnung</th></tr></thead><tbody id="syncEndpointBody"></tbody></table>
+        <div class="toolbar"><strong>Letzte Sync-Läufe</strong></div>
+        <table><thead><tr><th>ID</th><th>Modus</th><th>Status</th><th>Start</th><th>Ende</th><th>API-Calls</th><th>Gesehen</th><th>Neu</th><th>Geändert</th><th>Warnungen</th><th>Fehler</th></tr></thead><tbody id="syncRunsBody"></tbody></table>
       `;
       panels.appendChild(panel);
     }
@@ -883,7 +1089,7 @@
 
     function wireAnalyticsSubtabs() {
       const tabs = document.querySelectorAll('[data-analytics-target]');
-      const sections = ['analytics-overview-section', 'analytics-advisor360-section'].map(id => document.getElementById(id)).filter(Boolean);
+      const sections = ['analytics-overview-section', 'analytics-advisor360-section', 'analytics-parties-section', 'analytics-new-customers-section'].map(id => document.getElementById(id)).filter(Boolean);
       tabs.forEach(tab => tab.addEventListener('click', () => {
         const target = tab.dataset.analyticsTarget;
         tabs.forEach(t => t.classList.toggle('active', t === tab));
@@ -925,6 +1131,419 @@
       updateEmptyTablesVisibility(document);
     }
 
+    function riskBadgeHtml(level, score) {
+      const text = String(level || 'OK');
+      const cls = text === 'OK' ? 'risk-ok' : (text === 'Hinweis' ? 'risk-hint' : 'risk-review');
+      return `<span class="risk-badge ${cls}" title="Score ${escapeHtml(String(score || 0))}">${escapeHtml(text)}</span>`;
+    }
+
+    function renderRiskReasons(reasons) {
+      const rows = Array.isArray(reasons) ? reasons : [];
+      return rows.length ? rows.map(r => escapeHtml(String(r))).join('<br>') : '-';
+    }
+
+    function renderPartyAnalytics(data) {
+      const summary = data.summary || {};
+      const advisors = Array.isArray(data.advisorRows) ? data.advisorRows : [];
+      const parties = Array.isArray(data.partyRows) ? data.partyRows : [];
+      const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+      analyticsPartyRowsCache = parties;
+
+      const status = document.getElementById('analyticsPartyStatus');
+      const warningsBox = document.getElementById('analyticsPartyWarnings');
+      const kpiGrid = document.getElementById('analyticsPartyKpiGrid');
+      const advisorBody = document.getElementById('analyticsPartyAdvisorBody');
+      const partyBody = document.getElementById('analyticsPartyBody');
+      if (!status || !warningsBox || !kpiGrid || !advisorBody || !partyBody) return;
+
+      warningsBox.style.display = warnings.length ? '' : 'none';
+      warningsBox.innerHTML = warnings.map(w => escapeHtml(String(w))).join('<br>');
+
+      const kpis = [
+        ['Zeitraum', `${summary.fromDate || '-'} bis ${summary.toDate || '-'}`],
+        ['Partys im Zeitraum', summary.partyCount || 0],
+        ['Aktive Partys', summary.activePartyCount || 0],
+        ['Geschlossene Partys', summary.closedPartyCount || 0],
+        ['Gematchte Party-Orders', summary.matchedOrderCount || 0],
+        ['Party-Umsatz', formatEuroAmount(summary.matchedTotal || 0)],
+        ['Beraterinnen', summary.advisorCount || 0],
+        ['Prüfen', summary.reviewPartyCount || 0],
+        ['Hinweise', summary.hintPartyCount || 0]
+      ];
+      kpiGrid.innerHTML = kpis.map(([k,v]) => `<div class="kpi-card"><div>${escapeHtml(String(k))}</div><b>${escapeHtml(String(v))}</b></div>`).join('');
+
+      advisorBody.innerHTML = advisors.map(r => `
+        <tr>
+          <td>${escapeHtml(r.advisorName || '')}</td>
+          <td>${escapeHtml(r.advisorId || '')}</td>
+          <td>${countHoverHtml(r.partyCount || 0, `${r.advisorName || r.advisorId || 'Beraterin'}: ${r.partyCount || 0} Partys`)}</td>
+          <td>${escapeHtml(String(r.activePartyCount || 0))}</td>
+          <td>${escapeHtml(String(r.closedPartyCount || 0))}</td>
+          <td>${escapeHtml(String(r.matchedOrderCount || 0))}</td>
+          <td>${escapeHtml(String(r.customerCount || 0))}</td>
+          <td>${formatEuroAmount(r.matchedTotal || 0)}</td>
+          <td>${escapeHtml(String(r.riskPartyCount || 0))}</td>
+          <td>${escapeHtml(String(r.maxRiskScore || 0))}</td>
+        </tr>
+      `).join('');
+
+      partyBody.innerHTML = parties.map((r, index) => {
+        const reasons = Array.isArray(r.riskReasons) ? r.riskReasons : [];
+        const reasonText = reasons.length ? reasons.join('; ') : 'keine Auffälligkeiten';
+        return `<tr>
+          <td>${riskBadgeHtml(r.riskLevel, r.riskScore)}</td>
+          <td>${escapeHtml(String(r.riskScore || 0))}</td>
+          <td><strong>${escapeHtml(r.partyTitle || '')}</strong><div class="settings-hint">${escapeHtml(r.refCode || r.subId || '')}</div></td>
+          <td>${escapeHtml(r.hostName || '')}<div class="settings-hint">${escapeHtml(r.hostEmail || '')}</div></td>
+          <td>${escapeHtml(r.advisorName || '')}<div class="settings-hint">${escapeHtml(r.advisorId || '')}</div></td>
+          <td>${escapeHtml(r.status || '')}</td>
+          <td>${escapeHtml(String(r.matchedOrderCount || 0))}<div class="settings-hint">GoAffPro: ${escapeHtml(String(r.aggregateOrderCount || 0))}</div></td>
+          <td>${escapeHtml(String(r.customerCount || 0))}</td>
+          <td>${escapeHtml(String(r.productUnits || 0))}</td>
+          <td>${formatEuroAmount(r.matchedTotal || 0)}<div class="settings-hint">GoAffPro: ${formatEuroAmount(r.aggregateTotal || 0)}</div></td>
+          <td title="${escapeHtml(reasonText)}">${renderRiskReasons(reasons)}</td>
+          <td><button type="button" class="secondary party-detail-btn" data-party-index="${index}">Details</button></td>
+        </tr>`;
+      }).join('');
+
+      partyBody.querySelectorAll('.party-detail-btn').forEach(btn => {
+        btn.addEventListener('click', () => renderPartyDetail(Number(btn.dataset.partyIndex || 0)));
+      });
+      if (parties.length) renderPartyDetail(0);
+      else {
+        const detail = document.getElementById('analyticsPartyDetail');
+        if (detail) detail.innerHTML = '<p class="status">Keine Partys im gewählten Zeitraum gefunden.</p>';
+      }
+      status.textContent = `Backtreff-Auswertung geladen (${summary.partyCount || 0} Partys, ${summary.matchedOrderCount || 0} gematchte Orders).`;
+      updateEmptyTablesVisibility(document);
+    }
+
+    function renderPartyDetail(index) {
+      const detail = document.getElementById('analyticsPartyDetail');
+      if (!detail) return;
+      const party = analyticsPartyRowsCache[index];
+      if (!party) {
+        detail.innerHTML = '<p class="status">Keine Party ausgewählt.</p>';
+        return;
+      }
+      const reasons = Array.isArray(party.riskReasons) ? party.riskReasons : [];
+      const orders = Array.isArray(party.orderRows) ? party.orderRows : [];
+      const products = Array.isArray(party.productRows) ? party.productRows : [];
+      detail.innerHTML = `
+        <div class="toolbar" style="justify-content:space-between;">
+          <strong>${escapeHtml(party.partyTitle || 'Party')}</strong>
+          ${riskBadgeHtml(party.riskLevel, party.riskScore)}
+        </div>
+        <div class="party-detail-grid">
+          <div class="party-detail-card"><strong>Host</strong><br>${escapeHtml(party.hostName || '-')}<div class="settings-hint">${escapeHtml(party.hostEmail || '')}</div></div>
+          <div class="party-detail-card"><strong>Beraterin</strong><br>${escapeHtml(party.advisorName || '-')}<div class="settings-hint">${escapeHtml(party.advisorId || '')}</div></div>
+          <div class="party-detail-card"><strong>Zeitraum</strong><br>${escapeHtml(party.startsAt || party.createdAt || '-')} bis ${escapeHtml(party.endsAt || party.closedAt || '-')}</div>
+          <div class="party-detail-card"><strong>Umsatz</strong><br>${formatEuroAmount(party.matchedTotal || 0)}<div class="settings-hint">GoAffPro-Aggregat: ${formatEuroAmount(party.aggregateTotal || 0)}</div></div>
+        </div>
+        <div class="toolbar"><strong>Risiko-Gründe</strong></div>
+        <p class="status">${reasons.length ? reasons.map(r => escapeHtml(String(r))).join('<br>') : 'Keine Auffälligkeiten.'}</p>
+        <div class="toolbar"><strong>Orders</strong></div>
+        <table><thead><tr><th>Order</th><th>Datum</th><th>Status</th><th>Kunde</th><th>Umsatz</th><th>Warenkorb-Signatur</th></tr></thead><tbody>${orders.map(o => `<tr><td>${escapeHtml(o.orderId || '')}</td><td>${escapeHtml(o.createdAt || '')}</td><td>${escapeHtml(o.status || '')}</td><td>${escapeHtml(o.customer || '')}</td><td>${formatEuroAmount(o.total || 0)}</td><td>${escapeHtml(o.cartSignature || '')}</td></tr>`).join('')}</tbody></table>
+        <div class="toolbar"><strong>Produkte</strong></div>
+        <table><thead><tr><th>Produkt</th><th>Menge</th><th>Umsatz</th></tr></thead><tbody>${products.map(p => `<tr><td>${escapeHtml(p.productName || '')}</td><td>${escapeHtml(String(p.quantity || 0))}</td><td>${formatEuroAmount(p.salesValue || 0)}</td></tr>`).join('')}</tbody></table>
+      `;
+      updateEmptyTablesVisibility(detail);
+    }
+
+    async function fetchPartyAnalyticsData() {
+      const status = document.getElementById('analyticsPartyStatus');
+      const fromDateInput = document.getElementById('analyticsFromDate');
+      const toDateInput = document.getElementById('analyticsToDate');
+      if (!status) return;
+      try {
+        const fromDate = fromDateInput ? fromDateInput.value : '';
+        const toDate = toDateInput ? toDateInput.value : '';
+        if (fromDate && toDate) {
+          const diffDays = Math.round((new Date(toDate) - new Date(fromDate)) / 86400000);
+          if (diffDays > 180) {
+            const proceed = window.confirm(`Du lädst einen Zeitraum von ${diffDays} Tagen. Das kann je nach API sehr lange dauern. Fortfahren?`);
+            if (!proceed) { status.textContent = 'Backtreff-Auswertung abgebrochen.'; return; }
+          }
+        }
+        status.textContent = 'Lade Backtreff-Auswertung...';
+        const data = await apiPost('/api/analytics/parties', { fromDate, toDate });
+        renderPartyAnalytics(data);
+      } catch (error) {
+        status.textContent = `Fehler bei Backtreff-Auswertung: ${error.message}`;
+      }
+    }
+
+    function formatPercentValue(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return '0,0 %';
+      return `${(n * 100).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })} %`;
+    }
+
+    function leaderStatusBadgeHtml(status, label) {
+      const text = label || status || 'OK';
+      const cls = status === 'DEGRADIERUNG' ? 'risk-review' : (status === 'GELB' ? 'risk-hint' : 'risk-ok');
+      return `<span class="risk-badge ${cls}">${escapeHtml(text)}</span>`;
+    }
+
+    function leaderMonthValueHtml(month, value, gap) {
+      const count = Number(value || 0);
+      const missing = Number(gap || 0);
+      return `<strong>${escapeHtml(String(count))}</strong><div class="settings-hint">${escapeHtml(month || '-')} · ${missing > 0 ? `fehlen ${missing}` : 'Ziel erreicht'}</div>`;
+    }
+
+    function renderNewCustomerLeaderDetail(leaderId) {
+      const detail = document.getElementById('analyticsNewCustomerLeaderDetail');
+      if (!detail || !analyticsNewCustomerLeaderCache) return;
+      const leaders = Array.isArray(analyticsNewCustomerLeaderCache.leaderRows) ? analyticsNewCustomerLeaderCache.leaderRows : [];
+      const leader = leaders.find(r => String(r.leaderId || '') === String(leaderId || ''));
+      if (!leader) {
+        detail.innerHTML = '<p class="status">Keine Details für diese Führungskraft gefunden.</p>';
+        return;
+      }
+      const monthRows = (Array.isArray(analyticsNewCustomerLeaderCache.leaderMonthRows) ? analyticsNewCustomerLeaderCache.leaderMonthRows : [])
+        .filter(r => String(r.leaderId || '') === String(leaderId || ''));
+      const weekRows = (Array.isArray(analyticsNewCustomerLeaderCache.leaderWeekRows) ? analyticsNewCustomerLeaderCache.leaderWeekRows : [])
+        .filter(r => String(r.leaderId || '') === String(leaderId || ''));
+      const contributionRows = (Array.isArray(analyticsNewCustomerLeaderCache.advisorContributionRows) ? analyticsNewCustomerLeaderCache.advisorContributionRows : [])
+        .filter(r => String(r.leaderId || '') === String(leaderId || ''));
+
+      detail.innerHTML = `
+        <div class="toolbar" style="justify-content:space-between;">
+          <h3 style="margin:0;">${escapeHtml(leader.leaderName || leader.leaderId || 'Führungskraft')}</h3>
+          ${leaderStatusBadgeHtml(leader.status, leader.statusLabel)}
+        </div>
+        <div class="party-detail-grid">
+          <div class="party-detail-card"><strong>Teamgröße</strong><br>${escapeHtml(String(leader.teamSize || 0))}</div>
+          <div class="party-detail-card"><strong>Ziel</strong><br>${escapeHtml(String(leader.target || 40))} Neukunden-Orders / Monat</div>
+          <div class="party-detail-card"><strong>Letzter Monat</strong><br>${leaderMonthValueHtml(leader.lastClosedMonth, leader.lastClosedMonthNewCustomers, leader.lastClosedMonthGap)}</div>
+          <div class="party-detail-card"><strong>Handlungsbedarf</strong><br>${escapeHtml(leader.actionText || '')}</div>
+        </div>
+        <div class="toolbar"><strong>Monatsverlauf</strong></div>
+        <table><thead><tr><th>Monat</th><th>Orders</th><th>Neukunden-Orders</th><th>Bestandskunden</th><th>Quote</th><th>Umsatz</th><th>Neukundenumsatz</th></tr></thead><tbody>${monthRows.map(r => `
+          <tr><td>${escapeHtml(r.periodLabel || r.periodKey || '')}</td><td>${escapeHtml(String(r.totalOrders || 0))}</td><td>${escapeHtml(String(r.newCustomerOrders || 0))}</td><td>${escapeHtml(String(r.returningCustomerOrders || 0))}</td><td>${formatPercentValue(r.newCustomerRate || 0)}</td><td>${formatEuroAmount(r.totalRevenue || 0)}</td><td>${formatEuroAmount(r.newCustomerRevenue || 0)}</td></tr>
+        `).join('')}</tbody></table>
+        <div class="toolbar"><strong>Wochenwerte</strong></div>
+        <table><thead><tr><th>Woche</th><th>Zeitraum</th><th>Orders</th><th>Neukunden-Orders</th><th>Quote</th><th>Umsatz</th></tr></thead><tbody>${weekRows.map(r => `
+          <tr><td>${escapeHtml(r.periodLabel || r.periodKey || '')}</td><td>${escapeHtml(r.periodStart || '')} bis ${escapeHtml(r.periodEnd || '')}</td><td>${escapeHtml(String(r.totalOrders || 0))}</td><td>${escapeHtml(String(r.newCustomerOrders || 0))}</td><td>${formatPercentValue(r.newCustomerRate || 0)}</td><td>${formatEuroAmount(r.totalRevenue || 0)}</td></tr>
+        `).join('')}</tbody></table>
+        <div class="toolbar"><strong>Team-Beiträge</strong></div>
+        <table><thead><tr><th>Beraterin</th><th>Affiliate-ID</th><th>Rolle</th><th>Orders</th><th>Neukunden-Orders</th><th>Quote</th><th>Neukundenumsatz</th></tr></thead><tbody>${contributionRows.map(r => `
+          <tr><td>${escapeHtml(r.advisorName || '')}</td><td>${escapeHtml(r.advisorId || '')}</td><td>${r.isLeaderSelf ? 'selbst' : 'Team'}</td><td>${escapeHtml(String(r.totalOrders || 0))}</td><td>${escapeHtml(String(r.newCustomerOrders || 0))}</td><td>${formatPercentValue(r.newCustomerRate || 0)}</td><td>${formatEuroAmount(r.newCustomerRevenue || 0)}</td></tr>
+        `).join('')}</tbody></table>
+      `;
+      updateEmptyTablesVisibility(detail);
+    }
+
+    function renderNewCustomerAnalytics(data) {
+      analyticsNewCustomerLeaderCache = data;
+      const summary = data.summary || {};
+      const leaders = Array.isArray(data.leaderRows) ? data.leaderRows : [];
+      const weeks = Array.isArray(data.weekRows) ? data.weekRows : [];
+      const advisorWeeks = Array.isArray(data.advisorWeekRows) ? data.advisorWeekRows : [];
+      const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+
+      const status = document.getElementById('analyticsNewCustomerStatus');
+      const warningsBox = document.getElementById('analyticsNewCustomerWarnings');
+      const kpiGrid = document.getElementById('analyticsNewCustomerKpiGrid');
+      const leaderBody = document.getElementById('analyticsNewCustomerLeaderBody');
+      const leaderDetail = document.getElementById('analyticsNewCustomerLeaderDetail');
+      const weekBody = document.getElementById('analyticsNewCustomerWeekBody');
+      const advisorWeekBody = document.getElementById('analyticsNewCustomerAdvisorWeekBody');
+      if (!status || !warningsBox || !kpiGrid || !leaderBody || !leaderDetail || !weekBody || !advisorWeekBody) return;
+
+      warningsBox.style.display = warnings.length ? '' : 'none';
+      warningsBox.innerHTML = warnings.map(w => escapeHtml(String(w))).join('<br>');
+
+      const kpis = [
+        ['Zeitraum', `${summary.fromDate || '-'} bis ${summary.toDate || '-'}`],
+        ['Monatsziel', `${summary.target || 40} Neukunden`],
+        ['Führungskräfte', summary.leaderCount || 0],
+        ['OK', summary.okCount || 0],
+        ['Gelbe Karte', summary.yellowCount || 0],
+        ['Degradierungswürdig', summary.degradeCount || 0],
+        ['Laufender Monat', summary.liveMonth || '-'],
+        ['Neukunden gesamt', summary.newCustomerOrders || 0]
+      ];
+      kpiGrid.innerHTML = kpis.map(([k,v]) => `<div class="kpi-card"><div>${escapeHtml(String(k))}</div><b>${escapeHtml(String(v))}</b></div>`).join('');
+
+      leaderBody.innerHTML = leaders.map(r => `
+        <tr>
+          <td>${leaderStatusBadgeHtml(r.status, r.statusLabel)}</td>
+          <td>${escapeHtml(r.leaderName || '')}<div class="settings-hint">${escapeHtml(r.leaderId || '')}</div></td>
+          <td>${escapeHtml(String(r.teamSize || 0))}</td>
+          <td>${leaderMonthValueHtml(r.previousMonth, r.previousMonthNewCustomers, r.previousMonthGap)}</td>
+          <td>${leaderMonthValueHtml(r.lastClosedMonth, r.lastClosedMonthNewCustomers, r.lastClosedMonthGap)}</td>
+          <td>${leaderMonthValueHtml(r.liveMonth || '-', r.liveMonthNewCustomers, r.liveMonthGap)}</td>
+          <td>${escapeHtml(String(r.target || summary.target || 40))}</td>
+          <td>${escapeHtml(r.actionText || '')}</td>
+          <td><button type="button" class="secondary new-customer-leader-detail-btn" data-leader-id="${escapeHtml(r.leaderId || '')}">Details</button></td>
+        </tr>
+      `).join('');
+      if (!leaders.length) {
+        leaderBody.innerHTML = '<tr><td colspan="9">Keine aktiven Führungskräfte mit Team im Zeitraum gefunden.</td></tr>';
+      }
+      leaderBody.querySelectorAll('.new-customer-leader-detail-btn').forEach(btn => {
+        btn.addEventListener('click', () => renderNewCustomerLeaderDetail(btn.getAttribute('data-leader-id') || ''));
+      });
+      if (leaders.length) {
+        renderNewCustomerLeaderDetail(leaders[0].leaderId || '');
+      } else {
+        leaderDetail.innerHTML = '<p class="status">Keine Führungskraft für Details verfügbar.</p>';
+      }
+
+      weekBody.innerHTML = weeks.map(r => `
+        <tr>
+          <td>${escapeHtml(r.weekLabel || r.weekKey || '')}</td>
+          <td>${escapeHtml(r.weekStart || '')} bis ${escapeHtml(r.weekEnd || '')}</td>
+          <td>${escapeHtml(String(r.totalOrders || 0))}</td>
+          <td>${escapeHtml(String(r.newCustomerOrders || 0))}</td>
+          <td>${escapeHtml(String(r.returningCustomerOrders || 0))}</td>
+          <td>${formatPercentValue(r.newCustomerRate || 0)}</td>
+          <td>${formatEuroAmount(r.totalRevenue || 0)}</td>
+          <td>${formatEuroAmount(r.newCustomerRevenue || 0)}</td>
+        </tr>
+      `).join('');
+
+      advisorWeekBody.innerHTML = advisorWeeks.map(r => `
+        <tr>
+          <td>${escapeHtml(r.weekLabel || r.weekKey || '')}</td>
+          <td>${escapeHtml(r.advisorName || '')}</td>
+          <td>${escapeHtml(r.advisorId || '')}</td>
+          <td>${escapeHtml(String(r.totalOrders || 0))}</td>
+          <td>${escapeHtml(String(r.newCustomerOrders || 0))}</td>
+          <td>${escapeHtml(String(r.returningCustomerOrders || 0))}</td>
+          <td>${formatPercentValue(r.newCustomerRate || 0)}</td>
+          <td>${formatEuroAmount(r.totalRevenue || 0)}</td>
+          <td>${formatEuroAmount(r.newCustomerRevenue || 0)}</td>
+        </tr>
+      `).join('');
+
+      status.textContent = `Neukunden-Führungsreport geladen (${summary.leaderCount || 0} Führungskräfte, ${summary.yellowCount || 0} gelb, ${summary.degradeCount || 0} degradierungswürdig).`;
+      updateEmptyTablesVisibility(document);
+    }
+
+    async function fetchNewCustomerAnalyticsData() {
+      const status = document.getElementById('analyticsNewCustomerStatus');
+      const fromDateInput = document.getElementById('analyticsFromDate');
+      const toDateInput = document.getElementById('analyticsToDate');
+      if (!status) return;
+      try {
+        const fromDate = fromDateInput ? fromDateInput.value : '';
+        const toDate = toDateInput ? toDateInput.value : '';
+        if (fromDate && toDate) {
+          const diffDays = Math.round((new Date(toDate) - new Date(fromDate)) / 86400000);
+          if (diffDays > 180) {
+            const proceed = window.confirm(`Du lädst einen Zeitraum von ${diffDays} Tagen. Das kann je nach API sehr lange dauern. Fortfahren?`);
+            if (!proceed) { status.textContent = 'Neukunden-Wochenreport abgebrochen.'; return; }
+          }
+        }
+        status.textContent = 'Lade Neukunden-Führungsreport...';
+        const data = await apiPost('/api/analytics/new-customers/leaders', { fromDate, toDate });
+        renderNewCustomerAnalytics(data);
+      } catch (error) {
+        status.textContent = `Fehler beim Neukunden-Führungsreport: ${error.message}`;
+      }
+    }
+
+    function leaderWeeklyMailStatusBadgeHtml(status, label) {
+      const cls = status === 'UNTERSTUETZUNG' ? 'risk-review' : (status === 'AUFMERKSAMKEIT' ? 'risk-hint' : 'risk-ok');
+      return `<span class="risk-badge ${cls}">${escapeHtml(label || status || '-')}</span>`;
+    }
+
+    function renderLeaderWeeklyMailDetail(index) {
+      const detail = document.getElementById('leaderWeeklyMailPreviewDetail');
+      const rows = leaderWeeklyMailPreviewCache && Array.isArray(leaderWeeklyMailPreviewCache.reportRows) ? leaderWeeklyMailPreviewCache.reportRows : [];
+      const row = rows[index];
+      if (!detail || !row) return;
+      detail.innerHTML = `
+        <div class="toolbar" style="justify-content:space-between;">
+          <strong>${escapeHtml(row.leaderName || row.leaderId || 'Führungskraft')}</strong>
+          ${leaderWeeklyMailStatusBadgeHtml(row.status, row.statusLabel)}
+        </div>
+        <div class="party-detail-grid">
+          <div class="party-detail-card"><strong>Empfänger</strong><br>${escapeHtml(row.toEmail || '-')}<div class="settings-hint">${escapeHtml(row.recipientModeLabel || '')}</div></div>
+          <div class="party-detail-card"><strong>Letzte 7 Tage</strong><br>${escapeHtml(String(row.currentWeekNewCustomers || 0))}</div>
+          <div class="party-detail-card"><strong>Monat</strong><br>${escapeHtml(String(row.monthNewCustomers || 0))} / ${escapeHtml(String(row.monthlyTarget || 40))}</div>
+          <div class="party-detail-card"><strong>Status</strong><br>${escapeHtml(row.actionText || '')}</div>
+        </div>
+        <div class="toolbar"><strong>Mail-Vorschau</strong></div>
+        <iframe title="Wochenmail-Vorschau" style="width:100%;height:620px;border:1px solid #d9e2ef;background:#fff;border-radius:8px;" srcdoc="${escapeHtml(row.renderedHtml || '')}"></iframe>
+      `;
+    }
+
+    function renderLeaderWeeklyMailPreview(data) {
+      leaderWeeklyMailPreviewCache = data;
+      const summary = data.summary || {};
+      const rows = Array.isArray(data.reportRows) ? data.reportRows : [];
+      const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+      const status = document.getElementById('leaderWeeklyMailStatus');
+      const warningsBox = document.getElementById('leaderWeeklyMailWarnings');
+      const body = document.getElementById('leaderWeeklyMailPreviewBody');
+      const productionBtn = document.getElementById('sendLeaderWeeklyMailProductionBtn');
+      if (!status || !warningsBox || !body) return;
+
+      warningsBox.style.display = warnings.length ? '' : 'none';
+      warningsBox.innerHTML = warnings.map(w => escapeHtml(String(w))).join('<br>');
+      body.innerHTML = rows.map((r, index) => `
+        <tr>
+          <td>${escapeHtml(r.recipientModeLabel || summary.recipientModeLabel || '')}</td>
+          <td>${escapeHtml(r.leaderName || '')}<div class="settings-hint">${escapeHtml(r.leaderId || '')}</div></td>
+          <td>${escapeHtml(r.toEmail || '-')}</td>
+          <td>${escapeHtml(String(r.currentWeekNewCustomers || 0))}</td>
+          <td>${escapeHtml(String(r.previousWeekNewCustomers || 0))}</td>
+          <td>${escapeHtml(String(r.secondPreviousWeekNewCustomers || 0))}</td>
+          <td>${escapeHtml(String(r.monthNewCustomers || 0))} / ${escapeHtml(String(r.monthlyTarget || 40))}</td>
+          <td>${leaderWeeklyMailStatusBadgeHtml(r.status, r.statusLabel)}</td>
+          <td><button type="button" class="secondary leader-weekly-mail-detail-btn" data-preview-index="${index}">Anzeigen</button></td>
+        </tr>
+      `).join('');
+      if (!rows.length) {
+        body.innerHTML = '<tr><td colspan="9">Keine aktiven Führungskräfte mit approved Team gefunden.</td></tr>';
+      }
+      body.querySelectorAll('.leader-weekly-mail-detail-btn').forEach(btn => {
+        btn.addEventListener('click', () => renderLeaderWeeklyMailDetail(Number(btn.dataset.previewIndex || 0)));
+      });
+      if (rows.length) renderLeaderWeeklyMailDetail(0);
+      status.textContent = `Wochenmail-Vorschau geladen: ${rows.length} Führungskräfte, Zeitraum ${summary.periodLabel || '-'}, Modus ${summary.recipientModeLabel || '-'}.`;
+      if (productionBtn) {
+        const productionAllowed = settingsSnapshot && settingsSnapshot.leaderWeeklyMailProductionEnabled && shouldSendEmails();
+        productionBtn.disabled = !productionAllowed;
+        productionBtn.title = productionAllowed ? 'Produktivversand ist freigegeben.' : 'Produktivversand ist in den Einstellungen gesperrt oder E-Mail-Versand ist deaktiviert.';
+      }
+      updateEmptyTablesVisibility(document);
+    }
+
+    async function previewLeaderWeeklyMails() {
+      const status = document.getElementById('leaderWeeklyMailStatus');
+      try {
+        if (status) status.textContent = 'Erzeuge Wochenmail-Vorschau...';
+        const data = await apiPost('/api/analytics/new-customers/leaders/weekly-mails/preview', {});
+        renderLeaderWeeklyMailPreview(data);
+      } catch (error) {
+        if (status) status.textContent = `Fehler bei Wochenmail-Vorschau: ${error.message}`;
+      }
+    }
+
+    async function sendLeaderWeeklyMails(production) {
+      const status = document.getElementById('leaderWeeklyMailStatus');
+      try {
+        if (production) {
+          const ok = window.confirm('Produktivversand wirklich starten? Die Wochenmails gehen an die echten Führungskräfte-E-Mail-Adressen.');
+          if (!ok) return;
+        } else {
+          const ok = window.confirm('Testversand starten? Es wird pro Führungskraft eine Mail an die Kontakt-E-Mail gesendet.');
+          if (!ok) return;
+        }
+        if (status) status.textContent = production ? 'Sende produktive Wochenmails...' : 'Sende Testmails an Kontakt-E-Mail...';
+        const data = await apiPost('/api/analytics/new-customers/leaders/weekly-mails/send', { production: !!production });
+        renderLeaderWeeklyMailPreview(data);
+        const summary = data.summary || {};
+        if (status) status.textContent = `${data.message || 'Wochenmails verarbeitet.'} Gesendet: ${summary.sentCount || 0}, übersprungen: ${summary.skippedCount || 0}.`;
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Wochenmail-Versand: ${error.message}`;
+      }
+    }
+
     async function fetchAdvisor360() {
       const select = document.getElementById('analyticsAdvisorSelect');
       const status = document.getElementById('analyticsAdvisorStatus');
@@ -949,6 +1568,425 @@
       } catch (error) {
         status.textContent = `Fehler bei Beraterinnen-360°: ${error.message}`;
       }
+    }
+
+    function formatBytes(bytes) {
+      const value = Number(bytes || 0);
+      if (!Number.isFinite(value) || value <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let n = value;
+      let idx = 0;
+      while (n >= 1024 && idx < units.length - 1) {
+        n /= 1024;
+        idx++;
+      }
+      return `${n.toLocaleString('de-DE', { maximumFractionDigits: idx === 0 ? 0 : 1 })} ${units[idx]}`;
+    }
+
+    function formatSyncTimestamp(value) {
+      if (!value) return '-';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return String(value);
+      return d.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
+    }
+
+    function syncStateClass(state, running) {
+      const text = String(state || '').toLowerCase();
+      if (running || text.includes('läuft')) return 'running';
+      if (text.includes('aktuell')) return 'ok';
+      if (text.includes('fehler')) return 'error';
+      return 'warning';
+    }
+
+    function renderSyncStatus(data) {
+      const status = document.getElementById('syncStatusText');
+      const card = document.getElementById('syncStatusCard');
+      const kpis = document.getElementById('syncKpiGrid');
+      const warnings = document.getElementById('syncWarnings');
+      const inventoryGrid = document.getElementById('syncInventoryGrid');
+      const inventoryBody = document.getElementById('syncInventoryBody');
+      const endpointBody = document.getElementById('syncEndpointBody');
+      const runsBody = document.getElementById('syncRunsBody');
+      if (!status || !card || !kpis || !inventoryBody || !endpointBody || !runsBody) return;
+
+      const inventory = Array.isArray(data.inventory) ? data.inventory : [];
+      const endpoints = Array.isArray(data.endpointRows) ? data.endpointRows : [];
+      const recentRuns = Array.isArray(data.recentRuns) ? data.recentRuns : [];
+      const warningRows = Array.isArray(data.warnings) ? data.warnings : [];
+      const currentRun = data.currentRun || {};
+      const state = data.state || (data.running ? 'Läuft' : 'Unbekannt');
+      const cls = syncStateClass(state, data.running);
+
+      status.textContent = `Syncstatus: ${state}. Letzter erfolgreicher Sync: ${formatSyncTimestamp(data.lastSuccessAt)}.`;
+      if (warnings) {
+        warnings.style.display = warningRows.length ? '' : 'none';
+        warnings.innerHTML = warningRows.map(w => escapeHtml(String(w))).join('<br>');
+      }
+      card.innerHTML = `
+        <div class="sync-status-head">
+          <div>
+            <strong>Lokaler GoAffPro-Datenbestand</strong>
+            <div class="settings-hint">DB: ${escapeHtml(data.dbPath || '-')}<br>Dateien: ${escapeHtml(data.fileDir || '-')}</div>
+          </div>
+          <span class="sync-state-badge ${cls}">${escapeHtml(state)}</span>
+        </div>
+        <div class="settings-hint">Automatik: stündlich ${data.hourlyEnabled ? 'aktiv' : 'aus'}, Deep-Check ${data.deepEnabled ? 'aktiv' : 'aus'}, Asset-Downloads ${data.assetDownloadEnabled ? 'aktiv' : 'aus'}, API-Budget ${escapeHtml(String(data.callLimitPerHour || '-'))} Calls/Stunde.</div>
+        ${data.running && currentRun ? `<div class="settings-hint">Aktueller Lauf: ${escapeHtml(currentRun.mode || '')}, Endpoint ${escapeHtml(currentRun.currentEndpoint || '-')}, Seite ${escapeHtml(String(currentRun.currentPage || 0))}, gesehen ${escapeHtml(String(currentRun.seen || 0))}, Endpoint gesehen ${escapeHtml(String(currentRun.currentEndpointSeen || 0))}, API-Calls ${escapeHtml(String(currentRun.apiCalls || 0))}, Endpoint-Calls ${escapeHtml(String(currentRun.currentEndpointApiCalls || 0))}, Warnungen ${escapeHtml(String(currentRun.warningCount || 0))}${currentRun.lastWarning ? `<br>Letzte Warnung: ${escapeHtml(currentRun.lastWarning)}` : ''}${currentRun.currentApiPath ? `<br>Pfad: ${escapeHtml(currentRun.currentApiPath)}` : ''}</div>` : ''}
+      `;
+      kpis.innerHTML = [
+        ['Datensätze lokal', data.entityCount || 0],
+        ['Remote fehlt markiert', data.remoteMissingCount || 0],
+        ['Ungültige leere Objekte', data.invalidEmptyCount || 0],
+        ['Dateispeicher', formatBytes(data.fileBytes || 0)],
+        ['Freier Speicher', formatBytes(data.usableBytes || 0)],
+      ].map(([label, value]) => `<div class="kpi-card"><div class="kpi-label">${escapeHtml(String(label))}</div><div class="kpi-value">${escapeHtml(String(value))}</div></div>`).join('');
+
+      const maxTotal = Math.max(1, ...inventory.map(r => Number(r.total || 0)));
+      if (inventoryGrid) {
+        inventoryGrid.innerHTML = inventory.map(r => {
+          const pct = Math.max(4, Math.round((Number(r.total || 0) / maxTotal) * 100));
+          const warn = r.warning ? `<div class="settings-hint" style="color:#92400e">${escapeHtml(String(r.warning)).slice(0, 160)}</div>` : '';
+          const invalidInfo = Number(r.invalidEmpty || 0) > 0 ? `, ${escapeHtml(String(r.invalidEmpty || 0))} ungültig` : '';
+          return `<div class="sync-progress-item"><strong>${escapeHtml(r.displayName || r.entityType || '')}</strong><div>${escapeHtml(String(r.total || 0))} Datensätze${invalidInfo}</div><div class="sync-bar"><span style="width:${pct}%"></span></div>${warn}</div>`;
+        }).join('');
+      }
+
+      inventoryBody.innerHTML = inventory.map(r => `
+        <tr>
+          <td>${escapeHtml(r.displayName || r.entityType || '')}<div class="settings-hint">${escapeHtml(r.entityType || '')}</div></td>
+          <td>${escapeHtml(String(r.total || 0))}</td>
+          <td>${escapeHtml(String(r.remoteMissing || 0))}</td>
+          <td>${escapeHtml(String(r.invalidEmpty || 0))}</td>
+          <td>${escapeHtml(String(r.files || 0))}</td>
+          <td>${formatBytes(r.fileBytes || 0)}</td>
+          <td>${formatSyncTimestamp(r.lastSeenAt)}</td>
+          <td>${r.complete === false ? '<span class="risk-badge risk-hint">Warnung</span>' : '<span class="risk-badge risk-ok">OK</span>'}</td>
+        </tr>
+      `).join('');
+      endpointBody.innerHTML = endpoints.map(r => `
+        <tr>
+          <td>${escapeHtml(r.displayName || r.endpointKey || '')}<div class="settings-hint">${escapeHtml(r.apiPath || '')}</div></td>
+          <td>${escapeHtml(r.entityType || '')}</td>
+          <td>${escapeHtml(String(r.seen || 0))}</td>
+          <td>${escapeHtml(String(r.inserted || 0))}</td>
+          <td>${escapeHtml(String(r.updated || 0))}</td>
+          <td>${escapeHtml(String(r.unchanged || 0))}</td>
+          <td>${escapeHtml(String(r.downloaded || 0))}</td>
+          <td>${escapeHtml(String(r.apiCalls || 0))}</td>
+          <td>${r.complete === false ? 'Nein' : 'Ja'}</td>
+          <td>${escapeHtml(r.warning || '')}</td>
+        </tr>
+      `).join('');
+      runsBody.innerHTML = recentRuns.map(r => `
+        <tr>
+          <td>${escapeHtml(String(r.id || ''))}</td>
+          <td>${escapeHtml(r.mode || '')}</td>
+          <td>${escapeHtml(r.status || '')}</td>
+          <td>${formatSyncTimestamp(r.startedAt)}</td>
+          <td>${formatSyncTimestamp(r.finishedAt)}</td>
+          <td>${escapeHtml(String(r.apiCalls || 0))}</td>
+          <td>${escapeHtml(String(r.seen || 0))}</td>
+          <td>${escapeHtml(String(r.inserted || 0))}</td>
+          <td>${escapeHtml(String(r.updated || 0))}</td>
+          <td>${escapeHtml(String(r.warningCount || 0))}</td>
+          <td>${escapeHtml(r.error || '')}</td>
+        </tr>
+      `).join('');
+      renderSyncProgress(data);
+      updateEmptyTablesVisibility(document);
+    }
+
+    function formatDuration(seconds) {
+      const s = Number(seconds);
+      if (!Number.isFinite(s) || s < 0) return '-';
+      if (s < 60) return `${Math.max(1, Math.round(s))} s`;
+      const totalMinutes = Math.round(s / 60);
+      const hours = Math.floor(totalMinutes / 60);
+      const minutes = totalMinutes % 60;
+      return hours > 0 ? `${hours} h ${minutes} min` : `${minutes} min`;
+    }
+
+    function syncPhaseLabel(phase) {
+      switch (String(phase || '')) {
+        case 'preflight': return 'Ermittle Datenmengen (Pre-Flight)…';
+        case 'downloads': return 'Lade verknüpfte Dateien und Assets…';
+        default: return '';
+      }
+    }
+
+    function syncModeLabel(mode) {
+      if (mode === 'delta') return 'Delta-Sync';
+      if (mode === 'deep') return 'Deep-Check';
+      return 'Initialsync';
+    }
+
+    function renderSyncProgress(data) {
+      const card = document.getElementById('syncProgressCard');
+      if (!card) return;
+      const run = data.currentRun;
+      if (!data.running || !run) {
+        card.style.display = 'none';
+        card.innerHTML = '';
+        return;
+      }
+      card.style.display = '';
+      const budget = data.budget || {};
+      const planned = Array.isArray(run.plannedEndpoints) ? run.plannedEndpoints : [];
+      const percent = Number(run.progressPercent);
+      const determinate = Number.isFinite(percent) && percent >= 0;
+      const phaseLabel = syncPhaseLabel(run.phase);
+
+      const parts = [];
+      if (phaseLabel) parts.push(phaseLabel);
+      if (run.phase === 'endpoints' && Number(run.endpointCount) > 0 && Number(run.endpointIndex) > 0) {
+        parts.push(`Endpoint ${run.endpointIndex}/${run.endpointCount}: ${run.currentEndpoint || '-'}${Number(run.currentPage) > 0 ? `, Seite ${run.currentPage}` : ''}`);
+      }
+      if (Number(run.downloadsSkipped) > 0) {
+        parts.push(`${Number(run.downloadsSkipped).toLocaleString('de-DE')} Dateien bereits vorhanden, übersprungen`);
+      }
+      let etaText = '';
+      if (determinate) {
+        parts.push(`${percent} %`);
+        if (Number(run.estimatedRemainingCalls) >= 0 && Number(run.etaSeconds) >= 0) {
+          const maxSuffix = Number(run.etaMaxSeconds) > Number(run.etaSeconds)
+            ? ` (bis ~${formatDuration(run.etaMaxSeconds)} mit 504-Retry)` : '';
+          etaText = `Ca. ${Number(run.estimatedRemainingCalls).toLocaleString('de-DE')} API-Calls verbleibend – fertig in ~${formatDuration(run.etaSeconds)}${maxSuffix}, voraussichtlich ${formatSyncTimestamp(run.etaAt)}`;
+          if (run.mode !== 'delta') etaText += ' (zzgl. Datei-Downloads)';
+        }
+      } else if (run.mode === 'delta') {
+        parts.push('Restmenge unbekannt (Delta-Läufe melden keine Gesamtzahl)');
+      } else {
+        parts.push('Restmenge noch unbekannt');
+      }
+
+      const callsUsed = Number(budget.callsUsedLastHour || 0);
+      const callLimit = Math.max(1, Number(budget.callLimitPerHour || 60));
+      const budgetPct = Math.min(100, Math.round((callsUsed / callLimit) * 100));
+      const waitingBadge = budget.waitingForBudget
+        ? ` <span class="sync-state-badge warning">Wartet auf API-Budget – nächster Call in ~${escapeHtml(String(budget.nextCallInSeconds || 0))} s</span>`
+        : '';
+
+      const sourceLabels = { api: 'API-Total', probe: 'API-Probe', history: 'letzter Lauf', inventory: 'lokaler Bestand' };
+      const endpointItems = planned.map(p => {
+        const expected = (p.expectedTotal === null || p.expectedTotal === undefined) ? null : Number(p.expectedTotal);
+        const seen = Number(p.seen || 0);
+        const state = String(p.state || 'pending');
+        let barClass = 'sync-bar';
+        let width = 4;
+        if (state === 'done' || state === 'warning') {
+          width = 100;
+        } else if (expected !== null && expected > 0) {
+          width = Math.min(100, Math.max(4, Math.round((seen / expected) * 100)));
+        } else if (state === 'active') {
+          barClass += ' indeterminate';
+        }
+        const sourceLabel = sourceLabels[String(p.estimateSource || '')] || '';
+        const countText = state === 'skipped'
+          ? 'Übersprungen'
+          : expected !== null
+            ? `${seen.toLocaleString('de-DE')} / ${expected.toLocaleString('de-DE')}`
+            : `${seen.toLocaleString('de-DE')} / ?`;
+        const sourceHint = state !== 'skipped' && sourceLabel ? `<span class="settings-hint"> · Schätzung: ${escapeHtml(sourceLabel)}</span>` : '';
+        return `<div class="sync-progress-item ${escapeHtml(state)}"><strong>${escapeHtml(p.displayName || p.endpointKey || '')}</strong><div>${escapeHtml(countText)}${sourceHint}</div><div class="${barClass}"><span style="width:${width}%"></span></div></div>`;
+      }).join('');
+
+      card.innerHTML = `
+        <div class="sync-status-head">
+          <div>
+            <strong>Sync-Fortschritt</strong>
+            <div class="settings-hint">${escapeHtml(parts.join(' – '))}</div>
+          </div>
+          <span class="sync-state-badge running">${escapeHtml(syncModeLabel(run.mode))} läuft</span>
+        </div>
+        <div class="sync-bar large${determinate ? '' : ' indeterminate'}"><span style="width:${determinate ? Math.max(2, percent) : 30}%"></span></div>
+        ${etaText ? `<div class="sync-progress-eta">${escapeHtml(etaText)}</div>` : ''}
+        <div class="settings-hint">API-Budget: ${escapeHtml(String(callsUsed))} / ${escapeHtml(String(callLimit))} Calls in der letzten Stunde${waitingBadge}</div>
+        <div class="sync-bar"><span style="width:${budgetPct}%"></span></div>
+        ${endpointItems ? `<div class="sync-progress-grid">${endpointItems}</div>` : ''}
+      `;
+    }
+
+    async function pollSyncProgress() {
+      try {
+        const data = await apiGet('/api/sync/status');
+        renderSyncProgress(data);
+        if (!data.running) {
+          stopSyncFastPoll();
+          await loadSyncStatus();
+        }
+      } catch (error) {
+        // stiller Fehlschlag – der nächste Tick oder der 30-s-Poll versucht es erneut
+      }
+    }
+
+    function startSyncFastPoll() {
+      if (!syncFastPollTimer) {
+        syncFastPollTimer = window.setInterval(pollSyncProgress, 10000);
+      }
+    }
+
+    function stopSyncFastPoll() {
+      if (syncFastPollTimer) {
+        window.clearInterval(syncFastPollTimer);
+        syncFastPollTimer = null;
+      }
+    }
+
+    function selectedSyncDiagnosticEndpoints() {
+      return Array.from(document.querySelectorAll('.sync-diagnostic-endpoint'))
+        .filter(input => input.checked)
+        .map(input => input.value);
+    }
+
+    function recommendationClass(value) {
+      const text = String(value || '').toLowerCase();
+      if (text.includes('ok')) return 'risk-ok';
+      if (text.includes('ignorieren') || text.includes('deprecated')) return 'risk-hint';
+      if (text.includes('pagination') || text.includes('fields')) return 'risk-hint';
+      return 'risk-alert';
+    }
+
+    function renderSyncDiagnostics(data) {
+      const estimate = document.getElementById('syncDiagnosticsEstimate');
+      const status = document.getElementById('syncDiagnosticsStatus');
+      const summaryBody = document.getElementById('syncDiagnosticsSummaryBody');
+      const resultBody = document.getElementById('syncDiagnosticsResultBody');
+      const runBtn = document.getElementById('syncDiagnosticsRunBtn');
+      if (!estimate || !status || !summaryBody || !resultBody) return;
+      const selectedCount = selectedSyncDiagnosticEndpoints().length || 0;
+      const perEndpointCalls = data && data.defaultEndpoints && data.estimatedDefaultApiCalls
+        ? Math.max(1, Math.round(Number(data.estimatedDefaultApiCalls || 0) / Math.max(1, data.defaultEndpoints.length)))
+        : 8;
+      const baseCalls = selectedCount * perEndpointCalls;
+      const maxCalls = data && data.estimatedDefaultMaxApiCalls && data.defaultEndpoints
+        ? Math.round(Number(data.estimatedDefaultMaxApiCalls || 0) / Math.max(1, data.defaultEndpoints.length)) * selectedCount
+        : baseCalls + selectedCount;
+      const callLimit = Math.max(1, Number(data.callLimitPerHour || 60));
+      const sliding = data.slidingWindowEnabled !== false;
+      const burst = Number.isFinite(Number(data.budgetCallsRemainingNow)) ? Number(data.budgetCallsRemainingNow) : callLimit;
+      const spacingSec = Math.max(0.3, Number(data.minCallSpacingMs || 0) / 1000);
+      const windowSec = 3600 / callLimit;
+      const estimatedSeconds = sliding
+        ? (maxCalls <= burst ? maxCalls * spacingSec : burst * spacingSec + (maxCalls - burst) * windowSec)
+        : maxCalls * windowSec;
+      const durationText = estimatedSeconds < 90 ? `${Math.max(1, Math.ceil(estimatedSeconds))} Sek.` : `${Math.ceil(estimatedSeconds / 60)} Min.`;
+      estimate.textContent = `Geschätzte API-Calls: ${baseCalls} Basis, bis ${maxCalls} mit 504-Retry; bei ${callLimit}/Stunde aktuell ca. ${durationText}`;
+      const currentRun = data.currentRun || {};
+      const latestRun = data.latestRun || {};
+      const running = data.running === true || currentRun.status === 'running';
+      if (runBtn) runBtn.disabled = running || selectedCount === 0;
+      if (running) {
+        status.textContent = `Diagnose läuft: ${currentRun.currentEndpoint || '-'}; API-Calls ${currentRun.apiCalls || 0}; Warnungen ${currentRun.warningCount || 0}`;
+      } else if (latestRun.id) {
+        status.textContent = `Letzte Diagnose #${latestRun.id}: ${latestRun.status || '-'}, ${latestRun.apiCalls || 0} API-Calls, ${formatSyncTimestamp(latestRun.finishedAt || latestRun.startedAt)}.`;
+      } else {
+        status.textContent = 'Noch kein Diagnoselauf vorhanden.';
+      }
+      const summaries = Array.isArray(data.endpointSummaries) ? data.endpointSummaries : [];
+      summaryBody.innerHTML = summaries.map(row => `
+        <tr>
+          <td>${escapeHtml(row.displayName || row.endpointKey || '')}<div class="settings-hint">${escapeHtml(row.endpointKey || '')}</div></td>
+          <td><span class="risk-badge ${recommendationClass(row.recommendation)}">${escapeHtml(row.recommendation || '-')}</span></td>
+          <td>${escapeHtml(String(row.okResponses || 0))}</td>
+          <td>${escapeHtml(String(row.maxItems || 0))}</td>
+          <td>${escapeHtml(String(row.emptyItems || 0))}</td>
+          <td>${escapeHtml((Array.isArray(row.warnings) ? row.warnings : []).join(' | '))}</td>
+        </tr>
+      `).join('');
+      const results = Array.isArray(data.results) ? data.results : [];
+      resultBody.innerHTML = results.map(row => `
+        <tr>
+          <td>${escapeHtml(row.displayName || row.endpointKey || '')}</td>
+          <td>${escapeHtml(row.variant || '')}<div class="settings-hint">${escapeHtml(row.apiPath || '')}</div></td>
+          <td>${escapeHtml(String(row.httpCode || 0))}</td>
+          <td>${escapeHtml(String(row.durationMs || 0))}</td>
+          <td>${formatBytes(row.responseBytes || 0)}</td>
+          <td>${escapeHtml(row.arrayField || '')}</td>
+          <td>${escapeHtml(String(row.itemCount || 0))}</td>
+          <td>${escapeHtml(String(row.emptyItemCount || 0))}</td>
+          <td>${row.repeated ? 'Ja' : 'Nein'}</td>
+          <td>${row.fieldsEffective ? 'OK' : 'Problem'}</td>
+          <td>${escapeHtml((Array.isArray(row.stableIds) ? row.stableIds : []).join(', '))}</td>
+          <td>${escapeHtml(row.warning || row.error || '')}</td>
+        </tr>
+      `).join('');
+      updateEmptyTablesVisibility(document);
+    }
+
+    async function loadSyncDiagnostics() {
+      try {
+        const data = await apiGet('/api/sync/diagnostics/latest');
+        renderSyncDiagnostics(data);
+        if (data.running) {
+          if (!syncDiagnosticsPollTimer) {
+            syncDiagnosticsPollTimer = window.setInterval(loadSyncDiagnostics, 30000);
+          }
+        } else if (syncDiagnosticsPollTimer) {
+          window.clearInterval(syncDiagnosticsPollTimer);
+          syncDiagnosticsPollTimer = null;
+        }
+      } catch (error) {
+        const status = document.getElementById('syncDiagnosticsStatus');
+        if (status) status.textContent = `Diagnose konnte nicht geladen werden: ${error.message}`;
+      }
+    }
+
+    async function startSyncDiagnostics() {
+      const status = document.getElementById('syncDiagnosticsStatus');
+      const endpoints = selectedSyncDiagnosticEndpoints();
+      try {
+        if (status) status.textContent = 'Starte Diagnose...';
+        const data = await apiPost('/api/sync/diagnostics/run', { endpoints });
+        renderSyncDiagnostics(data);
+        await loadSyncDiagnostics();
+      } catch (error) {
+        if (status) status.textContent = `Diagnose konnte nicht gestartet werden: ${error.message}`;
+      }
+    }
+
+    async function loadSyncStatus() {
+      const status = document.getElementById('syncStatusText');
+      if (status) status.textContent = 'Lade GoAffPro-Syncstatus...';
+      try {
+        const [statusData, inventoryData, runsData] = await Promise.all([
+          apiGet('/api/sync/status'),
+          apiGet('/api/sync/inventory'),
+          apiGet('/api/sync/runs?limit=20')
+        ]);
+        statusData.endpointRows = Array.isArray(inventoryData.endpointRows) ? inventoryData.endpointRows : [];
+        statusData.recentRuns = Array.isArray(runsData.rows) ? runsData.rows : (statusData.recentRuns || []);
+        renderSyncStatus(statusData);
+        if (statusData.running) {
+          startSyncFastPoll();
+        } else {
+          stopSyncFastPoll();
+        }
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Syncstatus: ${error.message}`;
+      }
+    }
+
+    async function startGoAffProSync(mode) {
+      const status = document.getElementById('syncStatusText');
+      try {
+        if (status) status.textContent = `Starte ${mode}-Sync...`;
+        const data = await apiPost('/api/sync/run', { mode });
+        renderSyncStatus(data);
+        startSyncFastPoll();
+        window.setTimeout(loadSyncStatus, 2000);
+      } catch (error) {
+        if (status) status.textContent = `Sync konnte nicht gestartet werden: ${error.message}`;
+      }
+    }
+
+    async function pauseGoAffProSync() {
+      const data = await apiPost('/api/sync/pause', {});
+      renderSyncStatus(data);
+    }
+
+    async function resumeGoAffProSync() {
+      const data = await apiPost('/api/sync/resume', {});
+      renderSyncStatus(data);
     }
 
     function renderValidationTable() {
@@ -1703,6 +2741,24 @@
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
       const emailTemplateEditor = document.getElementById('emailTemplateEditor');
+      const leaderSchedulerInput = document.getElementById('leaderWeeklyMailSchedulerEnabled');
+      const leaderProductionInput = document.getElementById('leaderWeeklyMailProductionEnabled');
+      const leaderScheduleDayInput = document.getElementById('leaderWeeklyMailScheduleDay');
+      const leaderScheduleTimeInput = document.getElementById('leaderWeeklyMailScheduleTime');
+      const leaderLastSentHint = document.getElementById('leaderWeeklyMailLastSentHint');
+      const syncEnabledInput = document.getElementById('goaffproSyncEnabled');
+      const syncHourlyInput = document.getElementById('goaffproSyncHourlyEnabled');
+      const syncDeepInput = document.getElementById('goaffproSyncDeepEnabled');
+      const syncAssetInput = document.getElementById('goaffproSyncAssetDownloadEnabled');
+      const syncMaxCallsInput = document.getElementById('goaffproSyncMaxCallsPerHour');
+      const syncLookbackInput = document.getElementById('goaffproSyncDeltaLookbackDays');
+      const syncMinFreeInput = document.getElementById('goaffproSyncMinFreeBytes');
+      const syncDataPathInput = document.getElementById('goaffproSyncDataPath');
+      const syncSlidingWindowInput = document.getElementById('goaffproSyncSlidingWindowEnabled');
+      const syncMinSpacingInput = document.getElementById('goaffproSyncMinCallSpacingMs');
+      const syncDeltaDownloadsInput = document.getElementById('goaffproSyncDeltaDownloadsEnabled');
+      const syncDownloadSkipInput = document.getElementById('goaffproSyncDownloadSkipExistingEnabled');
+      const syncDbPathHint = document.getElementById('goaffproSyncDbPathHint');
       try {
         const data = await apiGet('/api/settings');
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || '';
@@ -1733,12 +2789,32 @@
         defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || '';
         defaultValidationReminderTemplateHtml = data.validationReminderTemplateHtmlDefault || '';
         defaultEInvoicePdfTemplateHtml = data.eInvoicePdfTemplateHtmlDefault || '';
+        defaultLeaderWeeklyReportTemplateHtml = data.leaderWeeklyReportTemplateHtmlDefault || '';
+        if (leaderSchedulerInput) leaderSchedulerInput.checked = data.leaderWeeklyMailSchedulerEnabled === true;
+        if (leaderProductionInput) leaderProductionInput.checked = data.leaderWeeklyMailProductionEnabled === true;
+        if (leaderScheduleDayInput) leaderScheduleDayInput.value = data.leaderWeeklyMailScheduleDay || 'MONDAY';
+        if (leaderScheduleTimeInput) leaderScheduleTimeInput.value = data.leaderWeeklyMailScheduleTime || '08:00';
+        if (leaderLastSentHint) leaderLastSentHint.textContent = `Letzter automatischer Versand: ${data.leaderWeeklyMailLastSentPeriodKey || '-'}`;
+        if (syncEnabledInput) syncEnabledInput.checked = data.goaffproSyncEnabled !== false;
+        if (syncHourlyInput) syncHourlyInput.checked = data.goaffproSyncHourlyEnabled === true;
+        if (syncDeepInput) syncDeepInput.checked = data.goaffproSyncDeepEnabled === true;
+        if (syncAssetInput) syncAssetInput.checked = data.goaffproSyncAssetDownloadEnabled !== false;
+        if (syncMaxCallsInput) syncMaxCallsInput.value = data.goaffproSyncMaxCallsPerHour || '60';
+        if (syncLookbackInput) syncLookbackInput.value = data.goaffproSyncDeltaLookbackDays || '14';
+        if (syncMinFreeInput) syncMinFreeInput.value = data.goaffproSyncMinFreeBytes || '536870912';
+        if (syncDataPathInput) syncDataPathInput.value = data.goaffproSyncDataPath || '';
+        if (syncSlidingWindowInput) syncSlidingWindowInput.checked = data.goaffproSyncSlidingWindowEnabled !== false;
+        if (syncMinSpacingInput) syncMinSpacingInput.value = data.goaffproSyncMinCallSpacingMs || '1500';
+        if (syncDeltaDownloadsInput) syncDeltaDownloadsInput.checked = data.goaffproSyncDeltaDownloadsEnabled === true;
+        if (syncDownloadSkipInput) syncDownloadSkipInput.checked = data.goaffproSyncDownloadSkipExistingEnabled !== false;
+        if (syncDbPathHint) syncDbPathHint.textContent = `SQLite-Datenbank: ${data.goaffproSyncDbPath || '-'}`;
         const sanitizeTemplate = (html, fallback) => (html && html.length > 200) ? html : (fallback || '');
         const editorEl = document.getElementById('emailTemplateEditor');
         if (editorEl) {
           editorEl.dataset.emailTemplateHtml = sanitizeTemplate(data.emailTemplateHtml, defaultEmailTemplateHtml);
           editorEl.dataset.validationReminderTemplateHtml = sanitizeTemplate(data.validationReminderTemplateHtml, defaultValidationReminderTemplateHtml);
           editorEl.dataset.eInvoicePdfTemplateHtml = sanitizeTemplate(data.eInvoicePdfTemplateHtml, defaultEInvoicePdfTemplateHtml);
+          editorEl.dataset.leaderWeeklyReportTemplateHtml = sanitizeTemplate(data.leaderWeeklyReportTemplateHtml, defaultLeaderWeeklyReportTemplateHtml);
         }
         setCurrentEmailTemplateHtml((editorEl && editorEl.dataset[getActiveTemplateKey()]) || defaultEmailTemplateHtml || '');
         renderEmailTemplatePreview();
@@ -1765,6 +2841,24 @@
       const emailRecipientContactInput = document.getElementById('emailRecipientContact');
       const emailRecipientAdvisorInput = document.getElementById('emailRecipientAdvisor');
       const emailTemplateEditor = document.getElementById('emailTemplateEditor');
+      const leaderSchedulerInput = document.getElementById('leaderWeeklyMailSchedulerEnabled');
+      const leaderProductionInput = document.getElementById('leaderWeeklyMailProductionEnabled');
+      const leaderScheduleDayInput = document.getElementById('leaderWeeklyMailScheduleDay');
+      const leaderScheduleTimeInput = document.getElementById('leaderWeeklyMailScheduleTime');
+      const leaderLastSentHint = document.getElementById('leaderWeeklyMailLastSentHint');
+      const syncEnabledInput = document.getElementById('goaffproSyncEnabled');
+      const syncHourlyInput = document.getElementById('goaffproSyncHourlyEnabled');
+      const syncDeepInput = document.getElementById('goaffproSyncDeepEnabled');
+      const syncAssetInput = document.getElementById('goaffproSyncAssetDownloadEnabled');
+      const syncMaxCallsInput = document.getElementById('goaffproSyncMaxCallsPerHour');
+      const syncLookbackInput = document.getElementById('goaffproSyncDeltaLookbackDays');
+      const syncMinFreeInput = document.getElementById('goaffproSyncMinFreeBytes');
+      const syncDataPathInput = document.getElementById('goaffproSyncDataPath');
+      const syncSlidingWindowInput = document.getElementById('goaffproSyncSlidingWindowEnabled');
+      const syncMinSpacingInput = document.getElementById('goaffproSyncMinCallSpacingMs');
+      const syncDeltaDownloadsInput = document.getElementById('goaffproSyncDeltaDownloadsEnabled');
+      const syncDownloadSkipInput = document.getElementById('goaffproSyncDownloadSkipExistingEnabled');
+      const syncDbPathHint = document.getElementById('goaffproSyncDbPathHint');
       const status = document.getElementById('pollStatus');
       if (!status || !select) return;
       try {
@@ -1783,6 +2877,23 @@
           emailTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtml || getCurrentEmailTemplateHtml(),
           validationReminderTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '',
           eInvoicePdfTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.eInvoicePdfTemplateHtml || '',
+          leaderWeeklyReportTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.leaderWeeklyReportTemplateHtml || '',
+          leaderWeeklyMailSchedulerEnabled: !!leaderSchedulerInput?.checked,
+          leaderWeeklyMailProductionEnabled: !!leaderProductionInput?.checked,
+          leaderWeeklyMailScheduleDay: leaderScheduleDayInput?.value || 'MONDAY',
+          leaderWeeklyMailScheduleTime: leaderScheduleTimeInput?.value || '08:00',
+          goaffproSyncEnabled: syncEnabledInput ? syncEnabledInput.checked : true,
+          goaffproSyncHourlyEnabled: !!syncHourlyInput?.checked,
+          goaffproSyncDeepEnabled: !!syncDeepInput?.checked,
+          goaffproSyncAssetDownloadEnabled: syncAssetInput ? syncAssetInput.checked : true,
+          goaffproSyncMaxCallsPerHour: syncMaxCallsInput?.value || '60',
+          goaffproSyncDeltaLookbackDays: syncLookbackInput?.value || '14',
+          goaffproSyncMinFreeBytes: syncMinFreeInput?.value || '536870912',
+          goaffproSyncDataPath: syncDataPathInput?.value || '',
+          goaffproSyncSlidingWindowEnabled: syncSlidingWindowInput ? syncSlidingWindowInput.checked : true,
+          goaffproSyncMinCallSpacingMs: syncMinSpacingInput?.value || '1500',
+          goaffproSyncDeltaDownloadsEnabled: !!syncDeltaDownloadsInput?.checked,
+          goaffproSyncDownloadSkipExistingEnabled: syncDownloadSkipInput ? syncDownloadSkipInput.checked : true,
           eInvoiceEnabled: !!document.getElementById('eInvoiceEnabled')?.checked,
           eInvoiceAttachAndStoreEnabled: !!document.getElementById('includeEInvoiceArtifacts')?.checked,
           eInvoiceBuyerName: document.getElementById('eInvoiceBuyerName')?.value || '',
@@ -1826,12 +2937,32 @@
         defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || defaultEmailTemplateHtml;
         defaultValidationReminderTemplateHtml = data.validationReminderTemplateHtmlDefault || defaultValidationReminderTemplateHtml;
         defaultEInvoicePdfTemplateHtml = data.eInvoicePdfTemplateHtmlDefault || defaultEInvoicePdfTemplateHtml;
+        defaultLeaderWeeklyReportTemplateHtml = data.leaderWeeklyReportTemplateHtmlDefault || defaultLeaderWeeklyReportTemplateHtml;
+        if (leaderSchedulerInput) leaderSchedulerInput.checked = data.leaderWeeklyMailSchedulerEnabled === true;
+        if (leaderProductionInput) leaderProductionInput.checked = data.leaderWeeklyMailProductionEnabled === true;
+        if (leaderScheduleDayInput) leaderScheduleDayInput.value = data.leaderWeeklyMailScheduleDay || 'MONDAY';
+        if (leaderScheduleTimeInput) leaderScheduleTimeInput.value = data.leaderWeeklyMailScheduleTime || '08:00';
+        if (leaderLastSentHint) leaderLastSentHint.textContent = `Letzter automatischer Versand: ${data.leaderWeeklyMailLastSentPeriodKey || '-'}`;
+        if (syncEnabledInput) syncEnabledInput.checked = data.goaffproSyncEnabled !== false;
+        if (syncHourlyInput) syncHourlyInput.checked = data.goaffproSyncHourlyEnabled === true;
+        if (syncDeepInput) syncDeepInput.checked = data.goaffproSyncDeepEnabled === true;
+        if (syncAssetInput) syncAssetInput.checked = data.goaffproSyncAssetDownloadEnabled !== false;
+        if (syncMaxCallsInput) syncMaxCallsInput.value = data.goaffproSyncMaxCallsPerHour || '60';
+        if (syncLookbackInput) syncLookbackInput.value = data.goaffproSyncDeltaLookbackDays || '14';
+        if (syncMinFreeInput) syncMinFreeInput.value = data.goaffproSyncMinFreeBytes || '536870912';
+        if (syncDataPathInput) syncDataPathInput.value = data.goaffproSyncDataPath || '';
+        if (syncSlidingWindowInput) syncSlidingWindowInput.checked = data.goaffproSyncSlidingWindowEnabled !== false;
+        if (syncMinSpacingInput) syncMinSpacingInput.value = data.goaffproSyncMinCallSpacingMs || '1500';
+        if (syncDeltaDownloadsInput) syncDeltaDownloadsInput.checked = data.goaffproSyncDeltaDownloadsEnabled === true;
+        if (syncDownloadSkipInput) syncDownloadSkipInput.checked = data.goaffproSyncDownloadSkipExistingEnabled !== false;
+        if (syncDbPathHint) syncDbPathHint.textContent = `SQLite-Datenbank: ${data.goaffproSyncDbPath || '-'}`;
         const sanitizeTemplate2 = (html, fallback) => (html && html.length > 200) ? html : (fallback || '');
         const editorEl2 = document.getElementById('emailTemplateEditor');
         if (editorEl2) {
           editorEl2.dataset.emailTemplateHtml = sanitizeTemplate2(data.emailTemplateHtml, defaultEmailTemplateHtml);
           editorEl2.dataset.validationReminderTemplateHtml = sanitizeTemplate2(data.validationReminderTemplateHtml, defaultValidationReminderTemplateHtml);
           editorEl2.dataset.eInvoicePdfTemplateHtml = sanitizeTemplate2(data.eInvoicePdfTemplateHtml, defaultEInvoicePdfTemplateHtml);
+          editorEl2.dataset.leaderWeeklyReportTemplateHtml = sanitizeTemplate2(data.leaderWeeklyReportTemplateHtml, defaultLeaderWeeklyReportTemplateHtml);
         }
         setCurrentEmailTemplateHtml((editorEl2 && editorEl2.dataset[getActiveTemplateKey()]) || defaultEmailTemplateHtml || '');
         renderEmailTemplatePreview();
@@ -1918,7 +3049,27 @@
         .replaceAll('{{vatLine}}', 'Umsatzsteuer (19 %)')
         .replaceAll('{{vatAmount}}', '23,46 \u20ac')
         .replaceAll('{{grossAmount}}', '146,91 \u20ac')
-        .replaceAll('{{currency}}', 'EUR');
+        .replaceAll('{{currency}}', 'EUR')
+        .replaceAll('{{leaderName}}', escapeHtml(advisor.name || 'Führungskraft Beispiel'))
+        .replaceAll('{{leaderEmail}}', escapeHtml(advisor.email || 'leader@example.com'))
+        .replaceAll('{{toEmail}}', escapeHtml(document.getElementById('contactEmail')?.value || 'kontakt@example.com'))
+        .replaceAll('{{recipientMode}}', 'TEST an Kontakt-E-Mail')
+        .replaceAll('{{reportFrom}}', '18.05.2026')
+        .replaceAll('{{reportTo}}', '24.05.2026')
+        .replaceAll('{{previousPeriodLabel}}', '11.05.2026 bis 17.05.2026')
+        .replaceAll('{{secondPreviousPeriodLabel}}', '04.05.2026 bis 10.05.2026')
+        .replaceAll('{{teamSize}}', '8')
+        .replaceAll('{{currentWeekNewCustomers}}', '12')
+        .replaceAll('{{previousWeekNewCustomers}}', '9')
+        .replaceAll('{{secondPreviousWeekNewCustomers}}', '15')
+        .replaceAll('{{monthlyTarget}}', '40')
+        .replaceAll('{{monthKey}}', '2026-05')
+        .replaceAll('{{monthNewCustomers}}', '33')
+        .replaceAll('{{monthProgressPercent}}', '83 %')
+        .replaceAll('{{status}}', 'AUFMERKSAMKEIT')
+        .replaceAll('{{statusLabel}}', 'Aufmerksamkeit')
+        .replaceAll('{{actionText}}', 'Die Woche liegt auf Kurs, der Monatsfortschritt sollte aktiv beobachtet werden.')
+        .replaceAll('{{teamRows}}', '<tr><td style="padding:8px;border:1px solid #e2e8f0;">Beraterin Beispiel</td><td style="padding:8px;border:1px solid #e2e8f0;text-align:right;">5</td><td style="padding:8px;border:1px solid #e2e8f0;text-align:right;">3</td><td style="padding:8px;border:1px solid #e2e8f0;text-align:right;">4</td><td style="padding:8px;border:1px solid #e2e8f0;text-align:right;">250,00 €</td></tr>');
       box.innerHTML = preview || '<em>Keine Vorlage vorhanden.</em>';
     }
 
@@ -1941,6 +3092,7 @@
     function getActiveTemplateKey() {
       if (activeEmailTemplateType === 'validationReminder') return 'validationReminderTemplateHtml';
       if (activeEmailTemplateType === 'eInvoicePdf') return 'eInvoicePdfTemplateHtml';
+      if (activeEmailTemplateType === 'leaderWeeklyReport') return 'leaderWeeklyReportTemplateHtml';
       return 'emailTemplateHtml';
     }
 
@@ -1999,6 +3151,23 @@
         emailTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtml || '').trim(),
         validationReminderTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '').trim(),
         eInvoicePdfTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.eInvoicePdfTemplateHtml || '').trim(),
+        leaderWeeklyReportTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.leaderWeeklyReportTemplateHtml || '').trim(),
+        leaderWeeklyMailSchedulerEnabled: !!document.getElementById('leaderWeeklyMailSchedulerEnabled')?.checked,
+        leaderWeeklyMailProductionEnabled: !!document.getElementById('leaderWeeklyMailProductionEnabled')?.checked,
+        leaderWeeklyMailScheduleDay: (document.getElementById('leaderWeeklyMailScheduleDay')?.value || 'MONDAY').trim(),
+        leaderWeeklyMailScheduleTime: (document.getElementById('leaderWeeklyMailScheduleTime')?.value || '08:00').trim(),
+        goaffproSyncEnabled: !!document.getElementById('goaffproSyncEnabled')?.checked,
+        goaffproSyncHourlyEnabled: !!document.getElementById('goaffproSyncHourlyEnabled')?.checked,
+        goaffproSyncDeepEnabled: !!document.getElementById('goaffproSyncDeepEnabled')?.checked,
+        goaffproSyncAssetDownloadEnabled: !!document.getElementById('goaffproSyncAssetDownloadEnabled')?.checked,
+        goaffproSyncMaxCallsPerHour: (document.getElementById('goaffproSyncMaxCallsPerHour')?.value || '60').trim(),
+        goaffproSyncDeltaLookbackDays: (document.getElementById('goaffproSyncDeltaLookbackDays')?.value || '14').trim(),
+        goaffproSyncMinFreeBytes: (document.getElementById('goaffproSyncMinFreeBytes')?.value || '536870912').trim(),
+        goaffproSyncDataPath: (document.getElementById('goaffproSyncDataPath')?.value || '').trim(),
+        goaffproSyncSlidingWindowEnabled: !!document.getElementById('goaffproSyncSlidingWindowEnabled')?.checked,
+        goaffproSyncMinCallSpacingMs: (document.getElementById('goaffproSyncMinCallSpacingMs')?.value || '1500').trim(),
+        goaffproSyncDeltaDownloadsEnabled: !!document.getElementById('goaffproSyncDeltaDownloadsEnabled')?.checked,
+        goaffproSyncDownloadSkipExistingEnabled: !!document.getElementById('goaffproSyncDownloadSkipExistingEnabled')?.checked,
         eInvoiceEnabled: !!document.getElementById('eInvoiceEnabled')?.checked,
         eInvoiceAttachAndStoreEnabled: !!document.getElementById('includeEInvoiceArtifacts')?.checked,
         eInvoiceBuyerName: (document.getElementById('eInvoiceBuyerName')?.value || '').trim(),
@@ -2022,10 +3191,20 @@
       btn.classList.toggle('save-btn-idle', !hasChanges);
       btn.classList.toggle('save-btn-dirty', hasChanges);
       btn.title = hasChanges ? 'Es gibt ungespeicherte Änderungen.' : 'Keine Änderungen seit dem letzten Speichern.';
+      updateLeaderWeeklyProductionButtonState();
+    }
+
+    function updateLeaderWeeklyProductionButtonState() {
+      const btn = document.getElementById('sendLeaderWeeklyMailProductionBtn');
+      if (!btn) return;
+      const snapshot = settingsSnapshot || buildSettingsSnapshot();
+      const enabled = !!snapshot.leaderWeeklyMailProductionEnabled && shouldSendEmails();
+      btn.disabled = !enabled;
+      btn.title = enabled ? 'Produktivversand ist freigegeben.' : 'Produktivversand ist in den Einstellungen gesperrt oder E-Mail-Versand ist deaktiviert.';
     }
 
     function wireSettingsDirtyTracking() {
-      const ids = ['lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms'];
+      const ids = ['lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms','leaderWeeklyMailSchedulerEnabled','leaderWeeklyMailProductionEnabled','leaderWeeklyMailScheduleDay','leaderWeeklyMailScheduleTime','goaffproSyncEnabled','goaffproSyncHourlyEnabled','goaffproSyncDeepEnabled','goaffproSyncAssetDownloadEnabled','goaffproSyncMaxCallsPerHour','goaffproSyncDeltaLookbackDays','goaffproSyncMinFreeBytes','goaffproSyncDataPath','goaffproSyncSlidingWindowEnabled','goaffproSyncMinCallSpacingMs','goaffproSyncDeltaDownloadsEnabled','goaffproSyncDownloadSkipExistingEnabled'];
       ids.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -2104,7 +3283,13 @@
       if (source) source.addEventListener('input', () => { persistCurrentTemplate(); updateSaveButtonState(); renderEmailTemplatePreview(); });
 
       if (resetBtn) resetBtn.addEventListener('click', () => {
-        const html = activeEmailTemplateType === 'validationReminder' ? (defaultValidationReminderTemplateHtml || '') : (activeEmailTemplateType === 'eInvoicePdf' ? (defaultEInvoicePdfTemplateHtml || '') : (defaultEmailTemplateHtml || ''));
+        const html = activeEmailTemplateType === 'validationReminder'
+          ? (defaultValidationReminderTemplateHtml || '')
+          : (activeEmailTemplateType === 'eInvoicePdf'
+            ? (defaultEInvoicePdfTemplateHtml || '')
+            : (activeEmailTemplateType === 'leaderWeeklyReport'
+              ? (defaultLeaderWeeklyReportTemplateHtml || '')
+              : (defaultEmailTemplateHtml || '')));
         setCurrentEmailTemplateHtml(html);
         if (editor) editor.dataset[getActiveTemplateKey()] = html;
         updateSaveButtonState();
@@ -2112,7 +3297,11 @@
       });
 
       if (templateTypeSelect) templateTypeSelect.addEventListener('change', () => {
-        activeEmailTemplateType = templateTypeSelect.value === 'validationReminder' ? 'validationReminder' : (templateTypeSelect.value === 'eInvoicePdf' ? 'eInvoicePdf' : 'invoice');
+        activeEmailTemplateType = templateTypeSelect.value === 'validationReminder'
+          ? 'validationReminder'
+          : (templateTypeSelect.value === 'eInvoicePdf'
+            ? 'eInvoicePdf'
+            : (templateTypeSelect.value === 'leaderWeeklyReport' ? 'leaderWeeklyReport' : 'invoice'));
         setCurrentEmailTemplateHtml((editor && editor.dataset[getActiveTemplateKey()]) || '');
         renderEmailTemplatePreview();
         updateSaveButtonState();
@@ -2518,6 +3707,7 @@
         { label: 'Gutschriftservice', panelId: mainPanelId },
         { label: 'Validierungen', panelId: 'validation-panel' },
         { label: 'Auswertungen', panelId: 'analytics-panel' },
+        { label: 'GoAffPro Sync', panelId: 'sync-panel' },
       ];
       const html = '<div class="side-nav-section-label">Navigation</div>'
         + items.map(item => `<button class="side-nav-item" data-panel="${escapeHtml(item.panelId)}">${escapeHtml(item.label)}</button>`).join('');
@@ -2545,7 +3735,7 @@
       function closeSidebar() {
         sideNav.classList.remove('side-nav-open');
         if (overlay) overlay.classList.remove('active');
-        hamburger.setAttribute('aria-label', 'Navigation oeffnen');
+        hamburger.setAttribute('aria-label', 'Navigation öffnen');
         hamburger.innerHTML = '&#9776;';
       }
 
@@ -2584,6 +3774,7 @@
         createTabAndPanel({ ...mainExecutable, displayName: 'Gutschriftservice' }, true);
         createValidationTabAndPanel();
         createAnalyticsTabAndPanel();
+        createSyncTabAndPanel();
         createHelpTabAndPanel();
         renderSideNav();
         initHamburgerToggle();
@@ -2606,6 +3797,19 @@
         const rebuildCommissionHistoryBtn = document.getElementById('rebuildCommissionHistoryBtn');
         const fetchAnalyticsBtn = document.getElementById('fetchAnalyticsBtn');
         const fetchAdvisor360Btn = document.getElementById('fetchAdvisor360Btn');
+        const fetchPartyAnalyticsBtn = document.getElementById('fetchPartyAnalyticsBtn');
+        const fetchNewCustomerAnalyticsBtn = document.getElementById('fetchNewCustomerAnalyticsBtn');
+        const previewLeaderWeeklyMailBtn = document.getElementById('previewLeaderWeeklyMailBtn');
+        const sendLeaderWeeklyMailTestBtn = document.getElementById('sendLeaderWeeklyMailTestBtn');
+        const sendLeaderWeeklyMailProductionBtn = document.getElementById('sendLeaderWeeklyMailProductionBtn');
+        const syncRefreshBtn = document.getElementById('syncRefreshBtn');
+        const syncInitialBtn = document.getElementById('syncInitialBtn');
+        const syncDeltaBtn = document.getElementById('syncDeltaBtn');
+        const syncDeepBtn = document.getElementById('syncDeepBtn');
+        const syncPauseBtn = document.getElementById('syncPauseBtn');
+        const syncResumeBtn = document.getElementById('syncResumeBtn');
+        const syncDiagnosticsRunBtn = document.getElementById('syncDiagnosticsRunBtn');
+        const syncDiagnosticsRefreshBtn = document.getElementById('syncDiagnosticsRefreshBtn');
         const loadValidationBtn = document.getElementById('loadValidationBtn');
         const loadValidationTreeBtn = document.getElementById('loadValidationTreeBtn');
         const expandAllTreeBtn = document.getElementById('expandAllTreeBtn');
@@ -2618,6 +3822,20 @@
         if (rebuildCommissionHistoryBtn) rebuildCommissionHistoryBtn.addEventListener('click', rebuildCommissionHistoryFromPayments);
         if (fetchAnalyticsBtn) fetchAnalyticsBtn.addEventListener('click', fetchAnalyticsData);
         if (fetchAdvisor360Btn) fetchAdvisor360Btn.addEventListener('click', fetchAdvisor360);
+        if (fetchPartyAnalyticsBtn) fetchPartyAnalyticsBtn.addEventListener('click', fetchPartyAnalyticsData);
+        if (fetchNewCustomerAnalyticsBtn) fetchNewCustomerAnalyticsBtn.addEventListener('click', fetchNewCustomerAnalyticsData);
+        if (previewLeaderWeeklyMailBtn) previewLeaderWeeklyMailBtn.addEventListener('click', previewLeaderWeeklyMails);
+        if (sendLeaderWeeklyMailTestBtn) sendLeaderWeeklyMailTestBtn.addEventListener('click', () => sendLeaderWeeklyMails(false));
+        if (sendLeaderWeeklyMailProductionBtn) sendLeaderWeeklyMailProductionBtn.addEventListener('click', () => sendLeaderWeeklyMails(true));
+        if (syncRefreshBtn) syncRefreshBtn.addEventListener('click', loadSyncStatus);
+        if (syncInitialBtn) syncInitialBtn.addEventListener('click', () => startGoAffProSync('initial'));
+        if (syncDeltaBtn) syncDeltaBtn.addEventListener('click', () => startGoAffProSync('delta'));
+        if (syncDeepBtn) syncDeepBtn.addEventListener('click', () => startGoAffProSync('deep'));
+        if (syncPauseBtn) syncPauseBtn.addEventListener('click', pauseGoAffProSync);
+        if (syncResumeBtn) syncResumeBtn.addEventListener('click', resumeGoAffProSync);
+        if (syncDiagnosticsRunBtn) syncDiagnosticsRunBtn.addEventListener('click', startSyncDiagnostics);
+        if (syncDiagnosticsRefreshBtn) syncDiagnosticsRefreshBtn.addEventListener('click', loadSyncDiagnostics);
+        document.querySelectorAll('.sync-diagnostic-endpoint').forEach(input => input.addEventListener('change', loadSyncDiagnostics));
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
         if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
         if (expandAllTreeBtn) expandAllTreeBtn.addEventListener('click', expandAllValidationTree);
@@ -2646,6 +3864,9 @@
         await loadSettings();
         await loadMailLog();
         await loadReminderLog();
+        await loadSyncStatus();
+        await loadSyncDiagnostics();
+        window.setInterval(loadSyncStatus, 30000);
         updateEmptyTablesVisibility(document);
       } catch (error) {
         document.getElementById('panels').innerHTML = `<p>Fehler: ${error.message}</p>`;

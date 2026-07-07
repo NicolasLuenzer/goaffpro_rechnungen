@@ -48,12 +48,19 @@ import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.text.Normalizer;
 import java.time.Instant;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.OffsetDateTime;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.temporal.IsoFields;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -107,6 +114,14 @@ public class WebUiServer {
     private static final String COMMISSION_HISTORY_DATES_KEY = "lastImportedComissionHistoryDates";
     private static final String MAIL_LOG_KEY = "sentMailLogJson";
     private static final String REMINDER_LOG_KEY = "sentReminderLogJson";
+    private static final String LEADER_WEEKLY_MAIL_LOG_KEY = "sentLeaderWeeklyMailLogJson";
+    private static final ZoneId BERLIN_ZONE = ZoneId.of("Europe/Berlin");
+    private static final int LEADER_NEW_CUSTOMER_MONTHLY_TARGET = 40;
+    private static final DayOfWeek DEFAULT_LEADER_WEEKLY_MAIL_DAY = DayOfWeek.MONDAY;
+    private static final LocalTime DEFAULT_LEADER_WEEKLY_MAIL_TIME = LocalTime.of(8, 0);
+    private static ScheduledExecutorService leaderWeeklyMailScheduler;
+    private static ScheduledExecutorService goaffproSyncScheduler;
+    private static final GoAffProSyncService GOAFFPRO_SYNC_SERVICE = new GoAffProSyncService();
     private static final String DEFAULT_PDF_EXPORT_PATH =
             System.getenv().getOrDefault("PDF_EXPORT_PATH", "C:\\Users\\nluenzer\\Downloads\\goaffpro");
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
@@ -169,6 +184,20 @@ public class WebUiServer {
         server.createContext("/api/version/history", new VersionHistoryHandler());
         server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
         server.createContext("/api/analytics/advisor-detail", new AnalyticsAdvisorDetailHandler());
+        server.createContext("/api/analytics/parties", new AnalyticsPartiesHandler());
+        server.createContext("/api/analytics/new-customers", new AnalyticsNewCustomersHandler());
+        server.createContext("/api/analytics/new-customers/leaders", new AnalyticsLeaderNewCustomersHandler());
+        server.createContext("/api/analytics/new-customers/leaders/weekly-mails/preview", new LeaderWeeklyMailPreviewHandler());
+        server.createContext("/api/analytics/new-customers/leaders/weekly-mails/send", new LeaderWeeklyMailSendHandler());
+        server.createContext("/api/sync/status", new GoAffProSyncStatusHandler());
+        server.createContext("/api/sync/inventory", new GoAffProSyncInventoryHandler());
+        server.createContext("/api/sync/runs", new GoAffProSyncRunsHandler());
+        server.createContext("/api/sync/run", new GoAffProSyncRunHandler());
+        server.createContext("/api/sync/diagnostics/run", new GoAffProSyncDiagnosticsRunHandler());
+        server.createContext("/api/sync/diagnostics/latest", new GoAffProSyncDiagnosticsLatestHandler());
+        server.createContext("/api/sync/diagnostics/runs", new GoAffProSyncDiagnosticsRunsHandler());
+        server.createContext("/api/sync/pause", new GoAffProSyncPauseHandler());
+        server.createContext("/api/sync/resume", new GoAffProSyncResumeHandler());
         server.createContext("/api/commissions/add-latest", new AddLatestCommissionHandler());
         server.createContext("/api/commissions/remove", new RemoveCommissionHandler());
         server.createContext("/api/commissions/rebuild-from-payments", new RebuildCommissionHistoryHandler());
@@ -179,8 +208,134 @@ public class WebUiServer {
         server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
         server.setExecutor(null);
         server.start();
+        startLeaderWeeklyMailScheduler();
+        startGoAffProSyncScheduler();
 
         System.out.println("Web UI Server gestartet auf http://localhost:8080");
+    }
+
+    private static void startGoAffProSyncScheduler() {
+        if (goaffproSyncScheduler != null) return;
+        goaffproSyncScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "goaffpro-sync-scheduler");
+            thread.setDaemon(true);
+            return thread;
+        });
+        goaffproSyncScheduler.scheduleAtFixedRate(() -> {
+            try {
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                if (GOAFFPRO_SYNC_SERVICE.shouldRunNightly(config)) {
+                    GOAFFPRO_SYNC_SERVICE.startAsync(config, apiKey, "deep");
+                } else if (GOAFFPRO_SYNC_SERVICE.shouldRunHourly(config)) {
+                    GOAFFPRO_SYNC_SERVICE.startAsync(config, apiKey, "delta");
+                }
+            } catch (Exception e) {
+                System.err.println("GoAffPro Sync Scheduler: " + e.getMessage());
+            }
+        }, 90, 60, TimeUnit.SECONDS);
+    }
+
+    private static void startLeaderWeeklyMailScheduler() {
+        if (leaderWeeklyMailScheduler != null) return;
+        leaderWeeklyMailScheduler = Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread thread = new Thread(r, "leader-weekly-mail-scheduler");
+            thread.setDaemon(true);
+            return thread;
+        });
+        leaderWeeklyMailScheduler.scheduleAtFixedRate(() -> {
+            try {
+                runLeaderWeeklyMailSchedulerTick();
+            } catch (Exception e) {
+                System.err.println("Führungskräfte-Wochenmail-Scheduler: " + e.getMessage());
+            }
+        }, 60, 60, TimeUnit.SECONDS);
+    }
+
+    private static void runLeaderWeeklyMailSchedulerTick() throws Exception {
+        Properties config = loadConfig();
+        Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+        mergeUiSettingsIntoConfig(config, uiSettings);
+        if (!Boolean.parseBoolean(Objects.toString(config.getProperty("leaderWeeklyMailSchedulerEnabled"), "false"))) {
+            return;
+        }
+        if (!Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"))) {
+            return;
+        }
+        ZonedDateTime now = ZonedDateTime.now(BERLIN_ZONE);
+        DayOfWeek scheduledDay = parseLeaderWeeklyMailScheduleDay(Objects.toString(config.getProperty("leaderWeeklyMailScheduleDay"), ""));
+        LocalTime scheduledTime = parseLeaderWeeklyMailScheduleTime(Objects.toString(config.getProperty("leaderWeeklyMailScheduleTime"), ""));
+        if (now.getDayOfWeek() != scheduledDay || now.toLocalTime().isBefore(scheduledTime)) {
+            return;
+        }
+        LeaderWeeklyMailPeriods periods = leaderWeeklyMailPeriods(now.toLocalDate());
+        String lastSentPeriodKey = Objects.toString(config.getProperty("leaderWeeklyMailLastSentPeriodKey"), "").trim();
+        if (periods.periodKey().equals(lastSentPeriodKey)) {
+            return;
+        }
+        sendLeaderWeeklyMails(config, now.toLocalDate(), true, true);
+    }
+
+    private static String normalizeLeaderWeeklyMailScheduleDay(String raw) {
+        return parseLeaderWeeklyMailScheduleDay(raw).name();
+    }
+
+    private static String normalizePositiveInteger(String raw, String fallback) {
+        try {
+            int value = Integer.parseInt(Objects.toString(raw, "").trim());
+            return String.valueOf(Math.max(1, value));
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static String normalizeNonNegativeInteger(String raw, String fallback) {
+        try {
+            int value = Integer.parseInt(Objects.toString(raw, "").trim());
+            return String.valueOf(Math.max(0, value));
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static String normalizePositiveLong(String raw, String fallback) {
+        try {
+            long value = Long.parseLong(Objects.toString(raw, "").trim());
+            return String.valueOf(Math.max(0L, value));
+        } catch (Exception e) {
+            return fallback;
+        }
+    }
+
+    private static DayOfWeek parseLeaderWeeklyMailScheduleDay(String raw) {
+        String value = Objects.toString(raw, "").trim().toUpperCase(java.util.Locale.ROOT);
+        if (value.isBlank()) return DEFAULT_LEADER_WEEKLY_MAIL_DAY;
+        return switch (value) {
+            case "1", "MONDAY", "MONTAG" -> DayOfWeek.MONDAY;
+            case "2", "TUESDAY", "DIENSTAG" -> DayOfWeek.TUESDAY;
+            case "3", "WEDNESDAY", "MITTWOCH" -> DayOfWeek.WEDNESDAY;
+            case "4", "THURSDAY", "DONNERSTAG" -> DayOfWeek.THURSDAY;
+            case "5", "FRIDAY", "FREITAG" -> DayOfWeek.FRIDAY;
+            case "6", "SATURDAY", "SAMSTAG", "SONNABEND" -> DayOfWeek.SATURDAY;
+            case "7", "SUNDAY", "SONNTAG" -> DayOfWeek.SUNDAY;
+            default -> DEFAULT_LEADER_WEEKLY_MAIL_DAY;
+        };
+    }
+
+    private static String normalizeLeaderWeeklyMailScheduleTime(String raw) {
+        return parseLeaderWeeklyMailScheduleTime(raw).format(DateTimeFormatter.ofPattern("HH:mm"));
+    }
+
+    private static LocalTime parseLeaderWeeklyMailScheduleTime(String raw) {
+        String value = Objects.toString(raw, "").trim();
+        if (value.isBlank()) return DEFAULT_LEADER_WEEKLY_MAIL_TIME;
+        try {
+            return LocalTime.parse(value.length() == 5 ? value : value.substring(0, Math.min(value.length(), 5)));
+        } catch (Exception ignored) {
+            return DEFAULT_LEADER_WEEKLY_MAIL_TIME;
+        }
     }
 
 
@@ -401,6 +556,24 @@ public class WebUiServer {
                 String emailTemplateHtml = Objects.toString(config.getProperty("emailTemplateHtml"), "");
                 String validationReminderTemplateHtml = Objects.toString(config.getProperty("validationReminderTemplateHtml"), "");
                 String eInvoicePdfTemplateHtml = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "");
+                String leaderWeeklyReportTemplateHtml = Objects.toString(config.getProperty("leaderWeeklyReportTemplateHtml"), "");
+                boolean leaderWeeklyMailSchedulerEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("leaderWeeklyMailSchedulerEnabled"), "false"));
+                boolean leaderWeeklyMailProductionEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("leaderWeeklyMailProductionEnabled"), "false"));
+                String leaderWeeklyMailScheduleDay = normalizeLeaderWeeklyMailScheduleDay(Objects.toString(config.getProperty("leaderWeeklyMailScheduleDay"), ""));
+                String leaderWeeklyMailScheduleTime = normalizeLeaderWeeklyMailScheduleTime(Objects.toString(config.getProperty("leaderWeeklyMailScheduleTime"), ""));
+                String leaderWeeklyMailLastSentPeriodKey = Objects.toString(config.getProperty("leaderWeeklyMailLastSentPeriodKey"), "").trim();
+                boolean goaffproSyncEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncEnabled"), "true"));
+                boolean goaffproSyncHourlyEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncHourlyEnabled"), "false"));
+                boolean goaffproSyncDeepEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncDeepEnabled"), "false"));
+                boolean goaffproSyncAssetDownloadEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncAssetDownloadEnabled"), "true"));
+                String goaffproSyncMaxCallsPerHour = Objects.toString(config.getProperty("goaffproSyncMaxCallsPerHour"), "60").trim();
+                boolean goaffproSyncSlidingWindowEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncSlidingWindowEnabled"), "true"));
+                String goaffproSyncMinCallSpacingMs = Objects.toString(config.getProperty("goaffproSyncMinCallSpacingMs"), "1500").trim();
+                boolean goaffproSyncDownloadSkipExistingEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncDownloadSkipExistingEnabled"), "true"));
+                boolean goaffproSyncDeltaDownloadsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncDeltaDownloadsEnabled"), "false"));
+                String goaffproSyncDeltaLookbackDays = Objects.toString(config.getProperty("goaffproSyncDeltaLookbackDays"), "14").trim();
+                String goaffproSyncMinFreeBytes = Objects.toString(config.getProperty("goaffproSyncMinFreeBytes"), String.valueOf(512L * 1024L * 1024L)).trim();
+                String goaffproSyncDataPath = Objects.toString(config.getProperty("goaffproSyncDataPath"), GoAffProSyncService.resolveDataDir(config).toString()).trim();
                 boolean eInvoiceEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true"));
                 boolean eInvoiceAttachAndStoreEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
                 String eInvoiceBuyerName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
@@ -438,6 +611,26 @@ public class WebUiServer {
                 payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
                 payload.put("eInvoicePdfTemplateHtml", eInvoicePdfTemplateHtml.isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : eInvoicePdfTemplateHtml);
                 payload.put("eInvoicePdfTemplateHtmlDefault", getDefaultEInvoicePdfViewHtmlTemplate());
+                payload.put("leaderWeeklyReportTemplateHtml", leaderWeeklyReportTemplateHtml.isBlank() ? getDefaultLeaderWeeklyReportHtmlTemplate() : leaderWeeklyReportTemplateHtml);
+                payload.put("leaderWeeklyReportTemplateHtmlDefault", getDefaultLeaderWeeklyReportHtmlTemplate());
+                payload.put("leaderWeeklyMailSchedulerEnabled", leaderWeeklyMailSchedulerEnabled);
+                payload.put("leaderWeeklyMailProductionEnabled", leaderWeeklyMailProductionEnabled);
+                payload.put("leaderWeeklyMailScheduleDay", leaderWeeklyMailScheduleDay);
+                payload.put("leaderWeeklyMailScheduleTime", leaderWeeklyMailScheduleTime);
+                payload.put("leaderWeeklyMailLastSentPeriodKey", leaderWeeklyMailLastSentPeriodKey);
+                payload.put("goaffproSyncEnabled", goaffproSyncEnabled);
+                payload.put("goaffproSyncHourlyEnabled", goaffproSyncHourlyEnabled);
+                payload.put("goaffproSyncDeepEnabled", goaffproSyncDeepEnabled);
+                payload.put("goaffproSyncAssetDownloadEnabled", goaffproSyncAssetDownloadEnabled);
+                payload.put("goaffproSyncMaxCallsPerHour", goaffproSyncMaxCallsPerHour);
+                payload.put("goaffproSyncSlidingWindowEnabled", goaffproSyncSlidingWindowEnabled);
+                payload.put("goaffproSyncMinCallSpacingMs", goaffproSyncMinCallSpacingMs);
+                payload.put("goaffproSyncDownloadSkipExistingEnabled", goaffproSyncDownloadSkipExistingEnabled);
+                payload.put("goaffproSyncDeltaDownloadsEnabled", goaffproSyncDeltaDownloadsEnabled);
+                payload.put("goaffproSyncDeltaLookbackDays", goaffproSyncDeltaLookbackDays);
+                payload.put("goaffproSyncMinFreeBytes", goaffproSyncMinFreeBytes);
+                payload.put("goaffproSyncDataPath", goaffproSyncDataPath);
+                payload.put("goaffproSyncDbPath", GoAffProSyncService.resolveDbPath(config).toString());
                 payload.put("eInvoiceEnabled", eInvoiceEnabled);
                 payload.put("eInvoiceAttachAndStoreEnabled", eInvoiceAttachAndStoreEnabled);
                 payload.put("eInvoiceBuyerName", eInvoiceBuyerName);
@@ -477,6 +670,23 @@ public class WebUiServer {
                     String emailTemplateHtml = asText(body, "emailTemplateHtml");
                     String validationReminderTemplateHtml = asText(body, "validationReminderTemplateHtml");
                     String eInvoicePdfTemplateHtml = asText(body, "eInvoicePdfTemplateHtml");
+                    String leaderWeeklyReportTemplateHtml = asText(body, "leaderWeeklyReportTemplateHtml");
+                    boolean leaderWeeklyMailSchedulerEnabled = body.has("leaderWeeklyMailSchedulerEnabled") && body.get("leaderWeeklyMailSchedulerEnabled").asBoolean(false);
+                    boolean leaderWeeklyMailProductionEnabled = body.has("leaderWeeklyMailProductionEnabled") && body.get("leaderWeeklyMailProductionEnabled").asBoolean(false);
+                    String leaderWeeklyMailScheduleDay = normalizeLeaderWeeklyMailScheduleDay(asText(body, "leaderWeeklyMailScheduleDay"));
+                    String leaderWeeklyMailScheduleTime = normalizeLeaderWeeklyMailScheduleTime(asText(body, "leaderWeeklyMailScheduleTime"));
+                    boolean goaffproSyncEnabled = !body.has("goaffproSyncEnabled") || body.get("goaffproSyncEnabled").asBoolean(true);
+                    boolean goaffproSyncHourlyEnabled = body.has("goaffproSyncHourlyEnabled") && body.get("goaffproSyncHourlyEnabled").asBoolean(false);
+                    boolean goaffproSyncDeepEnabled = body.has("goaffproSyncDeepEnabled") && body.get("goaffproSyncDeepEnabled").asBoolean(false);
+                    boolean goaffproSyncAssetDownloadEnabled = !body.has("goaffproSyncAssetDownloadEnabled") || body.get("goaffproSyncAssetDownloadEnabled").asBoolean(true);
+                    String goaffproSyncMaxCallsPerHour = normalizePositiveInteger(asText(body, "goaffproSyncMaxCallsPerHour"), "60");
+                    boolean goaffproSyncSlidingWindowEnabled = !body.has("goaffproSyncSlidingWindowEnabled") || body.get("goaffproSyncSlidingWindowEnabled").asBoolean(true);
+                    String goaffproSyncMinCallSpacingMs = normalizeNonNegativeInteger(asText(body, "goaffproSyncMinCallSpacingMs"), "1500");
+                    boolean goaffproSyncDownloadSkipExistingEnabled = !body.has("goaffproSyncDownloadSkipExistingEnabled") || body.get("goaffproSyncDownloadSkipExistingEnabled").asBoolean(true);
+                    boolean goaffproSyncDeltaDownloadsEnabled = body.has("goaffproSyncDeltaDownloadsEnabled") && body.get("goaffproSyncDeltaDownloadsEnabled").asBoolean(false);
+                    String goaffproSyncDeltaLookbackDays = normalizePositiveInteger(asText(body, "goaffproSyncDeltaLookbackDays"), "14");
+                    String goaffproSyncMinFreeBytes = normalizePositiveLong(asText(body, "goaffproSyncMinFreeBytes"), String.valueOf(512L * 1024L * 1024L));
+                    String goaffproSyncDataPath = asText(body, "goaffproSyncDataPath").trim();
                     boolean eInvoiceEnabled = !body.has("eInvoiceEnabled") || body.get("eInvoiceEnabled").asBoolean(true);
                     boolean eInvoiceAttachAndStoreEnabled = !body.has("eInvoiceAttachAndStoreEnabled") || body.get("eInvoiceAttachAndStoreEnabled").asBoolean(true);
                     String eInvoiceBuyerName = asText(body, "eInvoiceBuyerName").trim();
@@ -531,6 +741,29 @@ public class WebUiServer {
                     } else {
                         config.remove("eInvoicePdfTemplateHtml");
                     }
+                    if (!leaderWeeklyReportTemplateHtml.isBlank()) {
+                        config.setProperty("leaderWeeklyReportTemplateHtml", leaderWeeklyReportTemplateHtml);
+                    } else {
+                        config.remove("leaderWeeklyReportTemplateHtml");
+                    }
+                    config.setProperty("leaderWeeklyMailSchedulerEnabled", String.valueOf(leaderWeeklyMailSchedulerEnabled));
+                    config.setProperty("leaderWeeklyMailProductionEnabled", String.valueOf(leaderWeeklyMailProductionEnabled));
+                    config.setProperty("leaderWeeklyMailScheduleDay", leaderWeeklyMailScheduleDay);
+                    config.setProperty("leaderWeeklyMailScheduleTime", leaderWeeklyMailScheduleTime);
+                    config.setProperty("goaffproSyncEnabled", String.valueOf(goaffproSyncEnabled));
+                    config.setProperty("goaffproSyncHourlyEnabled", String.valueOf(goaffproSyncHourlyEnabled));
+                    config.setProperty("goaffproSyncDeepEnabled", String.valueOf(goaffproSyncDeepEnabled));
+                    config.setProperty("goaffproSyncAssetDownloadEnabled", String.valueOf(goaffproSyncAssetDownloadEnabled));
+                    config.setProperty("goaffproSyncMaxCallsPerHour", goaffproSyncMaxCallsPerHour);
+                    config.setProperty("goaffproSyncSlidingWindowEnabled", String.valueOf(goaffproSyncSlidingWindowEnabled));
+                    config.setProperty("goaffproSyncMinCallSpacingMs", goaffproSyncMinCallSpacingMs);
+                    config.setProperty("goaffproSyncDownloadSkipExistingEnabled", String.valueOf(goaffproSyncDownloadSkipExistingEnabled));
+                    config.setProperty("goaffproSyncDeltaDownloadsEnabled", String.valueOf(goaffproSyncDeltaDownloadsEnabled));
+                    config.setProperty("goaffproSyncDeltaLookbackDays", goaffproSyncDeltaLookbackDays);
+                    config.setProperty("goaffproSyncMinFreeBytes", goaffproSyncMinFreeBytes);
+                    if (!goaffproSyncDataPath.isBlank()) {
+                        config.setProperty("goaffproSyncDataPath", goaffproSyncDataPath);
+                    }
                     config.setProperty("eInvoiceEnabled", String.valueOf(eInvoiceEnabled));
                     config.setProperty("eInvoiceAttachAndStoreEnabled", String.valueOf(eInvoiceAttachAndStoreEnabled));
                     config.setProperty("eInvoiceBuyerName", eInvoiceBuyerName);
@@ -569,6 +802,26 @@ public class WebUiServer {
                     payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
                     payload.put("eInvoicePdfTemplateHtml", Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "").isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), ""));
                     payload.put("eInvoicePdfTemplateHtmlDefault", getDefaultEInvoicePdfViewHtmlTemplate());
+                    payload.put("leaderWeeklyReportTemplateHtml", Objects.toString(config.getProperty("leaderWeeklyReportTemplateHtml"), "").isBlank() ? getDefaultLeaderWeeklyReportHtmlTemplate() : Objects.toString(config.getProperty("leaderWeeklyReportTemplateHtml"), ""));
+                    payload.put("leaderWeeklyReportTemplateHtmlDefault", getDefaultLeaderWeeklyReportHtmlTemplate());
+                    payload.put("leaderWeeklyMailSchedulerEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("leaderWeeklyMailSchedulerEnabled"), "false")));
+                    payload.put("leaderWeeklyMailProductionEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("leaderWeeklyMailProductionEnabled"), "false")));
+                    payload.put("leaderWeeklyMailScheduleDay", normalizeLeaderWeeklyMailScheduleDay(Objects.toString(config.getProperty("leaderWeeklyMailScheduleDay"), "")));
+                    payload.put("leaderWeeklyMailScheduleTime", normalizeLeaderWeeklyMailScheduleTime(Objects.toString(config.getProperty("leaderWeeklyMailScheduleTime"), "")));
+                    payload.put("leaderWeeklyMailLastSentPeriodKey", Objects.toString(config.getProperty("leaderWeeklyMailLastSentPeriodKey"), ""));
+                    payload.put("goaffproSyncEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncEnabled"), "true")));
+                    payload.put("goaffproSyncHourlyEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncHourlyEnabled"), "false")));
+                    payload.put("goaffproSyncDeepEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncDeepEnabled"), "false")));
+                    payload.put("goaffproSyncAssetDownloadEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncAssetDownloadEnabled"), "true")));
+                    payload.put("goaffproSyncMaxCallsPerHour", Objects.toString(config.getProperty("goaffproSyncMaxCallsPerHour"), "60"));
+                    payload.put("goaffproSyncSlidingWindowEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncSlidingWindowEnabled"), "true")));
+                    payload.put("goaffproSyncMinCallSpacingMs", Objects.toString(config.getProperty("goaffproSyncMinCallSpacingMs"), "1500"));
+                    payload.put("goaffproSyncDownloadSkipExistingEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncDownloadSkipExistingEnabled"), "true")));
+                    payload.put("goaffproSyncDeltaDownloadsEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("goaffproSyncDeltaDownloadsEnabled"), "false")));
+                    payload.put("goaffproSyncDeltaLookbackDays", Objects.toString(config.getProperty("goaffproSyncDeltaLookbackDays"), "14"));
+                    payload.put("goaffproSyncMinFreeBytes", Objects.toString(config.getProperty("goaffproSyncMinFreeBytes"), String.valueOf(512L * 1024L * 1024L)));
+                    payload.put("goaffproSyncDataPath", Objects.toString(config.getProperty("goaffproSyncDataPath"), GoAffProSyncService.resolveDataDir(config).toString()));
+                    payload.put("goaffproSyncDbPath", GoAffProSyncService.resolveDbPath(config).toString());
                     payload.put("eInvoiceEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true")));
                     payload.put("eInvoiceAttachAndStoreEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true")));
                     payload.put("eInvoiceBuyerName", Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh"));
@@ -848,6 +1101,212 @@ public class WebUiServer {
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
+        }
+    }
+
+    private static class GoAffProSyncStatusHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfigWithUiSettings();
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.status(config)));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class GoAffProSyncInventoryHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfigWithUiSettings();
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.inventory(config)));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class GoAffProSyncRunsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfigWithUiSettings();
+                int limit = 25;
+                String query = exchange.getRequestURI().getQuery();
+                if (query != null && query.contains("limit=")) {
+                    try {
+                        limit = Integer.parseInt(query.replaceAll(".*(?:^|&)limit=([0-9]+).*", "$1"));
+                    } catch (Exception ignored) {
+                    }
+                }
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.runs(config, limit)));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class GoAffProSyncRunHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String mode = asText(body, "mode").trim();
+                Properties config = loadConfigWithUiSettings();
+                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                Map<String, Object> payload = GOAFFPRO_SYNC_SERVICE.startAsync(config, apiKey, mode);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class GoAffProSyncDiagnosticsRunHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                List<String> endpoints = new ArrayList<>();
+                JsonNode endpointNode = body.get("endpoints");
+                if (endpointNode != null && endpointNode.isArray()) {
+                    for (JsonNode item : endpointNode) {
+                        String value = item.asText("").trim();
+                        if (!value.isBlank()) endpoints.add(value);
+                    }
+                }
+                Properties config = loadConfigWithUiSettings();
+                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                Map<String, Object> payload = GOAFFPRO_SYNC_SERVICE.startDiagnosticsAsync(config, apiKey, endpoints);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class GoAffProSyncDiagnosticsLatestHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfigWithUiSettings();
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.diagnosticsLatest(config)));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class GoAffProSyncDiagnosticsRunsHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfigWithUiSettings();
+                int limit = 25;
+                String query = exchange.getRequestURI().getQuery();
+                if (query != null && query.contains("limit=")) {
+                    try {
+                        limit = Integer.parseInt(query.replaceAll(".*(?:^|&)limit=([0-9]+).*", "$1"));
+                    } catch (Exception ignored) {
+                    }
+                }
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.diagnosticRuns(config, limit)));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class GoAffProSyncPauseHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            updateSyncEnabled(exchange, false);
+        }
+    }
+
+    private static class GoAffProSyncResumeHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            updateSyncEnabled(exchange, true);
+        }
+    }
+
+    private static void updateSyncEnabled(HttpExchange exchange, boolean enabled) throws IOException {
+        if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendResponse(exchange, 200, "application/json", "{}");
+            return;
+        }
+        if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+            return;
+        }
+        try {
+            Properties config = loadConfigWithUiSettings();
+            GOAFFPRO_SYNC_SERVICE.setEnabled(config, enabled);
+            persistSettings(config);
+            Map<String, Object> payload = GOAFFPRO_SYNC_SERVICE.status(config);
+            payload.put("message", enabled ? "GoAffPro Sync fortgesetzt." : "GoAffPro Sync pausiert.");
+            sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+        } catch (Exception e) {
+            sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
         }
     }
 
@@ -1305,6 +1764,1749 @@ public class WebUiServer {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
+    }
+
+    private static class AnalyticsPartiesHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                LocalDate[] range = normalizePartyDateRange(parseIsoDate(asText(body, "fromDate")), parseIsoDate(asText(body, "toDate")));
+                LocalDate fromDate = range[0];
+                LocalDate toDate = range[1];
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+
+                JsonNode showcaseRoot;
+                JsonNode orderRoot;
+                if (hasSyncedData(config, "showcases") && hasSyncedData(config, "orders")) {
+                    showcaseRoot = loadSyncedRoot(config, "showcases", "showcases");
+                    orderRoot = loadSyncedRoot(config, "orders", "orders");
+                } else {
+                    String showcaseUrl = "https://api.goaffpro.com/v1/admin/showcases?limit=500";
+                    String orderFields = "id,number,total,status,affiliate_id,created_at,customer_email,shipping_address,line_items,conversion_source,sub_id";
+                    String ordersUrl = "https://api.goaffpro.com/v1/admin/orders?limit=500"
+                            + "&created_at_min=" + fromDate + "T00:00:00.000Z"
+                            + "&created_at_max=" + toDate + "T23:59:59.999Z"
+                            + "&fields=" + orderFields;
+                    showcaseRoot = requestJson(showcaseUrl, apiKey);
+                    orderRoot = requestJson(ordersUrl, apiKey);
+                }
+                Map<String, Object> payload = buildPartyAnalyticsPayload(showcaseRoot, orderRoot, fromDate, toDate);
+                attachDataSource(payload, config, "showcases");
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class AnalyticsNewCustomersHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                LocalDate[] range = normalizePartyDateRange(parseIsoDate(asText(body, "fromDate")), parseIsoDate(asText(body, "toDate")));
+                LocalDate fromDate = range[0];
+                LocalDate toDate = range[1];
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+
+                List<JsonNode> allOrders = new ArrayList<>();
+                Set<String> limitedWeeks = new LinkedHashSet<>();
+                if (hasSyncedData(config, "orders")) {
+                    allOrders.addAll(jsonArrayToList(loadSyncedRoot(config, "orders", "orders").get("orders")));
+                } else {
+                    String orderFields = "id,number,total,status,affiliate_id,created_at,is_new_customer,customer";
+                    for (LocalDate weekStart = isoWeekStart(fromDate); !weekStart.isAfter(toDate); weekStart = weekStart.plusWeeks(1)) {
+                        LocalDate requestFrom = weekStart.isBefore(fromDate) ? fromDate : weekStart;
+                        LocalDate requestTo = weekStart.plusDays(6).isAfter(toDate) ? toDate : weekStart.plusDays(6);
+                        String weekKey = isoWeekKey(requestFrom);
+                        String ordersUrl = "https://api.goaffpro.com/v1/admin/orders?limit=500"
+                                + "&created_at_min=" + requestFrom + "T00:00:00.000Z"
+                                + "&created_at_max=" + requestTo + "T23:59:59.999Z"
+                                + "&fields=" + orderFields;
+                        JsonNode orderRoot = requestJson(ordersUrl, apiKey);
+                        List<JsonNode> weekOrders = jsonArrayToList(orderRoot.get("orders"));
+                        allOrders.addAll(weekOrders);
+                        if (weekOrders.size() >= 500) {
+                            limitedWeeks.add(weekKey);
+                        }
+                    }
+                }
+
+                Set<String> affiliateIds = new LinkedHashSet<>();
+                for (JsonNode order : allOrders) {
+                    String affiliateId = asText(order, "affiliate_id").trim();
+                    if (!affiliateId.isBlank()) affiliateIds.add(affiliateId);
+                }
+                Map<String, JsonNode> affiliatesById = hasSyncedData(config, "affiliates")
+                        ? loadSyncedEntityMapFiltered(config, "affiliates", new ArrayList<>(affiliateIds))
+                        : fetchAffiliatesById(apiKey, new ArrayList<>(affiliateIds));
+
+                Map<String, Object> payload = buildNewCustomerAnalyticsPayload(allOrders, affiliatesById, fromDate, toDate, limitedWeeks);
+                attachDataSource(payload, config, "orders");
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class AnalyticsLeaderNewCustomersHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                LocalDate[] range = normalizeLeaderNewCustomerDateRange(parseIsoDate(asText(body, "fromDate")), parseIsoDate(asText(body, "toDate")));
+                LocalDate fromDate = range[0];
+                LocalDate toDate = range[1];
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+
+                List<JsonNode> allOrders = new ArrayList<>();
+                Set<String> limitedWeeks = new LinkedHashSet<>();
+                if (hasSyncedData(config, "orders")) {
+                    allOrders.addAll(jsonArrayToList(loadSyncedRoot(config, "orders", "orders").get("orders")));
+                } else {
+                    String orderFields = "id,number,total,status,affiliate_id,created_at,is_new_customer,customer";
+                    for (LocalDate weekStart = isoWeekStart(fromDate); !weekStart.isAfter(toDate); weekStart = weekStart.plusWeeks(1)) {
+                        LocalDate requestFrom = weekStart.isBefore(fromDate) ? fromDate : weekStart;
+                        LocalDate requestTo = weekStart.plusDays(6).isAfter(toDate) ? toDate : weekStart.plusDays(6);
+                        String weekKey = isoWeekKey(requestFrom);
+                        String ordersUrl = "https://api.goaffpro.com/v1/admin/orders?limit=500"
+                                + "&created_at_min=" + requestFrom + "T00:00:00.000Z"
+                                + "&created_at_max=" + requestTo + "T23:59:59.999Z"
+                                + "&fields=" + orderFields;
+                        JsonNode orderRoot = requestJson(ordersUrl, apiKey);
+                        List<JsonNode> weekOrders = jsonArrayToList(orderRoot.get("orders"));
+                        allOrders.addAll(weekOrders);
+                        if (weekOrders.size() >= 500) {
+                            limitedWeeks.add(weekKey);
+                        }
+                    }
+                }
+
+                Map<String, JsonNode> affiliatesById = hasSyncedData(config, "affiliates")
+                        ? loadSyncedEntityMap(config, "affiliates")
+                        : fetchAllAffiliatesForTeamAnalytics(apiKey);
+                JsonNode treeRoot = hasSyncedData(config, "mlm_tree")
+                        ? loadSyncedRoot(config, "mlm_tree", "tree").path("tree")
+                        : requestJson("https://api.goaffpro.com/v1/admin/mlm/tree", apiKey);
+                Map<String, List<String>> childrenByParent = buildChildrenByParentFromTreeAndAffiliates(treeRoot, affiliatesById);
+
+                Map<String, Object> payload = buildLeaderNewCustomerAnalyticsPayload(
+                        allOrders, affiliatesById, childrenByParent, fromDate, toDate, limitedWeeks, LocalDate.now(ZoneId.of("Europe/Berlin")));
+                Map<String, Object> weeklyPayload = buildNewCustomerAnalyticsPayload(allOrders, affiliatesById, fromDate, toDate, limitedWeeks);
+                payload.put("weekRows", weeklyPayload.get("weekRows"));
+                payload.put("advisorWeekRows", weeklyPayload.get("advisorWeekRows"));
+                payload.put("advisorRows", weeklyPayload.get("advisorRows"));
+                mergeWarnings(payload, weeklyPayload);
+                attachDataSource(payload, config, "orders");
+
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class LeaderWeeklyMailPreviewHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                LocalDate referenceDate = parseIsoDate(asText(body, "referenceDate"));
+                if (referenceDate == null) referenceDate = LocalDate.now(BERLIN_ZONE);
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+
+                boolean productionMode = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"))
+                        && Boolean.parseBoolean(Objects.toString(config.getProperty("leaderWeeklyMailProductionEnabled"), "false"));
+                Map<String, Object> payload = buildLeaderWeeklyMailPayloadFromApi(config, referenceDate, productionMode);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class LeaderWeeklyMailSendHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                LocalDate referenceDate = parseIsoDate(asText(body, "referenceDate"));
+                if (referenceDate == null) referenceDate = LocalDate.now(BERLIN_ZONE);
+                boolean productionRequested = body.has("production") && body.get("production").asBoolean(false);
+
+                Properties config = loadConfig();
+                Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+                mergeUiSettingsIntoConfig(config, uiSettings);
+
+                Map<String, Object> payload = sendLeaderWeeklyMails(config, referenceDate, productionRequested, false);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private record LeaderWeeklyMailPeriods(LocalDate currentStart, LocalDate currentEnd,
+                                           LocalDate previousStart, LocalDate previousEnd,
+                                           LocalDate secondPreviousStart, LocalDate secondPreviousEnd,
+                                           String periodKey, String periodLabel) {
+    }
+
+    private static Map<String, Object> buildLeaderWeeklyMailPayloadFromApi(Properties config,
+                                                                           LocalDate referenceDate,
+                                                                           boolean productionRequested) throws Exception {
+        LeaderWeeklyMailPeriods periods = leaderWeeklyMailPeriods(referenceDate);
+        LocalDate monthStart = YearMonth.from(periods.currentEnd()).atDay(1);
+        LocalDate fetchFrom = periods.secondPreviousStart().isBefore(monthStart) ? periods.secondPreviousStart() : monthStart;
+        Set<String> limitedWeeks = new LinkedHashSet<>();
+        String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+        List<JsonNode> allOrders = hasSyncedData(config, "orders")
+                ? jsonArrayToList(loadSyncedRoot(config, "orders", "orders").get("orders"))
+                : fetchGoaffproNewCustomerOrders(apiKey, fetchFrom, periods.currentEnd(), limitedWeeks);
+        Map<String, JsonNode> affiliatesById = hasSyncedData(config, "affiliates")
+                ? loadSyncedEntityMap(config, "affiliates")
+                : fetchAllAffiliatesForTeamAnalytics(apiKey);
+        JsonNode treeRoot = hasSyncedData(config, "mlm_tree")
+                ? loadSyncedRoot(config, "mlm_tree", "tree").path("tree")
+                : requestJson("https://api.goaffpro.com/v1/admin/mlm/tree", apiKey);
+        Map<String, List<String>> childrenByParent = buildChildrenByParentFromTreeAndAffiliates(treeRoot, affiliatesById);
+        Map<String, Object> payload = buildLeaderWeeklyMailPayload(allOrders, affiliatesById, childrenByParent, config, referenceDate, productionRequested, limitedWeeks);
+        attachDataSource(payload, config, "orders");
+        return payload;
+    }
+
+    private static Map<String, Object> sendLeaderWeeklyMails(Properties config,
+                                                             LocalDate referenceDate,
+                                                             boolean productionRequested,
+                                                             boolean automated) throws Exception {
+        boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
+        if (!sendEmailsEnabled) {
+            throw new IOException("E-Mail-Versand ist deaktiviert.");
+        }
+
+        Map<String, Object> payload = buildLeaderWeeklyMailPayloadFromApi(config, referenceDate, productionRequested);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> reportRows = (List<Map<String, Object>>) payload.getOrDefault("reportRows", Collections.emptyList());
+        String bcc = Objects.toString(config.getProperty("emailBcc"), "").trim();
+        SmtpConfig smtpConfig = resolveSmtpConfig(config);
+        int sentCount = 0;
+        int skippedCount = 0;
+
+        for (Map<String, Object> row : reportRows) {
+            String recipientMode = Objects.toString(row.get("recipientMode"), "test");
+            String toEmail = Objects.toString(row.get("toEmail"), "").trim();
+            String subject = Objects.toString(row.get("subject"), "");
+            if ("test".equals(recipientMode) && !subject.startsWith("[TEST]")) {
+                subject = "[TEST] " + subject;
+            }
+            String status = "production".equals(recipientMode) ? "sent" : "test";
+            if (toEmail.isBlank()) {
+                status = "skipped";
+                skippedCount++;
+            } else {
+                sendSimpleHtmlMail(
+                        toEmail,
+                        bcc,
+                        subject,
+                        Objects.toString(row.get("plainText"), ""),
+                        Objects.toString(row.get("renderedHtml"), ""),
+                        smtpConfig);
+                sentCount++;
+            }
+            row.put("sendStatus", status);
+            appendLeaderWeeklyMailLogEntry(
+                    config,
+                    Objects.toString(row.get("leaderId"), ""),
+                    Objects.toString(row.get("leaderName"), ""),
+                    Objects.toString(row.get("periodKey"), ""),
+                    recipientMode,
+                    toEmail,
+                    status,
+                    subject);
+        }
+
+        if (automated) {
+            Map<String, Object> summary = castMap(payload.get("summary"));
+            config.setProperty("leaderWeeklyMailLastSentPeriodKey", Objects.toString(summary.get("periodKey"), ""));
+        }
+        persistSettings(config);
+
+        Map<String, Object> summary = castMap(payload.get("summary"));
+        summary.put("sentCount", sentCount);
+        summary.put("skippedCount", skippedCount);
+        summary.put("automated", automated);
+        payload.put("message", sentCount + " Führungskräfte-Wochenmail(s) verarbeitet.");
+        return payload;
+    }
+
+    private static Map<String, Object> buildLeaderWeeklyMailPayload(List<JsonNode> orders,
+                                                                    Map<String, JsonNode> affiliatesById,
+                                                                    Map<String, List<String>> childrenByParent,
+                                                                    Properties config,
+                                                                    LocalDate referenceDate,
+                                                                    boolean productionRequested,
+                                                                    Set<String> limitedWeeks) {
+        LocalDate effectiveReferenceDate = referenceDate != null ? referenceDate : LocalDate.now(BERLIN_ZONE);
+        LeaderWeeklyMailPeriods periods = leaderWeeklyMailPeriods(effectiveReferenceDate);
+        YearMonth reportMonth = YearMonth.from(periods.currentEnd());
+        LocalDate monthStart = reportMonth.atDay(1);
+        Map<String, JsonNode> affiliates = affiliatesById != null ? affiliatesById : Collections.emptyMap();
+        Map<String, List<String>> children = childrenByParent != null ? childrenByParent : Collections.emptyMap();
+        Set<String> approvedIds = affiliates.entrySet().stream()
+                .filter(e -> isApprovedAffiliate(e.getValue()))
+                .map(Map.Entry::getKey)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        Map<String, Set<String>> teamMembersByLeader = buildApprovedTeamsByLeader(approvedIds, affiliates, children);
+        Map<String, List<String>> leadersByMember = buildLeadersByMember(teamMembersByLeader);
+        Map<String, Map<String, Object>> leaderCurrentAgg = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> leaderPreviousAgg = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> leaderSecondPreviousAgg = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> leaderMonthAgg = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> contributionAgg = new LinkedHashMap<>();
+        int skippedWithoutDate = 0;
+
+        if (orders != null) {
+            for (JsonNode order : orders) {
+                LocalDate orderDate = firstLocalDate(asText(order, "created_at"));
+                if (orderDate == null) {
+                    skippedWithoutDate++;
+                    continue;
+                }
+                String advisorId = asText(order, "affiliate_id").trim();
+                if (!approvedIds.contains(advisorId)) continue;
+                List<String> leaderIds = leadersByMember.getOrDefault(advisorId, Collections.emptyList());
+                if (leaderIds.isEmpty()) continue;
+                boolean newCustomer = isNewCustomerOrder(order);
+                double total = partyOrderTotal(order);
+
+                for (String leaderId : leaderIds) {
+                    JsonNode leader = affiliates.get(leaderId);
+                    String leaderName = affiliateDisplayName(leader, leaderId);
+                    JsonNode advisor = affiliates.get(advisorId);
+                    String advisorName = affiliateDisplayName(advisor, advisorId);
+                    String contributionKey = leaderId + "|" + advisorId;
+                    Map<String, Object> contribution = contributionAgg.computeIfAbsent(contributionKey, k ->
+                            newLeaderWeeklyContributionRow(leaderId, leaderName, advisorId, advisorName, leaderId.equals(advisorId)));
+
+                    if (!orderDate.isBefore(periods.currentStart()) && !orderDate.isAfter(periods.currentEnd())) {
+                        incrementNewCustomerAgg(leaderCurrentAgg.computeIfAbsent(leaderId, k ->
+                                newCustomerPeriodAgg("week", periods.periodKey(), periods.periodLabel(), periods.currentStart(), periods.currentEnd(), leaderId, leaderName, "", "")), newCustomer, total);
+                        incrementLeaderWeeklyContribution(contribution, "current", newCustomer, total);
+                    } else if (!orderDate.isBefore(periods.previousStart()) && !orderDate.isAfter(periods.previousEnd())) {
+                        incrementNewCustomerAgg(leaderPreviousAgg.computeIfAbsent(leaderId, k ->
+                                newCustomerPeriodAgg("week", previousLeaderWeeklyPeriodKey(periods), formatDateRange(periods.previousStart(), periods.previousEnd()), periods.previousStart(), periods.previousEnd(), leaderId, leaderName, "", "")), newCustomer, total);
+                        incrementLeaderWeeklyContribution(contribution, "previous", newCustomer, total);
+                    } else if (!orderDate.isBefore(periods.secondPreviousStart()) && !orderDate.isAfter(periods.secondPreviousEnd())) {
+                        incrementNewCustomerAgg(leaderSecondPreviousAgg.computeIfAbsent(leaderId, k ->
+                                newCustomerPeriodAgg("week", secondPreviousLeaderWeeklyPeriodKey(periods), formatDateRange(periods.secondPreviousStart(), periods.secondPreviousEnd()), periods.secondPreviousStart(), periods.secondPreviousEnd(), leaderId, leaderName, "", "")), newCustomer, total);
+                        incrementLeaderWeeklyContribution(contribution, "secondPrevious", newCustomer, total);
+                    }
+
+                    if (!orderDate.isBefore(monthStart) && !orderDate.isAfter(periods.currentEnd())) {
+                        incrementNewCustomerAgg(leaderMonthAgg.computeIfAbsent(leaderId, k ->
+                                newCustomerPeriodAgg("month", monthKey(reportMonth), monthKey(reportMonth), monthStart, reportMonth.atEndOfMonth(), leaderId, leaderName, "", "")), newCustomer, total);
+                    }
+                }
+            }
+        }
+
+        List<Map<String, Object>> reportRows = new ArrayList<>();
+        String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
+        boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
+        boolean productionEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("leaderWeeklyMailProductionEnabled"), "false"));
+        boolean productionMode = sendEmailsEnabled && productionEnabled && productionRequested;
+        String template = Objects.toString(config.getProperty("leaderWeeklyReportTemplateHtml"), "").trim();
+        if (template.isBlank()) template = getDefaultLeaderWeeklyReportHtmlTemplate();
+
+        int totalNewCustomers = 0;
+        int totalLeadersOk = 0;
+        int totalLeadersAttention = 0;
+        int totalLeadersSupport = 0;
+
+        for (Map.Entry<String, Set<String>> entry : teamMembersByLeader.entrySet()) {
+            String leaderId = entry.getKey();
+            JsonNode leader = affiliates.get(leaderId);
+            String leaderName = affiliateDisplayName(leader, leaderId);
+            String leaderEmail = asText(leader, "email").trim();
+            Map<String, Object> current = finalizeSingleAgg(leaderCurrentAgg.get(leaderId));
+            Map<String, Object> previous = finalizeSingleAgg(leaderPreviousAgg.get(leaderId));
+            Map<String, Object> secondPrevious = finalizeSingleAgg(leaderSecondPreviousAgg.get(leaderId));
+            Map<String, Object> month = finalizeSingleAgg(leaderMonthAgg.get(leaderId));
+            int currentNewCustomers = intValue(current.get("newCustomerOrders"));
+            int previousNewCustomers = intValue(previous.get("newCustomerOrders"));
+            int secondPreviousNewCustomers = intValue(secondPrevious.get("newCustomerOrders"));
+            int monthNewCustomers = intValue(month.get("newCustomerOrders"));
+            totalNewCustomers += currentNewCustomers;
+
+            String status;
+            String statusLabel;
+            String actionText;
+            if (monthNewCustomers >= LEADER_NEW_CUSTOMER_MONTHLY_TARGET) {
+                status = "OK";
+                statusLabel = "Ziel erreicht";
+                actionText = "Das Monatsziel ist erreicht. Fokus auf stabile Fortsetzung.";
+                totalLeadersOk++;
+            } else if (currentNewCustomers >= 10) {
+                status = "AUFMERKSAMKEIT";
+                statusLabel = "Aufmerksamkeit";
+                actionText = "Die Woche liegt auf Kurs, der Monatsfortschritt sollte aktiv beobachtet werden.";
+                totalLeadersAttention++;
+            } else {
+                status = "UNTERSTUETZUNG";
+                statusLabel = "Unterstützung nötig";
+                actionText = "Die letzte Woche liegt unter dem Wochenrichtwert. Bitte Teamaktivität und Neukundenansprache priorisieren.";
+                totalLeadersSupport++;
+            }
+
+            List<Map<String, Object>> teamRows = buildLeaderWeeklyTeamRows(leaderId, entry.getValue(), affiliates, contributionAgg);
+            String teamRowsHtml = renderLeaderWeeklyTeamRowsHtml(teamRows);
+            String recipientMode = productionMode ? "production" : "test";
+            String toEmail = productionMode ? leaderEmail : contactEmail;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("leaderId", leaderId);
+            row.put("leaderName", leaderName);
+            row.put("leaderEmail", leaderEmail);
+            row.put("toEmail", toEmail);
+            row.put("recipientMode", recipientMode);
+            row.put("recipientModeLabel", productionMode ? "PRODUKTIV an Führungskraft" : "TEST an Kontakt-E-Mail");
+            row.put("periodKey", periods.periodKey());
+            row.put("periodLabel", periods.periodLabel());
+            row.put("periodStart", periods.currentStart().toString());
+            row.put("periodEnd", periods.currentEnd().toString());
+            row.put("previousPeriodLabel", formatDateRange(periods.previousStart(), periods.previousEnd()));
+            row.put("secondPreviousPeriodLabel", formatDateRange(periods.secondPreviousStart(), periods.secondPreviousEnd()));
+            row.put("currentWeekNewCustomers", currentNewCustomers);
+            row.put("previousWeekNewCustomers", previousNewCustomers);
+            row.put("secondPreviousWeekNewCustomers", secondPreviousNewCustomers);
+            row.put("teamSize", entry.getValue().size());
+            row.put("monthlyTarget", LEADER_NEW_CUSTOMER_MONTHLY_TARGET);
+            row.put("monthKey", monthKey(reportMonth));
+            row.put("monthNewCustomers", monthNewCustomers);
+            row.put("monthProgressPercent", ratio(monthNewCustomers, LEADER_NEW_CUSTOMER_MONTHLY_TARGET));
+            row.put("status", status);
+            row.put("statusLabel", statusLabel);
+            row.put("actionText", actionText);
+            row.put("teamContributionRows", teamRows);
+            row.put("subject", "Neukundenreport " + periods.periodLabel() + " - " + leaderName);
+            row.put("plainText", buildLeaderWeeklyPlainText(row));
+            row.put("renderedHtml", renderLeaderWeeklyReportHtml(template, row, teamRowsHtml));
+            reportRows.add(row);
+        }
+
+        reportRows.sort((a, b) -> {
+            int rank = Integer.compare(leaderWeeklyStatusRank(Objects.toString(a.get("status"), "")), leaderWeeklyStatusRank(Objects.toString(b.get("status"), "")));
+            if (rank != 0) return rank;
+            int current = Integer.compare(intValue(b.get("currentWeekNewCustomers")), intValue(a.get("currentWeekNewCustomers")));
+            if (current != 0) return current;
+            return Objects.toString(a.get("leaderName"), "").compareToIgnoreCase(Objects.toString(b.get("leaderName"), ""));
+        });
+
+        List<String> warnings = new ArrayList<>();
+        if (limitedWeeks != null && !limitedWeeks.isEmpty()) {
+            warnings.add("Order-Limit in " + String.join(", ", limitedWeeks) + " erreicht: Daten ggf. unvollständig, Zeitraum enger prüfen.");
+        }
+        if (skippedWithoutDate > 0) {
+            warnings.add(skippedWithoutDate + " Order(s) ohne verwertbares Datum wurden nicht ausgewertet.");
+        }
+        if (!productionMode && contactEmail.isBlank()) {
+            warnings.add("Kontakt-E-Mail fehlt: Testversand ist erst nach Pflege der Kontakt-E-Mail möglich.");
+        }
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("periodKey", periods.periodKey());
+        summary.put("periodLabel", periods.periodLabel());
+        summary.put("periodStart", periods.currentStart().toString());
+        summary.put("periodEnd", periods.currentEnd().toString());
+        summary.put("previousPeriodLabel", formatDateRange(periods.previousStart(), periods.previousEnd()));
+        summary.put("secondPreviousPeriodLabel", formatDateRange(periods.secondPreviousStart(), periods.secondPreviousEnd()));
+        summary.put("target", LEADER_NEW_CUSTOMER_MONTHLY_TARGET);
+        summary.put("leaderCount", reportRows.size());
+        summary.put("okCount", totalLeadersOk);
+        summary.put("attentionCount", totalLeadersAttention);
+        summary.put("supportCount", totalLeadersSupport);
+        summary.put("newCustomerOrders", totalNewCustomers);
+        summary.put("recipientMode", productionMode ? "production" : "test");
+        summary.put("recipientModeLabel", productionMode ? "PRODUKTIV an Führungskraft" : "TEST an Kontakt-E-Mail");
+        summary.put("sendEmailsEnabled", sendEmailsEnabled);
+        summary.put("productionEnabled", productionEnabled);
+        summary.put("productionRequested", productionRequested);
+        summary.put("scheduleDay", normalizeLeaderWeeklyMailScheduleDay(Objects.toString(config.getProperty("leaderWeeklyMailScheduleDay"), "")));
+        summary.put("scheduleTime", normalizeLeaderWeeklyMailScheduleTime(Objects.toString(config.getProperty("leaderWeeklyMailScheduleTime"), "")));
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary);
+        payload.put("reportRows", reportRows);
+        payload.put("warnings", warnings);
+        return payload;
+    }
+
+    private static List<JsonNode> fetchGoaffproNewCustomerOrders(String apiKey, LocalDate fromDate, LocalDate toDate, Set<String> limitedWeeks) throws Exception {
+        List<JsonNode> allOrders = new ArrayList<>();
+        String orderFields = "id,number,total,status,affiliate_id,created_at,is_new_customer,customer";
+        for (LocalDate weekStart = isoWeekStart(fromDate); !weekStart.isAfter(toDate); weekStart = weekStart.plusWeeks(1)) {
+            LocalDate requestFrom = weekStart.isBefore(fromDate) ? fromDate : weekStart;
+            LocalDate requestTo = weekStart.plusDays(6).isAfter(toDate) ? toDate : weekStart.plusDays(6);
+            String weekKey = isoWeekKey(requestFrom);
+            String ordersUrl = "https://api.goaffpro.com/v1/admin/orders?limit=500"
+                    + "&created_at_min=" + requestFrom + "T00:00:00.000Z"
+                    + "&created_at_max=" + requestTo + "T23:59:59.999Z"
+                    + "&fields=" + orderFields;
+            JsonNode orderRoot = requestJson(ordersUrl, apiKey);
+            List<JsonNode> weekOrders = jsonArrayToList(orderRoot.get("orders"));
+            allOrders.addAll(weekOrders);
+            if (weekOrders.size() >= 500 && limitedWeeks != null) {
+                limitedWeeks.add(weekKey);
+            }
+        }
+        return allOrders;
+    }
+
+    private static LeaderWeeklyMailPeriods leaderWeeklyMailPeriods(LocalDate referenceDate) {
+        LocalDate ref = referenceDate != null ? referenceDate : LocalDate.now(BERLIN_ZONE);
+        LocalDate currentEnd = ref.minusDays(1);
+        LocalDate currentStart = currentEnd.minusDays(6);
+        LocalDate previousEnd = currentStart.minusDays(1);
+        LocalDate previousStart = previousEnd.minusDays(6);
+        LocalDate secondPreviousEnd = previousStart.minusDays(1);
+        LocalDate secondPreviousStart = secondPreviousEnd.minusDays(6);
+        String periodKey = currentStart + "_" + currentEnd;
+        return new LeaderWeeklyMailPeriods(
+                currentStart,
+                currentEnd,
+                previousStart,
+                previousEnd,
+                secondPreviousStart,
+                secondPreviousEnd,
+                periodKey,
+                formatDateRange(currentStart, currentEnd));
+    }
+
+    private static String previousLeaderWeeklyPeriodKey(LeaderWeeklyMailPeriods periods) {
+        return periods.previousStart() + "_" + periods.previousEnd();
+    }
+
+    private static String secondPreviousLeaderWeeklyPeriodKey(LeaderWeeklyMailPeriods periods) {
+        return periods.secondPreviousStart() + "_" + periods.secondPreviousEnd();
+    }
+
+    private static String formatDateRange(LocalDate fromDate, LocalDate toDate) {
+        return formatGermanDate(fromDate) + " bis " + formatGermanDate(toDate);
+    }
+
+    private static String formatGermanDate(LocalDate date) {
+        return date == null ? "" : date.format(OUTPUT_FORMATTER);
+    }
+
+    private static Map<String, Set<String>> buildApprovedTeamsByLeader(Set<String> approvedIds,
+                                                                       Map<String, JsonNode> affiliates,
+                                                                       Map<String, List<String>> children) {
+        Map<String, Set<String>> teamMembersByLeader = new LinkedHashMap<>();
+        for (String leaderId : approvedIds) {
+            Set<String> descendants = new LinkedHashSet<>();
+            collectApprovedDescendants(leaderId, children, affiliates, descendants, new LinkedHashSet<>());
+            if (!descendants.isEmpty()) {
+                Set<String> team = new LinkedHashSet<>();
+                team.add(leaderId);
+                team.addAll(descendants);
+                teamMembersByLeader.put(leaderId, team);
+            }
+        }
+        return teamMembersByLeader;
+    }
+
+    private static Map<String, List<String>> buildLeadersByMember(Map<String, Set<String>> teamMembersByLeader) {
+        Map<String, List<String>> leadersByMember = new LinkedHashMap<>();
+        for (Map.Entry<String, Set<String>> entry : teamMembersByLeader.entrySet()) {
+            for (String memberId : entry.getValue()) {
+                leadersByMember.computeIfAbsent(memberId, k -> new ArrayList<>()).add(entry.getKey());
+            }
+        }
+        return leadersByMember;
+    }
+
+    private static Map<String, Object> newLeaderWeeklyContributionRow(String leaderId,
+                                                                      String leaderName,
+                                                                      String advisorId,
+                                                                      String advisorName,
+                                                                      boolean isLeaderSelf) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("leaderId", leaderId);
+        row.put("leaderName", leaderName);
+        row.put("advisorId", advisorId);
+        row.put("advisorName", advisorName);
+        row.put("isLeaderSelf", isLeaderSelf);
+        row.put("currentTotalOrders", 0);
+        row.put("currentNewCustomers", 0);
+        row.put("currentNewCustomerRevenue", 0.0);
+        row.put("previousTotalOrders", 0);
+        row.put("previousNewCustomers", 0);
+        row.put("secondPreviousTotalOrders", 0);
+        row.put("secondPreviousNewCustomers", 0);
+        return row;
+    }
+
+    private static void incrementLeaderWeeklyContribution(Map<String, Object> row, String prefix, boolean newCustomer, double total) {
+        String totalKey = prefix + "TotalOrders";
+        String newKey = prefix + "NewCustomers";
+        row.put(totalKey, intValue(row.get(totalKey)) + 1);
+        if (newCustomer) {
+            row.put(newKey, intValue(row.get(newKey)) + 1);
+            if ("current".equals(prefix)) {
+                row.put("currentNewCustomerRevenue", doubleValue(row.get("currentNewCustomerRevenue")) + total);
+            }
+        }
+    }
+
+    private static Map<String, Object> finalizeSingleAgg(Map<String, Object> row) {
+        if (row == null) return Collections.emptyMap();
+        finalizeNewCustomerRows(List.of(row));
+        return row;
+    }
+
+    private static List<Map<String, Object>> buildLeaderWeeklyTeamRows(String leaderId,
+                                                                       Set<String> teamIds,
+                                                                       Map<String, JsonNode> affiliates,
+                                                                       Map<String, Map<String, Object>> contributionAgg) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (String advisorId : teamIds) {
+            JsonNode advisor = affiliates.get(advisorId);
+            String advisorName = affiliateDisplayName(advisor, advisorId);
+            Map<String, Object> row = new LinkedHashMap<>(contributionAgg.getOrDefault(
+                    leaderId + "|" + advisorId,
+                    newLeaderWeeklyContributionRow(leaderId, affiliateDisplayName(affiliates.get(leaderId), leaderId), advisorId, advisorName, leaderId.equals(advisorId))));
+            rows.add(row);
+        }
+        rows.sort((a, b) -> {
+            int current = Integer.compare(intValue(b.get("currentNewCustomers")), intValue(a.get("currentNewCustomers")));
+            if (current != 0) return current;
+            int previous = Integer.compare(intValue(b.get("previousNewCustomers")), intValue(a.get("previousNewCustomers")));
+            if (previous != 0) return previous;
+            return Objects.toString(a.get("advisorName"), "").compareToIgnoreCase(Objects.toString(b.get("advisorName"), ""));
+        });
+        return rows;
+    }
+
+    private static String renderLeaderWeeklyTeamRowsHtml(List<Map<String, Object>> teamRows) {
+        if (teamRows == null || teamRows.isEmpty()) {
+            return "<tr><td colspan=\"5\" style=\"padding:10px;border:1px solid #e2e8f0;\">Keine Teamdaten vorhanden.</td></tr>";
+        }
+        StringBuilder html = new StringBuilder();
+        for (Map<String, Object> row : teamRows) {
+            html.append("<tr>")
+                    .append("<td style=\"padding:8px;border:1px solid #e2e8f0;\">")
+                    .append(escapeHtmlEmail(Objects.toString(row.get("advisorName"), "")))
+                    .append(row.get("isLeaderSelf") instanceof Boolean && (Boolean) row.get("isLeaderSelf") ? " <span style=\"color:#64748b;\">(selbst)</span>" : "")
+                    .append("</td>")
+                    .append("<td style=\"padding:8px;border:1px solid #e2e8f0;text-align:right;\">").append(intValue(row.get("currentNewCustomers"))).append("</td>")
+                    .append("<td style=\"padding:8px;border:1px solid #e2e8f0;text-align:right;\">").append(intValue(row.get("previousNewCustomers"))).append("</td>")
+                    .append("<td style=\"padding:8px;border:1px solid #e2e8f0;text-align:right;\">").append(intValue(row.get("secondPreviousNewCustomers"))).append("</td>")
+                    .append("<td style=\"padding:8px;border:1px solid #e2e8f0;text-align:right;\">").append(euroStatic(doubleValue(row.get("currentNewCustomerRevenue")))).append("</td>")
+                    .append("</tr>");
+        }
+        return html.toString();
+    }
+
+    private static String buildLeaderWeeklyPlainText(Map<String, Object> row) {
+        return "Neukundenreport " + Objects.toString(row.get("periodLabel"), "") + "\n"
+                + "Führungskraft: " + Objects.toString(row.get("leaderName"), "") + "\n"
+                + "Neukunden letzte 7 Tage: " + Objects.toString(row.get("currentWeekNewCustomers"), "0") + "\n"
+                + "Vorwoche: " + Objects.toString(row.get("previousWeekNewCustomers"), "0") + "\n"
+                + "Monatsfortschritt: " + Objects.toString(row.get("monthNewCustomers"), "0") + "/"
+                + Objects.toString(row.get("monthlyTarget"), "40") + "\n"
+                + "Status: " + Objects.toString(row.get("statusLabel"), "") + "\n"
+                + Objects.toString(row.get("actionText"), "");
+    }
+
+    private static String renderLeaderWeeklyReportHtml(String template, Map<String, Object> row, String teamRowsHtml) {
+        Map<String, String> values = new LinkedHashMap<>();
+        values.put("leaderName", escapeHtmlEmail(Objects.toString(row.get("leaderName"), "")));
+        values.put("leaderEmail", escapeHtmlEmail(Objects.toString(row.get("leaderEmail"), "")));
+        values.put("toEmail", escapeHtmlEmail(Objects.toString(row.get("toEmail"), "")));
+        values.put("recipientMode", escapeHtmlEmail(Objects.toString(row.get("recipientModeLabel"), "")));
+        values.put("periodLabel", escapeHtmlEmail(Objects.toString(row.get("periodLabel"), "")));
+        values.put("reportFrom", escapeHtmlEmail(formatGermanDate(parseIsoDate(Objects.toString(row.get("periodStart"), "")))));
+        values.put("reportTo", escapeHtmlEmail(formatGermanDate(parseIsoDate(Objects.toString(row.get("periodEnd"), "")))));
+        values.put("previousPeriodLabel", escapeHtmlEmail(Objects.toString(row.get("previousPeriodLabel"), "")));
+        values.put("secondPreviousPeriodLabel", escapeHtmlEmail(Objects.toString(row.get("secondPreviousPeriodLabel"), "")));
+        values.put("teamSize", escapeHtmlEmail(Objects.toString(row.get("teamSize"), "0")));
+        values.put("currentWeekNewCustomers", escapeHtmlEmail(Objects.toString(row.get("currentWeekNewCustomers"), "0")));
+        values.put("previousWeekNewCustomers", escapeHtmlEmail(Objects.toString(row.get("previousWeekNewCustomers"), "0")));
+        values.put("secondPreviousWeekNewCustomers", escapeHtmlEmail(Objects.toString(row.get("secondPreviousWeekNewCustomers"), "0")));
+        values.put("monthlyTarget", escapeHtmlEmail(Objects.toString(row.get("monthlyTarget"), "40")));
+        values.put("monthKey", escapeHtmlEmail(Objects.toString(row.get("monthKey"), "")));
+        values.put("monthNewCustomers", escapeHtmlEmail(Objects.toString(row.get("monthNewCustomers"), "0")));
+        values.put("monthProgressPercent", escapeHtmlEmail(percentPlain(doubleValue(row.get("monthProgressPercent")))));
+        values.put("status", escapeHtmlEmail(Objects.toString(row.get("status"), "")));
+        values.put("statusLabel", escapeHtmlEmail(Objects.toString(row.get("statusLabel"), "")));
+        values.put("actionText", escapeHtmlEmail(Objects.toString(row.get("actionText"), "")));
+        values.put("teamRows", teamRowsHtml);
+
+        String rendered = template == null || template.isBlank() ? getDefaultLeaderWeeklyReportHtmlTemplate() : template;
+        for (Map.Entry<String, String> entry : values.entrySet()) {
+            rendered = rendered.replace("{{" + entry.getKey() + "}}", entry.getValue());
+        }
+        return rendered;
+    }
+
+    private static int leaderWeeklyStatusRank(String status) {
+        return switch (status) {
+            case "UNTERSTUETZUNG" -> 0;
+            case "AUFMERKSAMKEIT" -> 1;
+            case "OK" -> 2;
+            default -> 3;
+        };
+    }
+
+    private static int intValue(Object value) {
+        if (value instanceof Number n) return n.intValue();
+        try {
+            return Integer.parseInt(Objects.toString(value, "0"));
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private static double doubleValue(Object value) {
+        if (value instanceof Number n) return n.doubleValue();
+        try {
+            return Double.parseDouble(Objects.toString(value, "0").replace(",", "."));
+        } catch (Exception ignored) {
+            return 0.0;
+        }
+    }
+
+    private static String percentPlain(double ratioValue) {
+        return String.format(java.util.Locale.GERMANY, "%.0f %%", ratioValue * 100.0);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> castMap(Object value) {
+        if (value instanceof Map<?, ?>) return (Map<String, Object>) value;
+        return new LinkedHashMap<>();
+    }
+
+
+    private static LocalDate[] normalizePartyDateRange(LocalDate fromDate, LocalDate toDate) {
+        LocalDate today = LocalDate.now(ZoneId.of("Europe/Berlin"));
+        LocalDate effectiveTo = toDate != null ? toDate : today;
+        LocalDate effectiveFrom = fromDate != null ? fromDate : effectiveTo.minusDays(90);
+        if (effectiveFrom.isAfter(effectiveTo)) {
+            effectiveTo = effectiveFrom;
+        }
+        return new LocalDate[]{effectiveFrom, effectiveTo};
+    }
+
+    private static LocalDate[] normalizeLeaderNewCustomerDateRange(LocalDate fromDate, LocalDate toDate) {
+        LocalDate today = LocalDate.now(ZoneId.of("Europe/Berlin"));
+        YearMonth currentMonth = YearMonth.from(today);
+        LocalDate defaultFrom = currentMonth.minusMonths(2).atDay(1);
+        LocalDate effectiveTo = toDate != null ? toDate : today;
+        LocalDate effectiveFrom = fromDate != null ? fromDate : defaultFrom;
+        if (fromDate == null && toDate != null) {
+            effectiveFrom = YearMonth.from(effectiveTo).minusMonths(2).atDay(1);
+        }
+        if (effectiveFrom.isAfter(effectiveTo)) {
+            effectiveTo = effectiveFrom;
+        }
+        return new LocalDate[]{effectiveFrom, effectiveTo};
+    }
+
+    private static Map<String, Object> buildNewCustomerAnalyticsPayload(List<JsonNode> orders,
+                                                                        Map<String, JsonNode> affiliatesById,
+                                                                        LocalDate fromDate, LocalDate toDate,
+                                                                        Set<String> limitedWeeks) {
+        LocalDate[] range = normalizePartyDateRange(fromDate, toDate);
+        fromDate = range[0];
+        toDate = range[1];
+
+        Map<String, Map<String, Object>> weekAgg = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> advisorWeekAgg = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> advisorAgg = new LinkedHashMap<>();
+        int skippedWithoutDate = 0;
+
+        if (orders != null) {
+            for (JsonNode order : orders) {
+                LocalDate orderDate = firstLocalDate(asText(order, "created_at"));
+                if (orderDate == null) {
+                    skippedWithoutDate++;
+                    continue;
+                }
+                if (orderDate.isBefore(fromDate) || orderDate.isAfter(toDate)) continue;
+
+                String affiliateId = asText(order, "affiliate_id").trim();
+                JsonNode affiliate = affiliatesById != null ? affiliatesById.get(affiliateId) : null;
+                String advisorName = affiliate != null ? asText(affiliate, "name") : (affiliateId.isBlank() ? "Unbekannt" : "ID " + affiliateId);
+                String weekKey = isoWeekKey(orderDate);
+                boolean newCustomer = isNewCustomerOrder(order);
+                double total = partyOrderTotal(order);
+
+                incrementNewCustomerAgg(weekAgg.computeIfAbsent(weekKey, k -> newCustomerAgg(k, "", "")), newCustomer, total);
+
+                String advisorWeekKey = (affiliateId.isBlank() ? advisorName : affiliateId) + "|" + weekKey;
+                Map<String, Object> advisorWeek = advisorWeekAgg.computeIfAbsent(advisorWeekKey, k -> newCustomerAgg(weekKey, affiliateId, advisorName));
+                advisorWeek.put("advisorId", affiliateId);
+                advisorWeek.put("advisorName", advisorName);
+                incrementNewCustomerAgg(advisorWeek, newCustomer, total);
+
+                Map<String, Object> advisor = advisorAgg.computeIfAbsent(affiliateId.isBlank() ? advisorName : affiliateId, k -> newCustomerAgg("", affiliateId, advisorName));
+                advisor.put("advisorId", affiliateId);
+                advisor.put("advisorName", advisorName);
+                incrementNewCustomerAgg(advisor, newCustomer, total);
+            }
+        }
+
+        List<Map<String, Object>> weekRows = finalizeNewCustomerRows(new ArrayList<>(weekAgg.values()));
+        weekRows.sort((a, b) -> Objects.toString(a.get("weekKey"), "").compareTo(Objects.toString(b.get("weekKey"), "")));
+
+        List<Map<String, Object>> advisorWeekRows = finalizeNewCustomerRows(new ArrayList<>(advisorWeekAgg.values()));
+        advisorWeekRows.sort((a, b) -> {
+            int week = Objects.toString(a.get("weekKey"), "").compareTo(Objects.toString(b.get("weekKey"), ""));
+            if (week != 0) return week;
+            int newCustomers = Integer.compare((Integer) b.get("newCustomerOrders"), (Integer) a.get("newCustomerOrders"));
+            if (newCustomers != 0) return newCustomers;
+            return Objects.toString(a.get("advisorName"), "").compareToIgnoreCase(Objects.toString(b.get("advisorName"), ""));
+        });
+
+        List<Map<String, Object>> advisorRows = finalizeNewCustomerRows(new ArrayList<>(advisorAgg.values()));
+        advisorRows.sort((a, b) -> {
+            int newCustomers = Integer.compare((Integer) b.get("newCustomerOrders"), (Integer) a.get("newCustomerOrders"));
+            if (newCustomers != 0) return newCustomers;
+            return Double.compare((Double) b.get("newCustomerRevenue"), (Double) a.get("newCustomerRevenue"));
+        });
+
+        int totalOrders = weekRows.stream().mapToInt(r -> (Integer) r.get("totalOrders")).sum();
+        int newCustomerOrders = weekRows.stream().mapToInt(r -> (Integer) r.get("newCustomerOrders")).sum();
+        double totalRevenue = weekRows.stream().mapToDouble(r -> (Double) r.get("totalRevenue")).sum();
+        double newCustomerRevenue = weekRows.stream().mapToDouble(r -> (Double) r.get("newCustomerRevenue")).sum();
+
+        List<String> warnings = new ArrayList<>();
+        if (limitedWeeks != null && !limitedWeeks.isEmpty()) {
+            warnings.add("Order-Limit in " + String.join(", ", limitedWeeks) + " erreicht: Daten ggf. unvollständig, Zeitraum enger prüfen.");
+        }
+        if (skippedWithoutDate > 0) {
+            warnings.add(skippedWithoutDate + " Order(s) ohne verwertbares Datum wurden nicht ausgewertet.");
+        }
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("fromDate", fromDate.toString());
+        summary.put("toDate", toDate.toString());
+        summary.put("totalOrders", totalOrders);
+        summary.put("newCustomerOrders", newCustomerOrders);
+        summary.put("returningCustomerOrders", Math.max(0, totalOrders - newCustomerOrders));
+        summary.put("newCustomerRate", ratio(newCustomerOrders, totalOrders));
+        summary.put("totalRevenue", totalRevenue);
+        summary.put("newCustomerRevenue", newCustomerRevenue);
+        summary.put("advisorCount", advisorRows.size());
+        summary.put("weekCount", weekRows.size());
+        summary.put("limited", limitedWeeks != null && !limitedWeeks.isEmpty());
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary);
+        payload.put("weekRows", weekRows);
+        payload.put("advisorWeekRows", advisorWeekRows);
+        payload.put("advisorRows", advisorRows);
+        payload.put("warnings", warnings);
+        return payload;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void mergeWarnings(Map<String, Object> target, Map<String, Object> source) {
+        Object targetWarningsRaw = target.get("warnings");
+        List<String> targetWarnings;
+        if (targetWarningsRaw instanceof List<?>) {
+            targetWarnings = (List<String>) targetWarningsRaw;
+        } else {
+            targetWarnings = new ArrayList<>();
+            target.put("warnings", targetWarnings);
+        }
+        Object sourceWarningsRaw = source != null ? source.get("warnings") : null;
+        if (sourceWarningsRaw instanceof List<?>) {
+            for (Object warning : (List<?>) sourceWarningsRaw) {
+                String text = Objects.toString(warning, "");
+                if (!text.isBlank() && !targetWarnings.contains(text)) {
+                    targetWarnings.add(text);
+                }
+            }
+        }
+    }
+
+    private static Map<String, Object> buildLeaderNewCustomerAnalyticsPayload(List<JsonNode> orders,
+                                                                              Map<String, JsonNode> affiliatesById,
+                                                                              Map<String, List<String>> childrenByParent,
+                                                                              LocalDate fromDate, LocalDate toDate,
+                                                                              Set<String> limitedWeeks,
+                                                                              LocalDate today) {
+        LocalDate[] range = normalizeLeaderNewCustomerDateRange(fromDate, toDate);
+        fromDate = range[0];
+        toDate = range[1];
+        LocalDate effectiveToday = today != null ? today : LocalDate.now(ZoneId.of("Europe/Berlin"));
+        YearMonth currentMonth = YearMonth.from(effectiveToday);
+        YearMonth rangeToMonth = YearMonth.from(toDate);
+        YearMonth lastClosedMonth = rangeToMonth.isBefore(currentMonth) ? rangeToMonth : currentMonth.minusMonths(1);
+        YearMonth previousClosedMonth = lastClosedMonth.minusMonths(1);
+        YearMonth liveMonth = monthOverlaps(currentMonth, fromDate, toDate) ? currentMonth : null;
+
+        Map<String, JsonNode> affiliates = affiliatesById != null ? affiliatesById : Collections.emptyMap();
+        Map<String, List<String>> children = childrenByParent != null ? childrenByParent : Collections.emptyMap();
+        Set<String> approvedIds = affiliates.entrySet().stream()
+                .filter(e -> isApprovedAffiliate(e.getValue()))
+                .map(Map.Entry::getKey)
+                .filter(id -> id != null && !id.isBlank())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+
+        Map<String, Set<String>> teamMembersByLeader = new LinkedHashMap<>();
+        for (String leaderId : approvedIds) {
+            Set<String> descendants = new LinkedHashSet<>();
+            collectApprovedDescendants(leaderId, children, affiliates, descendants, new LinkedHashSet<>());
+            if (!descendants.isEmpty()) {
+                Set<String> team = new LinkedHashSet<>();
+                team.add(leaderId);
+                team.addAll(descendants);
+                teamMembersByLeader.put(leaderId, team);
+            }
+        }
+
+        Map<String, List<String>> leadersByMember = new LinkedHashMap<>();
+        for (Map.Entry<String, Set<String>> entry : teamMembersByLeader.entrySet()) {
+            for (String memberId : entry.getValue()) {
+                leadersByMember.computeIfAbsent(memberId, k -> new ArrayList<>()).add(entry.getKey());
+            }
+        }
+
+        List<YearMonth> months = monthsBetween(fromDate, toDate);
+        Map<String, Map<String, Object>> leaderMonthAgg = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> leaderWeekAgg = new LinkedHashMap<>();
+        Map<String, Map<String, Object>> advisorContributionAgg = new LinkedHashMap<>();
+        int skippedWithoutDate = 0;
+        int totalOrders = 0;
+        int newCustomerOrders = 0;
+        double totalRevenue = 0.0;
+        double newCustomerRevenue = 0.0;
+
+        if (orders != null) {
+            for (JsonNode order : orders) {
+                LocalDate orderDate = firstLocalDate(asText(order, "created_at"));
+                if (orderDate == null) {
+                    skippedWithoutDate++;
+                    continue;
+                }
+                if (orderDate.isBefore(fromDate) || orderDate.isAfter(toDate)) continue;
+
+                String advisorId = asText(order, "affiliate_id").trim();
+                if (!approvedIds.contains(advisorId)) continue;
+                boolean newCustomer = isNewCustomerOrder(order);
+                double total = partyOrderTotal(order);
+                totalOrders++;
+                totalRevenue += total;
+                if (newCustomer) {
+                    newCustomerOrders++;
+                    newCustomerRevenue += total;
+                }
+
+                List<String> leaderIds = leadersByMember.getOrDefault(advisorId, Collections.emptyList());
+                if (leaderIds.isEmpty()) continue;
+                JsonNode advisor = affiliates.get(advisorId);
+                String advisorName = affiliateDisplayName(advisor, advisorId);
+                YearMonth month = YearMonth.from(orderDate);
+                String monthKey = monthKey(month);
+                String weekKey = isoWeekKey(orderDate);
+
+                for (String leaderId : leaderIds) {
+                    JsonNode leader = affiliates.get(leaderId);
+                    String leaderName = affiliateDisplayName(leader, leaderId);
+
+                    String leaderMonthKey = leaderId + "|" + monthKey;
+                    Map<String, Object> monthRow = leaderMonthAgg.computeIfAbsent(leaderMonthKey, k ->
+                            newCustomerPeriodAgg("month", monthKey, monthKey, month.atDay(1), month.atEndOfMonth(), leaderId, leaderName, "", ""));
+                    incrementNewCustomerAgg(monthRow, newCustomer, total);
+
+                    LocalDate weekStart = isoWeekStart(orderDate);
+                    String leaderWeekKey = leaderId + "|" + weekKey;
+                    Map<String, Object> weekRow = leaderWeekAgg.computeIfAbsent(leaderWeekKey, k ->
+                            newCustomerPeriodAgg("week", weekKey, weekKey, weekStart, weekStart.plusDays(6), leaderId, leaderName, "", ""));
+                    incrementNewCustomerAgg(weekRow, newCustomer, total);
+
+                    String contributionKey = leaderId + "|" + advisorId;
+                    Map<String, Object> contributionRow = advisorContributionAgg.computeIfAbsent(contributionKey, k ->
+                            newCustomerPeriodAgg("advisor", "", "", null, null, leaderId, leaderName, advisorId, advisorName));
+                    contributionRow.put("isLeaderSelf", leaderId.equals(advisorId));
+                    incrementNewCustomerAgg(contributionRow, newCustomer, total);
+                }
+            }
+        }
+
+        for (String leaderId : teamMembersByLeader.keySet()) {
+            JsonNode leader = affiliates.get(leaderId);
+            String leaderName = affiliateDisplayName(leader, leaderId);
+            for (YearMonth month : months) {
+                String mKey = monthKey(month);
+                leaderMonthAgg.computeIfAbsent(leaderId + "|" + mKey, k ->
+                        newCustomerPeriodAgg("month", mKey, mKey, month.atDay(1), month.atEndOfMonth(), leaderId, leaderName, "", ""));
+            }
+        }
+
+        List<Map<String, Object>> leaderMonthRows = finalizeNewCustomerRows(new ArrayList<>(leaderMonthAgg.values()));
+        leaderMonthRows.sort((a, b) -> {
+            int leader = Objects.toString(a.get("leaderName"), "").compareToIgnoreCase(Objects.toString(b.get("leaderName"), ""));
+            if (leader != 0) return leader;
+            return Objects.toString(a.get("periodKey"), "").compareTo(Objects.toString(b.get("periodKey"), ""));
+        });
+
+        List<Map<String, Object>> leaderWeekRows = finalizeNewCustomerRows(new ArrayList<>(leaderWeekAgg.values()));
+        leaderWeekRows.sort((a, b) -> {
+            int leader = Objects.toString(a.get("leaderName"), "").compareToIgnoreCase(Objects.toString(b.get("leaderName"), ""));
+            if (leader != 0) return leader;
+            return Objects.toString(a.get("periodKey"), "").compareTo(Objects.toString(b.get("periodKey"), ""));
+        });
+
+        List<Map<String, Object>> advisorContributionRows = finalizeNewCustomerRows(new ArrayList<>(advisorContributionAgg.values()));
+        advisorContributionRows.sort((a, b) -> {
+            int leader = Objects.toString(a.get("leaderName"), "").compareToIgnoreCase(Objects.toString(b.get("leaderName"), ""));
+            if (leader != 0) return leader;
+            int newCustomers = Integer.compare((Integer) b.get("newCustomerOrders"), (Integer) a.get("newCustomerOrders"));
+            if (newCustomers != 0) return newCustomers;
+            return Objects.toString(a.get("advisorName"), "").compareToIgnoreCase(Objects.toString(b.get("advisorName"), ""));
+        });
+
+        Map<String, Map<String, Object>> monthRowsByLeaderAndMonth = new LinkedHashMap<>();
+        for (Map<String, Object> row : leaderMonthRows) {
+            monthRowsByLeaderAndMonth.put(Objects.toString(row.get("leaderId"), "") + "|" + Objects.toString(row.get("periodKey"), ""), row);
+        }
+
+        List<Map<String, Object>> leaderRows = new ArrayList<>();
+        int okCount = 0;
+        int yellowCount = 0;
+        int degradeCount = 0;
+        for (Map.Entry<String, Set<String>> entry : teamMembersByLeader.entrySet()) {
+            String leaderId = entry.getKey();
+            JsonNode leader = affiliates.get(leaderId);
+            String leaderName = affiliateDisplayName(leader, leaderId);
+            int previousNewCustomers = newCustomerCountForMonth(monthRowsByLeaderAndMonth, leaderId, previousClosedMonth);
+            int lastNewCustomers = newCustomerCountForMonth(monthRowsByLeaderAndMonth, leaderId, lastClosedMonth);
+            int liveNewCustomers = liveMonth != null ? newCustomerCountForMonth(monthRowsByLeaderAndMonth, leaderId, liveMonth) : 0;
+
+            String status;
+            String statusLabel;
+            String actionText;
+            if (lastNewCustomers >= LEADER_NEW_CUSTOMER_MONTHLY_TARGET) {
+                status = "OK";
+                statusLabel = "OK";
+                actionText = "Ziel erreicht; kein akuter Handlungsbedarf.";
+                okCount++;
+            } else if (previousNewCustomers < LEADER_NEW_CUSTOMER_MONTHLY_TARGET) {
+                status = "DEGRADIERUNG";
+                statusLabel = "Degradierungswürdig";
+                actionText = "Zwei abgeschlossene Monate unter Ziel; Degradierung prüfen und Gespräch vorbereiten.";
+                degradeCount++;
+            } else {
+                status = "GELB";
+                statusLabel = "Gelbe Karte";
+                actionText = "Letzter abgeschlossener Monat unter Ziel; Führungskraft aktiv unterstützen.";
+                yellowCount++;
+            }
+
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("leaderId", leaderId);
+            row.put("leaderName", leaderName);
+            row.put("status", status);
+            row.put("statusLabel", statusLabel);
+            row.put("actionText", actionText);
+            row.put("teamSize", entry.getValue().size());
+            row.put("target", LEADER_NEW_CUSTOMER_MONTHLY_TARGET);
+            row.put("previousMonth", monthKey(previousClosedMonth));
+            row.put("previousMonthNewCustomers", previousNewCustomers);
+            row.put("previousMonthGap", Math.max(0, LEADER_NEW_CUSTOMER_MONTHLY_TARGET - previousNewCustomers));
+            row.put("lastClosedMonth", monthKey(lastClosedMonth));
+            row.put("lastClosedMonthNewCustomers", lastNewCustomers);
+            row.put("lastClosedMonthGap", Math.max(0, LEADER_NEW_CUSTOMER_MONTHLY_TARGET - lastNewCustomers));
+            row.put("liveMonth", liveMonth != null ? monthKey(liveMonth) : "");
+            row.put("liveMonthNewCustomers", liveNewCustomers);
+            row.put("liveMonthGap", liveMonth != null ? Math.max(0, LEADER_NEW_CUSTOMER_MONTHLY_TARGET - liveNewCustomers) : 0);
+            leaderRows.add(row);
+        }
+
+        leaderRows.sort((a, b) -> {
+            int rank = Integer.compare(leaderStatusRank(Objects.toString(a.get("status"), "")), leaderStatusRank(Objects.toString(b.get("status"), "")));
+            if (rank != 0) return rank;
+            int gap = Integer.compare((Integer) b.get("lastClosedMonthGap"), (Integer) a.get("lastClosedMonthGap"));
+            if (gap != 0) return gap;
+            return Objects.toString(a.get("leaderName"), "").compareToIgnoreCase(Objects.toString(b.get("leaderName"), ""));
+        });
+
+        List<String> warnings = new ArrayList<>();
+        if (limitedWeeks != null && !limitedWeeks.isEmpty()) {
+            warnings.add("Order-Limit in " + String.join(", ", limitedWeeks) + " erreicht: Daten ggf. unvollständig, Zeitraum enger prüfen.");
+        }
+        if (skippedWithoutDate > 0) {
+            warnings.add(skippedWithoutDate + " Order(s) ohne verwertbares Datum wurden nicht ausgewertet.");
+        }
+        if (!rangeCoversMonth(fromDate, toDate, previousClosedMonth) || !rangeCoversMonth(fromDate, toDate, lastClosedMonth)) {
+            warnings.add("Die Gelb/Rot-Bewertung benötigt den letzten und vorletzten abgeschlossenen Monat vollständig im Zeitraum.");
+        }
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("fromDate", fromDate.toString());
+        summary.put("toDate", toDate.toString());
+        summary.put("target", LEADER_NEW_CUSTOMER_MONTHLY_TARGET);
+        summary.put("leaderCount", leaderRows.size());
+        summary.put("okCount", okCount);
+        summary.put("yellowCount", yellowCount);
+        summary.put("degradeCount", degradeCount);
+        summary.put("currentMonth", monthKey(currentMonth));
+        summary.put("lastClosedMonth", monthKey(lastClosedMonth));
+        summary.put("previousMonth", monthKey(previousClosedMonth));
+        summary.put("liveMonth", liveMonth != null ? monthKey(liveMonth) : "");
+        summary.put("totalOrders", totalOrders);
+        summary.put("newCustomerOrders", newCustomerOrders);
+        summary.put("returningCustomerOrders", Math.max(0, totalOrders - newCustomerOrders));
+        summary.put("newCustomerRate", ratio(newCustomerOrders, totalOrders));
+        summary.put("totalRevenue", totalRevenue);
+        summary.put("newCustomerRevenue", newCustomerRevenue);
+        summary.put("limited", limitedWeeks != null && !limitedWeeks.isEmpty());
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary);
+        payload.put("leaderRows", leaderRows);
+        payload.put("leaderMonthRows", leaderMonthRows);
+        payload.put("leaderWeekRows", leaderWeekRows);
+        payload.put("advisorContributionRows", advisorContributionRows);
+        payload.put("warnings", warnings);
+        return payload;
+    }
+
+    private static Map<String, Object> newCustomerPeriodAgg(String periodType, String periodKey, String periodLabel,
+                                                            LocalDate periodStart, LocalDate periodEnd,
+                                                            String leaderId, String leaderName,
+                                                            String advisorId, String advisorName) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("periodType", periodType);
+        row.put("periodKey", periodKey);
+        row.put("periodLabel", periodLabel);
+        row.put("periodStart", periodStart != null ? periodStart.toString() : "");
+        row.put("periodEnd", periodEnd != null ? periodEnd.toString() : "");
+        row.put("leaderId", leaderId);
+        row.put("leaderName", leaderName);
+        row.put("advisorId", advisorId);
+        row.put("advisorName", advisorName);
+        row.put("isLeaderSelf", false);
+        row.put("totalOrders", 0);
+        row.put("newCustomerOrders", 0);
+        row.put("returningCustomerOrders", 0);
+        row.put("totalRevenue", 0.0);
+        row.put("newCustomerRevenue", 0.0);
+        row.put("newCustomerRate", 0.0);
+        return row;
+    }
+
+    private static int newCustomerCountForMonth(Map<String, Map<String, Object>> rows, String leaderId, YearMonth month) {
+        Map<String, Object> row = rows.get(leaderId + "|" + monthKey(month));
+        return row != null ? (Integer) row.get("newCustomerOrders") : 0;
+    }
+
+    private static int leaderStatusRank(String status) {
+        return switch (status) {
+            case "DEGRADIERUNG" -> 0;
+            case "GELB" -> 1;
+            case "OK" -> 2;
+            default -> 3;
+        };
+    }
+
+    private static boolean rangeCoversMonth(LocalDate fromDate, LocalDate toDate, YearMonth month) {
+        return !fromDate.isAfter(month.atDay(1)) && !toDate.isBefore(month.atEndOfMonth());
+    }
+
+    private static boolean monthOverlaps(YearMonth month, LocalDate fromDate, LocalDate toDate) {
+        return !month.atDay(1).isAfter(toDate) && !month.atEndOfMonth().isBefore(fromDate);
+    }
+
+    private static List<YearMonth> monthsBetween(LocalDate fromDate, LocalDate toDate) {
+        List<YearMonth> months = new ArrayList<>();
+        YearMonth cursor = YearMonth.from(fromDate);
+        YearMonth end = YearMonth.from(toDate);
+        while (!cursor.isAfter(end)) {
+            months.add(cursor);
+            cursor = cursor.plusMonths(1);
+        }
+        return months;
+    }
+
+    private static String monthKey(YearMonth month) {
+        return month != null ? month.toString() : "";
+    }
+
+    private static boolean isApprovedAffiliate(JsonNode affiliate) {
+        return "approved".equalsIgnoreCase(asText(affiliate, "status").trim());
+    }
+
+    private static String affiliateDisplayName(JsonNode affiliate, String fallbackId) {
+        String name = affiliate != null ? asText(affiliate, "name").trim() : "";
+        return !name.isBlank() ? name : (fallbackId == null || fallbackId.isBlank() ? "Unbekannt" : "ID " + fallbackId);
+    }
+
+    private static void collectApprovedDescendants(String parentId,
+                                                   Map<String, List<String>> childrenByParent,
+                                                   Map<String, JsonNode> affiliatesById,
+                                                   Set<String> approvedDescendants,
+                                                   Set<String> visited) {
+        if (parentId == null || parentId.isBlank() || visited.contains(parentId)) return;
+        visited.add(parentId);
+        for (String childId : childrenByParent.getOrDefault(parentId, Collections.emptyList())) {
+            JsonNode child = affiliatesById.get(childId);
+            if (isApprovedAffiliate(child)) {
+                approvedDescendants.add(childId);
+            }
+            collectApprovedDescendants(childId, childrenByParent, affiliatesById, approvedDescendants, visited);
+        }
+    }
+
+    private static Map<String, Object> newCustomerAgg(String weekKey, String advisorId, String advisorName) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("weekKey", weekKey);
+        row.put("weekLabel", weekKey);
+        row.put("weekStart", weekKey.isBlank() ? "" : isoWeekStartFromKey(weekKey).toString());
+        row.put("weekEnd", weekKey.isBlank() ? "" : isoWeekStartFromKey(weekKey).plusDays(6).toString());
+        row.put("advisorId", advisorId);
+        row.put("advisorName", advisorName);
+        row.put("totalOrders", 0);
+        row.put("newCustomerOrders", 0);
+        row.put("returningCustomerOrders", 0);
+        row.put("totalRevenue", 0.0);
+        row.put("newCustomerRevenue", 0.0);
+        row.put("newCustomerRate", 0.0);
+        return row;
+    }
+
+    private static void incrementNewCustomerAgg(Map<String, Object> row, boolean newCustomer, double total) {
+        row.put("totalOrders", ((Integer) row.get("totalOrders")) + 1);
+        row.put("totalRevenue", ((Double) row.get("totalRevenue")) + total);
+        if (newCustomer) {
+            row.put("newCustomerOrders", ((Integer) row.get("newCustomerOrders")) + 1);
+            row.put("newCustomerRevenue", ((Double) row.get("newCustomerRevenue")) + total);
+        } else {
+            row.put("returningCustomerOrders", ((Integer) row.get("returningCustomerOrders")) + 1);
+        }
+    }
+
+    private static List<Map<String, Object>> finalizeNewCustomerRows(List<Map<String, Object>> rows) {
+        for (Map<String, Object> row : rows) {
+            int totalOrders = (Integer) row.get("totalOrders");
+            int newCustomerOrders = (Integer) row.get("newCustomerOrders");
+            row.put("returningCustomerOrders", Math.max(0, totalOrders - newCustomerOrders));
+            row.put("newCustomerRate", ratio(newCustomerOrders, totalOrders));
+        }
+        return rows;
+    }
+
+    private static boolean isNewCustomerOrder(JsonNode order) {
+        JsonNode direct = order != null ? order.get("is_new_customer") : null;
+        if (direct != null && !direct.isNull()) return isTruthy(direct);
+        return isTruthy(order != null ? order.path("customer").get("is_new_customer") : null);
+    }
+
+    private static boolean isTruthy(JsonNode node) {
+        if (node == null || node.isNull()) return false;
+        if (node.isBoolean()) return node.asBoolean();
+        if (node.isNumber()) return node.asInt(0) != 0;
+        String text = node.asText("").trim().toLowerCase();
+        return "1".equals(text) || "true".equals(text) || "yes".equals(text) || "new customer".equals(text);
+    }
+
+    private static double ratio(int numerator, int denominator) {
+        return denominator > 0 ? (double) numerator / (double) denominator : 0.0;
+    }
+
+    private static String isoWeekKey(LocalDate date) {
+        if (date == null) return "";
+        int weekYear = date.get(IsoFields.WEEK_BASED_YEAR);
+        int week = date.get(IsoFields.WEEK_OF_WEEK_BASED_YEAR);
+        return String.format("%d-KW%02d", weekYear, week);
+    }
+
+    private static LocalDate isoWeekStart(LocalDate date) {
+        if (date == null) return LocalDate.now(ZoneId.of("Europe/Berlin"));
+        return date.minusDays(date.getDayOfWeek().getValue() - 1L);
+    }
+
+    private static LocalDate isoWeekStartFromKey(String weekKey) {
+        try {
+            String[] parts = weekKey.split("-KW");
+            int year = Integer.parseInt(parts[0]);
+            int week = Integer.parseInt(parts[1]);
+            return LocalDate.of(year, 1, 4)
+                    .with(IsoFields.WEEK_BASED_YEAR, year)
+                    .with(IsoFields.WEEK_OF_WEEK_BASED_YEAR, week)
+                    .minusDays(LocalDate.of(year, 1, 4)
+                            .with(IsoFields.WEEK_BASED_YEAR, year)
+                            .with(IsoFields.WEEK_OF_WEEK_BASED_YEAR, week)
+                            .getDayOfWeek().getValue() - 1L);
+        } catch (Exception e) {
+            return LocalDate.now(ZoneId.of("Europe/Berlin"));
+        }
+    }
+
+    private static Map<String, Object> buildPartyAnalyticsPayload(JsonNode showcaseRoot, JsonNode orderRoot,
+                                                                  LocalDate fromDate, LocalDate toDate) {
+        LocalDate[] range = normalizePartyDateRange(fromDate, toDate);
+        fromDate = range[0];
+        toDate = range[1];
+
+        List<JsonNode> showcases = jsonArrayToList(showcaseRoot != null ? showcaseRoot.get("showcases") : null);
+        List<JsonNode> orders = jsonArrayToList(orderRoot != null ? orderRoot.get("orders") : null);
+
+        Map<String, JsonNode> showcaseBySubId = new LinkedHashMap<>();
+        for (JsonNode showcase : showcases) {
+            String partyId = partyId(showcase);
+            String subId = asText(showcase, "sub_id").trim();
+            if (!subId.isBlank()) showcaseBySubId.put(subId, showcase);
+        }
+
+        Map<String, List<JsonNode>> ordersByPartyId = new LinkedHashMap<>();
+        int partyOrderCandidates = 0;
+        int unmatchedPartyOrders = 0;
+        for (JsonNode order : orders) {
+            if (!"party-link".equalsIgnoreCase(asText(order, "conversion_source").trim())) continue;
+            partyOrderCandidates++;
+            String subId = asText(order, "sub_id").trim();
+            JsonNode showcase = showcaseBySubId.get(subId);
+            if (showcase == null) {
+                unmatchedPartyOrders++;
+                continue;
+            }
+            String partyId = partyId(showcase);
+            if (!partyId.isBlank()) {
+                ordersByPartyId.computeIfAbsent(partyId, k -> new ArrayList<>()).add(order);
+            }
+        }
+
+        List<JsonNode> relevantShowcases = new ArrayList<>();
+        for (JsonNode showcase : showcases) {
+            String id = partyId(showcase);
+            if (ordersByPartyId.containsKey(id) || partyOverlapsPeriod(showcase, fromDate, toDate)) {
+                relevantShowcases.add(showcase);
+            }
+        }
+
+        Map<String, Set<String>> advisorCustomerParties = new LinkedHashMap<>();
+        for (JsonNode showcase : relevantShowcases) {
+            String advisorId = showcaseAdvisorId(showcase);
+            String id = partyId(showcase);
+            for (JsonNode order : ordersByPartyId.getOrDefault(id, Collections.emptyList())) {
+                String customerKey = customerIdentityKey(order);
+                if (advisorId.isBlank() || customerKey.isBlank()) continue;
+                advisorCustomerParties.computeIfAbsent(advisorId + "|" + customerKey, k -> new LinkedHashSet<>()).add(id);
+            }
+        }
+
+        List<Map<String, Object>> partyRows = new ArrayList<>();
+        Map<String, Map<String, Object>> advisorAgg = new LinkedHashMap<>();
+        int activePartyCount = 0;
+        int closedPartyCount = 0;
+        int matchedOrderCount = 0;
+        double matchedOrderTotal = 0.0;
+        int reviewPartyCount = 0;
+        int hintPartyCount = 0;
+
+        for (JsonNode showcase : relevantShowcases) {
+            String id = partyId(showcase);
+            String advisorId = showcaseAdvisorId(showcase);
+            String advisorName = showcaseAdvisorName(showcase);
+            String closedAt = asText(showcase, "closed_at");
+            boolean closed = !closedAt.isBlank();
+            if (closed) closedPartyCount++; else activePartyCount++;
+
+            List<JsonNode> partyOrders = ordersByPartyId.getOrDefault(id, Collections.emptyList());
+            matchedOrderCount += partyOrders.size();
+
+            Map<String, Integer> customerCounts = new LinkedHashMap<>();
+            Map<String, Double> customerSales = new LinkedHashMap<>();
+            Map<String, Integer> cartCounts = new LinkedHashMap<>();
+            Map<String, Map<String, Object>> productAgg = new LinkedHashMap<>();
+            List<Map<String, Object>> orderRows = new ArrayList<>();
+            int outsidePartyPeriod = 0;
+            int affiliateMismatch = 0;
+            double partyMatchedTotal = 0.0;
+            int productUnits = 0;
+
+            for (JsonNode order : partyOrders) {
+                double orderTotal = partyOrderTotal(order);
+                partyMatchedTotal += orderTotal;
+                matchedOrderTotal += orderTotal;
+                String customerKey = customerIdentityKey(order);
+                if (!customerKey.isBlank()) {
+                    customerCounts.put(customerKey, customerCounts.getOrDefault(customerKey, 0) + 1);
+                    customerSales.put(customerKey, customerSales.getOrDefault(customerKey, 0.0) + orderTotal);
+                }
+                String cartSignature = cartSignature(order);
+                if (!cartSignature.isBlank()) {
+                    cartCounts.put(cartSignature, cartCounts.getOrDefault(cartSignature, 0) + 1);
+                }
+                if (orderOutsidePartyPeriod(order, showcase)) outsidePartyPeriod++;
+                String orderAffiliateId = asText(order, "affiliate_id").trim();
+                if (!advisorId.isBlank() && !orderAffiliateId.isBlank() && !advisorId.equals(orderAffiliateId)) {
+                    affiliateMismatch++;
+                }
+                JsonNode lineItems = order.get("line_items");
+                if (lineItems != null && lineItems.isArray()) {
+                    for (JsonNode item : lineItems) {
+                        String productName = firstNonBlank(asText(item, "name"), asText(item, "title"), asText(item, "sku"), "(ohne Artikel)");
+                        int qty = Math.max(parseIntSafe(asText(item, "quantity")), 0);
+                        double value = lineItemTotal(item);
+                        productUnits += qty;
+                        Map<String, Object> product = productAgg.computeIfAbsent(productName, k -> {
+                            Map<String, Object> p = new LinkedHashMap<>();
+                            p.put("productName", k);
+                            p.put("quantity", 0);
+                            p.put("salesValue", 0.0);
+                            return p;
+                        });
+                        product.put("quantity", ((Integer) product.get("quantity")) + qty);
+                        product.put("salesValue", ((Double) product.get("salesValue")) + value);
+                    }
+                }
+                Map<String, Object> orderRow = new LinkedHashMap<>();
+                orderRow.put("orderId", firstNonBlank(asText(order, "number"), asText(order, "id")));
+                orderRow.put("createdAt", formatDateTimeEuropeBerlinStatic(asText(order, "created_at")));
+                orderRow.put("status", asText(order, "status"));
+                orderRow.put("total", orderTotal);
+                orderRow.put("customer", maskedCustomerLabel(order));
+                orderRow.put("cartSignature", cartSignature);
+                orderRows.add(orderRow);
+            }
+
+            List<Map<String, Object>> productRows = new ArrayList<>(productAgg.values());
+            productRows.sort((a, b) -> Integer.compare((Integer) b.get("quantity"), (Integer) a.get("quantity")));
+            List<Map<String, Object>> topProducts = productRows.size() > 5 ? new ArrayList<>(productRows.subList(0, 5)) : productRows;
+
+            int aggregateOrderCount = showcase.path("orders").path("num_orders").asInt(0);
+            double aggregateTotal = parseDoubleSafeStatic(asText(showcase.path("orders"), "total"));
+            double aggregateCommission = parseDoubleSafeStatic(asText(showcase.path("orders"), "commission"));
+
+            List<String> reasons = new ArrayList<>();
+            int score = 0;
+            long repeatedCustomers = customerCounts.values().stream().filter(c -> c > 1).count();
+            if (repeatedCustomers > 0) {
+                score += 25;
+                reasons.add(repeatedCustomers + " Kundenidentitaet mehrfach in derselben Party");
+            }
+            long crossPartyCustomers = customerCounts.keySet().stream()
+                    .filter(k -> advisorCustomerParties.getOrDefault(advisorId + "|" + k, Collections.emptySet()).size() > 1)
+                    .count();
+            if (crossPartyCustomers > 0) {
+                score += 20;
+                reasons.add(crossPartyCustomers + " Kundenidentitaet auch in anderen Partys dieser Beraterin");
+            }
+            long repeatedCarts = cartCounts.entrySet().stream()
+                    .filter(e -> !"no-items".equals(e.getKey()) && e.getValue() > 1)
+                    .count();
+            if (repeatedCarts > 0) {
+                score += 20;
+                reasons.add(repeatedCarts + " identischer Warenkorb mehrfach");
+            }
+            double topCustomerShare = partyMatchedTotal > 0.0
+                    ? customerSales.values().stream().mapToDouble(Double::doubleValue).max().orElse(0.0) / partyMatchedTotal
+                    : 0.0;
+            if (partyOrders.size() >= 3 && topCustomerShare >= 0.80) {
+                score += 20;
+                reasons.add("wenige Kunden dominieren " + Math.round(topCustomerShare * 100.0) + "% des Umsatzes");
+            }
+            if (outsidePartyPeriod > 0) {
+                score += 20;
+                reasons.add(outsidePartyPeriod + " Order(s) ausserhalb des Party-Zeitraums");
+            }
+            if (affiliateMismatch > 0) {
+                score += 25;
+                reasons.add(affiliateMismatch + " Order(s) mit abweichender Affiliate-ID");
+            }
+            if (aggregateOrderCount > 0 && partyOrders.isEmpty()) {
+                score += 10;
+                reasons.add("GoAffPro meldet Orders, aber im Zeitraum wurden keine Detailorders gematcht");
+            }
+            score = Math.min(score, 100);
+            String riskLevel = score >= 50 ? "Pr\u00fcfen" : (score >= 20 ? "Hinweis" : "OK");
+            if ("Pr\u00fcfen".equals(riskLevel)) reviewPartyCount++;
+            if ("Hinweis".equals(riskLevel)) hintPartyCount++;
+
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("partyId", id);
+            row.put("subId", asText(showcase, "sub_id"));
+            row.put("refCode", asText(showcase, "ref_code"));
+            row.put("partyTitle", firstNonBlank(asText(showcase, "partyTitle"), asText(showcase, "title"), "(ohne Titel)"));
+            row.put("hostName", asText(showcase, "hostName"));
+            row.put("hostEmail", maskEmail(asText(showcase, "hostEmail")));
+            row.put("hostUrl", asText(showcase, "hostUrl"));
+            row.put("advisorId", advisorId);
+            row.put("advisorName", advisorName);
+            row.put("startsAt", formatDateTimeEuropeBerlinStatic(asText(showcase, "starts_at")));
+            row.put("endsAt", formatDateTimeEuropeBerlinStatic(asText(showcase, "ends_at")));
+            row.put("closedAt", formatDateTimeEuropeBerlinStatic(closedAt));
+            row.put("createdAt", formatDateTimeEuropeBerlinStatic(asText(showcase, "created_at")));
+            row.put("status", closed ? "geschlossen" : "aktiv");
+            row.put("aggregateOrderCount", aggregateOrderCount);
+            row.put("aggregateTotal", aggregateTotal);
+            row.put("aggregateCommission", aggregateCommission);
+            row.put("matchedOrderCount", partyOrders.size());
+            row.put("matchedTotal", partyMatchedTotal);
+            row.put("customerCount", customerCounts.size());
+            row.put("productUnits", productUnits);
+            row.put("productCount", productAgg.size());
+            row.put("riskScore", score);
+            row.put("riskLevel", riskLevel);
+            row.put("riskReasons", reasons);
+            row.put("orderRows", orderRows);
+            row.put("productRows", productRows);
+            row.put("topProducts", topProducts);
+            partyRows.add(row);
+
+            Map<String, Object> advisor = advisorAgg.computeIfAbsent(advisorId.isBlank() ? advisorName : advisorId, k -> {
+                Map<String, Object> a = new LinkedHashMap<>();
+                a.put("advisorId", advisorId);
+                a.put("advisorName", advisorName);
+                a.put("partyCount", 0);
+                a.put("activePartyCount", 0);
+                a.put("closedPartyCount", 0);
+                a.put("matchedOrderCount", 0);
+                a.put("customerCount", 0);
+                a.put("matchedTotal", 0.0);
+                a.put("riskPartyCount", 0);
+                a.put("maxRiskScore", 0);
+                a.put("customerKeys", new LinkedHashSet<String>());
+                return a;
+            });
+            advisor.put("partyCount", ((Integer) advisor.get("partyCount")) + 1);
+            advisor.put("activePartyCount", ((Integer) advisor.get("activePartyCount")) + (closed ? 0 : 1));
+            advisor.put("closedPartyCount", ((Integer) advisor.get("closedPartyCount")) + (closed ? 1 : 0));
+            advisor.put("matchedOrderCount", ((Integer) advisor.get("matchedOrderCount")) + partyOrders.size());
+            advisor.put("matchedTotal", ((Double) advisor.get("matchedTotal")) + partyMatchedTotal);
+            advisor.put("riskPartyCount", ((Integer) advisor.get("riskPartyCount")) + (score >= 20 ? 1 : 0));
+            advisor.put("maxRiskScore", Math.max((Integer) advisor.get("maxRiskScore"), score));
+            @SuppressWarnings("unchecked")
+            Set<String> advisorCustomers = (Set<String>) advisor.get("customerKeys");
+            advisorCustomers.addAll(customerCounts.keySet());
+        }
+
+        List<Map<String, Object>> advisorRows = new ArrayList<>(advisorAgg.values());
+        for (Map<String, Object> advisor : advisorRows) {
+            @SuppressWarnings("unchecked")
+            Set<String> customerKeys = (Set<String>) advisor.get("customerKeys");
+            advisor.put("customerCount", customerKeys.size());
+            advisor.remove("customerKeys");
+        }
+
+        partyRows.sort((a, b) -> {
+            int risk = Integer.compare((Integer) b.get("riskScore"), (Integer) a.get("riskScore"));
+            if (risk != 0) return risk;
+            return Double.compare((Double) b.get("matchedTotal"), (Double) a.get("matchedTotal"));
+        });
+        advisorRows.sort((a, b) -> {
+            int risk = Integer.compare((Integer) b.get("maxRiskScore"), (Integer) a.get("maxRiskScore"));
+            if (risk != 0) return risk;
+            return Double.compare((Double) b.get("matchedTotal"), (Double) a.get("matchedTotal"));
+        });
+
+        List<String> warnings = new ArrayList<>();
+        if (showcases.size() >= 500) warnings.add("Party-Limit erreicht: Daten ggf. unvollständig, Zeitraum verkleinern.");
+        if (orders.size() >= 500) warnings.add("Order-Limit erreicht: Daten ggf. unvollständig, Zeitraum verkleinern.");
+        if (unmatchedPartyOrders > 0) warnings.add(unmatchedPartyOrders + " Party-Order(s) konnten keiner Showcase zugeordnet werden.");
+
+        Map<String, Object> summary = new LinkedHashMap<>();
+        summary.put("fromDate", fromDate.toString());
+        summary.put("toDate", toDate.toString());
+        summary.put("showcaseCount", showcases.size());
+        summary.put("partyCount", partyRows.size());
+        summary.put("activePartyCount", activePartyCount);
+        summary.put("closedPartyCount", closedPartyCount);
+        summary.put("partyOrderCandidates", partyOrderCandidates);
+        summary.put("matchedOrderCount", matchedOrderCount);
+        summary.put("matchedTotal", matchedOrderTotal);
+        summary.put("advisorCount", advisorRows.size());
+        summary.put("hintPartyCount", hintPartyCount);
+        summary.put("reviewPartyCount", reviewPartyCount);
+        summary.put("limited", showcases.size() >= 500 || orders.size() >= 500);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("summary", summary);
+        payload.put("advisorRows", advisorRows);
+        payload.put("partyRows", partyRows);
+        payload.put("warnings", warnings);
+        return payload;
+    }
+
+    private static List<JsonNode> jsonArrayToList(JsonNode node) {
+        if (node == null || !node.isArray()) return Collections.emptyList();
+        List<JsonNode> list = new ArrayList<>();
+        node.forEach(list::add);
+        return list;
+    }
+
+    private static String partyId(JsonNode showcase) {
+        return firstNonBlank(asText(showcase, "_id"), asText(showcase, "id"), asText(showcase, "sub_id"), asText(showcase, "ref_code"));
+    }
+
+    private static String showcaseAdvisorId(JsonNode showcase) {
+        return firstNonBlank(asText(showcase, "affiliate_id"), asText(showcase.path("affiliate"), "id"));
+    }
+
+    private static String showcaseAdvisorName(JsonNode showcase) {
+        return firstNonBlank(asText(showcase.path("affiliate"), "name"), asText(showcase, "affiliate_name"), "Unbekannt");
+    }
+
+    private static boolean partyOverlapsPeriod(JsonNode showcase, LocalDate fromDate, LocalDate toDate) {
+        LocalDate start = firstLocalDate(asText(showcase, "starts_at"), asText(showcase, "created_at"));
+        LocalDate end = firstLocalDate(asText(showcase, "closed_at"), asText(showcase, "ends_at"));
+        if (start == null && end == null) return true;
+        if (start == null) start = end;
+        if (end == null) end = start;
+        return !start.isAfter(toDate) && !end.isBefore(fromDate);
+    }
+
+    private static LocalDate firstLocalDate(String... values) {
+        for (String value : values) {
+            LocalDate date = parseIsoDateTimeToLocalDate(value);
+            if (date == null) date = parseIsoDate(value);
+            if (date != null) return date;
+        }
+        return null;
+    }
+
+    private static boolean orderOutsidePartyPeriod(JsonNode order, JsonNode showcase) {
+        LocalDate orderDate = firstLocalDate(asText(order, "created_at"));
+        if (orderDate == null) return false;
+        LocalDate start = firstLocalDate(asText(showcase, "starts_at"), asText(showcase, "created_at"));
+        LocalDate end = firstLocalDate(asText(showcase, "closed_at"), asText(showcase, "ends_at"));
+        return (start != null && orderDate.isBefore(start)) || (end != null && orderDate.isAfter(end));
+    }
+
+    private static double partyOrderTotal(JsonNode order) {
+        return parseDoubleSafeStatic(firstNonBlank(asText(order, "total"), asText(order, "subtotal")));
+    }
+
+    private static double lineItemTotal(JsonNode item) {
+        double total = parseDoubleSafeStatic(firstNonBlank(asText(item, "total_price"), asText(item, "total")));
+        if (total > 0.0) return total;
+        int qty = Math.max(parseIntSafe(asText(item, "quantity")), 0);
+        double price = parseDoubleSafeStatic(asText(item, "price"));
+        return price * qty;
+    }
+
+    private static String customerIdentityKey(JsonNode order) {
+        String email = asText(order, "customer_email").trim().toLowerCase();
+        if (!email.isBlank()) return "email:" + email;
+        JsonNode address = order.path("shipping_address");
+        String phoneDigits = asText(address, "phone").replaceAll("[^0-9]", "");
+        if (phoneDigits.length() >= 6) return "phone:" + phoneDigits;
+        String addressKey = normalizeKey(firstNonBlank(asText(address, "name"), asText(address, "first_name") + " " + asText(address, "last_name"))
+                + "|" + asText(address, "address_1") + "|" + asText(address, "zip"));
+        return addressKey.isBlank() || "||".equals(addressKey) ? "" : "addr:" + addressKey;
+    }
+
+    private static String maskedCustomerLabel(JsonNode order) {
+        String email = asText(order, "customer_email").trim();
+        if (!email.isBlank()) return maskEmail(email);
+        JsonNode address = order.path("shipping_address");
+        String phoneDigits = asText(address, "phone").replaceAll("[^0-9]", "");
+        if (phoneDigits.length() >= 6) return "Telefon ***" + phoneDigits.substring(Math.max(0, phoneDigits.length() - 3));
+        String name = firstNonBlank(asText(address, "name"), asText(address, "first_name") + " " + asText(address, "last_name")).trim();
+        String zip = asText(address, "zip").trim();
+        if (!name.isBlank() || !zip.isBlank()) {
+            return "Adresse " + (!name.isBlank() ? name.substring(0, 1).toUpperCase() + "." : "") + (!zip.isBlank() ? " " + zip : "");
+        }
+        return "(Kunde unbekannt)";
+    }
+
+    private static String maskEmail(String email) {
+        if (email == null || email.isBlank()) return "";
+        String trimmed = email.trim();
+        int at = trimmed.indexOf('@');
+        if (at <= 0) return "***";
+        String local = trimmed.substring(0, at);
+        String domain = trimmed.substring(at + 1);
+        return local.substring(0, 1) + "***@" + domain;
+    }
+
+    private static String cartSignature(JsonNode order) {
+        JsonNode lineItems = order.get("line_items");
+        if (lineItems == null || !lineItems.isArray() || lineItems.size() == 0) return "no-items";
+        List<String> parts = new ArrayList<>();
+        for (JsonNode item : lineItems) {
+            String product = normalizeKey(firstNonBlank(asText(item, "sku"), asText(item, "product_id"), asText(item, "name"), asText(item, "title")));
+            int qty = Math.max(parseIntSafe(asText(item, "quantity")), 0);
+            parts.add(product + ":" + qty);
+        }
+        Collections.sort(parts);
+        return String.join("|", parts);
+    }
+
+    private static String normalizeKey(String value) {
+        if (value == null) return "";
+        String normalized = Normalizer.normalize(value, Normalizer.Form.NFKD)
+                .replaceAll("\\p{M}", "")
+                .toLowerCase()
+                .replaceAll("[^a-z0-9|@._+-]+", " ")
+                .trim()
+                .replaceAll("\\s+", " ");
+        return normalized;
     }
 
     private static class MailLogHandler implements HttpHandler {
@@ -2376,6 +4578,80 @@ public class WebUiServer {
         return map;
     }
 
+    private static Map<String, JsonNode> loadSyncedEntityMap(Properties config, String entityType) {
+        try {
+            return GOAFFPRO_SYNC_SERVICE.entityMap(config, entityType);
+        } catch (Exception e) {
+            return Collections.emptyMap();
+        }
+    }
+
+    private static Map<String, JsonNode> loadSyncedEntityMapFiltered(Properties config, String entityType, List<String> ids) {
+        Map<String, JsonNode> all = loadSyncedEntityMap(config, entityType);
+        if (ids == null || ids.isEmpty()) return all;
+        Map<String, JsonNode> filtered = new LinkedHashMap<>();
+        for (String id : ids) {
+            JsonNode node = all.get(id);
+            if (node != null) filtered.put(id, node);
+        }
+        return filtered;
+    }
+
+    private static JsonNode loadSyncedRoot(Properties config, String entityType, String arrayField) {
+        return GOAFFPRO_SYNC_SERVICE.rootFromStore(config, entityType, arrayField);
+    }
+
+    private static boolean hasSyncedData(Properties config, String entityType) {
+        return GOAFFPRO_SYNC_SERVICE.hasEntityData(config, entityType);
+    }
+
+    private static void attachDataSource(Map<String, Object> payload, Properties config, String entityType) {
+        payload.put("dataSource", GOAFFPRO_SYNC_SERVICE.dataSourceInfo(config, entityType));
+    }
+
+    private static Map<String, JsonNode> fetchAllAffiliatesForTeamAnalytics(String apiKey) throws Exception {
+        String fields = "id,name,email,status,parent_id,upline_affiliate_id,upline_id,parent_affiliate_id";
+        String url = "https://api.goaffpro.com/v1/admin/affiliates?fields=" + fields;
+        JsonNode root = requestJson(url, apiKey);
+        JsonNode affiliates = root.get("affiliates");
+        if (affiliates == null || !affiliates.isArray()) {
+            return Collections.emptyMap();
+        }
+        Map<String, JsonNode> map = new LinkedHashMap<>();
+        for (JsonNode affiliate : affiliates) {
+            String id = asText(affiliate, "id").trim();
+            if (!id.isBlank()) {
+                map.put(id, affiliate);
+            }
+        }
+        return map;
+    }
+
+    private static Map<String, List<String>> buildChildrenByParentFromTreeAndAffiliates(JsonNode treeRoot,
+                                                                                        Map<String, JsonNode> affiliatesById) {
+        Map<String, List<String>> childrenByParent = new LinkedHashMap<>();
+        Set<String> seenIds = new LinkedHashSet<>();
+        collectTreeStructure(treeRoot, "", seenIds, childrenByParent);
+        if (affiliatesById != null) {
+            for (Map.Entry<String, JsonNode> entry : affiliatesById.entrySet()) {
+                String id = entry.getKey();
+                String parentId = resolveLeaderId(entry.getValue());
+                if (!id.isBlank()) seenIds.add(id);
+                if (!id.isBlank() && !parentId.isBlank() && !Objects.equals(id, parentId)) {
+                    addChildLink(childrenByParent, parentId, id);
+                }
+            }
+        }
+        return childrenByParent;
+    }
+
+    private static void addChildLink(Map<String, List<String>> childrenByParent, String parentId, String childId) {
+        List<String> children = childrenByParent.computeIfAbsent(parentId, k -> new ArrayList<>());
+        if (!children.contains(childId)) {
+            children.add(childId);
+        }
+    }
+
 
     private static Map<String, JsonNode> fetchOrdersById(String apiKey, List<String> orderIds) throws Exception {
         if (orderIds == null || orderIds.isEmpty()) return Collections.emptyMap();
@@ -3054,6 +5330,17 @@ public class WebUiServer {
         }
     }
 
+    private static List<Map<String, String>> readLeaderWeeklyMailLogEntries(Properties config) {
+        String raw = Objects.toString(config.getProperty(LEADER_WEEKLY_MAIL_LOG_KEY), "").trim();
+        if (raw.isBlank()) return new ArrayList<>();
+        try {
+            List<Map<String, String>> list = OBJECT_MAPPER.readValue(raw, new TypeReference<List<Map<String, String>>>() {});
+            return list == null ? new ArrayList<>() : list;
+        } catch (Exception ignored) {
+            return new ArrayList<>();
+        }
+    }
+
     private static void appendReminderLogEntry(Properties config,
                                                String advisorId,
                                                String advisorName,
@@ -3076,6 +5363,32 @@ public class WebUiServer {
         if (entries.size() > 1000) entries = new ArrayList<>(entries.subList(0, 1000));
         try {
             config.setProperty(REMINDER_LOG_KEY, OBJECT_MAPPER.writeValueAsString(entries));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private static void appendLeaderWeeklyMailLogEntry(Properties config,
+                                                       String leaderId,
+                                                       String leaderName,
+                                                       String periodKey,
+                                                       String recipientMode,
+                                                       String toEmail,
+                                                       String status,
+                                                       String subject) {
+        List<Map<String, String>> entries = readLeaderWeeklyMailLogEntries(config);
+        Map<String, String> row = new LinkedHashMap<>();
+        row.put("leaderId", Objects.toString(leaderId, ""));
+        row.put("leaderName", Objects.toString(leaderName, ""));
+        row.put("periodKey", Objects.toString(periodKey, ""));
+        row.put("recipientMode", Objects.toString(recipientMode, "test"));
+        row.put("toEmail", Objects.toString(toEmail, ""));
+        row.put("status", Objects.toString(status, "test"));
+        row.put("subject", Objects.toString(subject, ""));
+        row.put("sentAt", ZonedDateTime.now(BERLIN_ZONE).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")));
+        entries.add(0, row);
+        if (entries.size() > 1000) entries = new ArrayList<>(entries.subList(0, 1000));
+        try {
+            config.setProperty(LEADER_WEEKLY_MAIL_LOG_KEY, OBJECT_MAPPER.writeValueAsString(entries));
         } catch (Exception ignored) {
         }
     }
@@ -3804,6 +6117,78 @@ public class WebUiServer {
                 """;
     }
 
+    private static String getDefaultLeaderWeeklyReportHtmlTemplate() {
+        return """
+                <!doctype html>
+                <html lang="de">
+                <body style="margin:0;background:#f5f7fb;color:#1f2937;font-family:Arial,Helvetica,sans-serif;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;background:#f5f7fb;">
+                    <tr>
+                      <td style="padding:24px 12px;">
+                        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:760px;margin:0 auto;background:#ffffff;border:1px solid #d9e2ef;border-collapse:collapse;">
+                          <tr>
+                            <td style="padding:22px 26px;border-bottom:1px solid #e2e8f0;">
+                              <img src="{{vemminaLogoDataUri}}" alt="VEMMiNA" style="height:38px;display:block;margin-bottom:14px;" />
+                              <div style="font-size:13px;color:#64748b;">Führungskräfte-Neukundenreport</div>
+                              <h1 style="margin:4px 0 0 0;font-size:24px;line-height:1.25;color:#0f172a;">Hallo {{leaderName}},</h1>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:22px 26px;">
+                              <p style="margin:0 0 16px 0;font-size:15px;line-height:1.6;color:#334155;">Hier ist Ihre persönliche Wochenübersicht für {{periodLabel}}. Gezählt werden Ihre eigenen Neukundenbestellungen und die Bestellungen Ihrer kompletten freigegebenen Downline.</p>
+                              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin:0 0 18px 0;">
+                                <tr>
+                                  <td style="padding:12px;border:1px solid #d9e2ef;background:#f8fafc;width:33%;">
+                                    <div style="font-size:12px;color:#64748b;">Letzte 7 Tage</div>
+                                    <div style="font-size:28px;font-weight:700;color:#0f766e;">{{currentWeekNewCustomers}}</div>
+                                  </td>
+                                  <td style="padding:12px;border:1px solid #d9e2ef;background:#ffffff;width:33%;">
+                                    <div style="font-size:12px;color:#64748b;">Vorwoche</div>
+                                    <div style="font-size:24px;font-weight:700;color:#334155;">{{previousWeekNewCustomers}}</div>
+                                  </td>
+                                  <td style="padding:12px;border:1px solid #d9e2ef;background:#ffffff;width:34%;">
+                                    <div style="font-size:12px;color:#64748b;">2. Vorwoche</div>
+                                    <div style="font-size:24px;font-weight:700;color:#334155;">{{secondPreviousWeekNewCustomers}}</div>
+                                  </td>
+                                </tr>
+                              </table>
+                              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;margin:0 0 18px 0;">
+                                <tr>
+                                  <td style="padding:12px;border:1px solid #d9e2ef;">
+                                    <strong>Status:</strong> {{statusLabel}}<br/>
+                                    <span style="color:#475569;">{{actionText}}</span>
+                                  </td>
+                                  <td style="padding:12px;border:1px solid #d9e2ef;">
+                                    <strong>Monatsfortschritt {{monthKey}}:</strong><br/>
+                                    {{monthNewCustomers}} von {{monthlyTarget}} Neukundenbestellungen ({{monthProgressPercent}})
+                                  </td>
+                                </tr>
+                              </table>
+                              <h2 style="font-size:16px;margin:20px 0 8px 0;color:#0f172a;">Team-Beiträge</h2>
+                              <table cellpadding="0" cellspacing="0" width="100%" style="border-collapse:collapse;font-size:14px;">
+                                <thead>
+                                  <tr>
+                                    <th align="left" style="padding:8px;border:1px solid #cbd5e1;background:#edf3fb;">Beraterin</th>
+                                    <th align="right" style="padding:8px;border:1px solid #cbd5e1;background:#edf3fb;">Letzte 7 Tage</th>
+                                    <th align="right" style="padding:8px;border:1px solid #cbd5e1;background:#edf3fb;">Vorwoche</th>
+                                    <th align="right" style="padding:8px;border:1px solid #cbd5e1;background:#edf3fb;">2. Vorwoche</th>
+                                    <th align="right" style="padding:8px;border:1px solid #cbd5e1;background:#edf3fb;">Neukundenumsatz</th>
+                                  </tr>
+                                </thead>
+                                <tbody>{{teamRows}}</tbody>
+                              </table>
+                              <p style="margin:18px 0 0 0;font-size:13px;line-height:1.5;color:#64748b;">Empfängermodus: {{recipientMode}}. Diese Auswertung enthält nur aggregierte Teamwerte und keine Kundendaten.</p>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+                </body>
+                </html>
+                """.replace("{{vemminaLogoDataUri}}", VEMMINA_LOGO_DATA_URI);
+    }
+
     private static String escapeHtmlEmail(String value) {
         String safe = value == null ? "" : value;
         return safe.replace("&", "&amp;")
@@ -3956,6 +6341,13 @@ public class WebUiServer {
         return properties;
     }
 
+    private static Properties loadConfigWithUiSettings() throws IOException {
+        Properties config = loadConfig();
+        Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+        mergeUiSettingsIntoConfig(config, uiSettings);
+        return config;
+    }
+
     private static void storeConfig(Properties properties) throws IOException {
         Properties forStore = new Properties();
         forStore.putAll(properties);
@@ -4079,6 +6471,24 @@ public class WebUiServer {
         ui.setProperty("emailTemplateHtml", Objects.toString(source.getProperty("emailTemplateHtml"), ""));
         ui.setProperty("validationReminderTemplateHtml", Objects.toString(source.getProperty("validationReminderTemplateHtml"), ""));
         ui.setProperty("eInvoicePdfTemplateHtml", Objects.toString(source.getProperty("eInvoicePdfTemplateHtml"), ""));
+        ui.setProperty("leaderWeeklyReportTemplateHtml", Objects.toString(source.getProperty("leaderWeeklyReportTemplateHtml"), ""));
+        ui.setProperty("leaderWeeklyMailSchedulerEnabled", Objects.toString(source.getProperty("leaderWeeklyMailSchedulerEnabled"), "false"));
+        ui.setProperty("leaderWeeklyMailProductionEnabled", Objects.toString(source.getProperty("leaderWeeklyMailProductionEnabled"), "false"));
+        ui.setProperty("leaderWeeklyMailScheduleDay", normalizeLeaderWeeklyMailScheduleDay(Objects.toString(source.getProperty("leaderWeeklyMailScheduleDay"), "")));
+        ui.setProperty("leaderWeeklyMailScheduleTime", normalizeLeaderWeeklyMailScheduleTime(Objects.toString(source.getProperty("leaderWeeklyMailScheduleTime"), "")));
+        ui.setProperty("leaderWeeklyMailLastSentPeriodKey", Objects.toString(source.getProperty("leaderWeeklyMailLastSentPeriodKey"), ""));
+        ui.setProperty("goaffproSyncEnabled", Objects.toString(source.getProperty("goaffproSyncEnabled"), "true"));
+        ui.setProperty("goaffproSyncHourlyEnabled", Objects.toString(source.getProperty("goaffproSyncHourlyEnabled"), "false"));
+        ui.setProperty("goaffproSyncDeepEnabled", Objects.toString(source.getProperty("goaffproSyncDeepEnabled"), "false"));
+        ui.setProperty("goaffproSyncAssetDownloadEnabled", Objects.toString(source.getProperty("goaffproSyncAssetDownloadEnabled"), "true"));
+        ui.setProperty("goaffproSyncMaxCallsPerHour", normalizePositiveInteger(Objects.toString(source.getProperty("goaffproSyncMaxCallsPerHour"), "60"), "60"));
+        ui.setProperty("goaffproSyncSlidingWindowEnabled", Objects.toString(source.getProperty("goaffproSyncSlidingWindowEnabled"), "true"));
+        ui.setProperty("goaffproSyncMinCallSpacingMs", normalizeNonNegativeInteger(Objects.toString(source.getProperty("goaffproSyncMinCallSpacingMs"), "1500"), "1500"));
+        ui.setProperty("goaffproSyncDownloadSkipExistingEnabled", Objects.toString(source.getProperty("goaffproSyncDownloadSkipExistingEnabled"), "true"));
+        ui.setProperty("goaffproSyncDeltaDownloadsEnabled", Objects.toString(source.getProperty("goaffproSyncDeltaDownloadsEnabled"), "false"));
+        ui.setProperty("goaffproSyncDeltaLookbackDays", normalizePositiveInteger(Objects.toString(source.getProperty("goaffproSyncDeltaLookbackDays"), "14"), "14"));
+        ui.setProperty("goaffproSyncMinFreeBytes", normalizePositiveLong(Objects.toString(source.getProperty("goaffproSyncMinFreeBytes"), String.valueOf(512L * 1024L * 1024L)), String.valueOf(512L * 1024L * 1024L)));
+        ui.setProperty("goaffproSyncDataPath", Objects.toString(source.getProperty("goaffproSyncDataPath"), GoAffProSyncService.resolveDataDir(source).toString()));
         ui.setProperty("eInvoiceEnabled", Objects.toString(source.getProperty("eInvoiceEnabled"), "true"));
         ui.setProperty("eInvoiceAttachAndStoreEnabled", Objects.toString(source.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
         ui.setProperty("eInvoiceBuyerName", Objects.toString(source.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh"));
@@ -4097,6 +6507,7 @@ public class WebUiServer {
         ui.setProperty(COMMISSION_HISTORY_DATES_KEY, Objects.toString(source.getProperty(COMMISSION_HISTORY_DATES_KEY), ""));
         ui.setProperty(MAIL_LOG_KEY, Objects.toString(source.getProperty(MAIL_LOG_KEY), ""));
         ui.setProperty(REMINDER_LOG_KEY, Objects.toString(source.getProperty(REMINDER_LOG_KEY), ""));
+        ui.setProperty(LEADER_WEEKLY_MAIL_LOG_KEY, Objects.toString(source.getProperty(LEADER_WEEKLY_MAIL_LOG_KEY), ""));
 
         for (String[] mapping : SECRET_ENV_MAPPINGS) {
             String envValue = getEnv(mapping[0]);
@@ -4178,6 +6589,25 @@ public class WebUiServer {
         config.setProperty("emailTemplateHtml", Objects.toString(uiSettings.getProperty("emailTemplateHtml"), Objects.toString(config.getProperty("emailTemplateHtml"), "")));
         config.setProperty("validationReminderTemplateHtml", Objects.toString(uiSettings.getProperty("validationReminderTemplateHtml"), Objects.toString(config.getProperty("validationReminderTemplateHtml"), "")));
         config.setProperty("eInvoicePdfTemplateHtml", Objects.toString(uiSettings.getProperty("eInvoicePdfTemplateHtml"), Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "")));
+        config.setProperty("leaderWeeklyReportTemplateHtml", Objects.toString(uiSettings.getProperty("leaderWeeklyReportTemplateHtml"), Objects.toString(config.getProperty("leaderWeeklyReportTemplateHtml"), "")));
+        config.setProperty("leaderWeeklyMailSchedulerEnabled", Objects.toString(uiSettings.getProperty("leaderWeeklyMailSchedulerEnabled"), Objects.toString(config.getProperty("leaderWeeklyMailSchedulerEnabled"), "false")));
+        config.setProperty("leaderWeeklyMailProductionEnabled", Objects.toString(uiSettings.getProperty("leaderWeeklyMailProductionEnabled"), Objects.toString(config.getProperty("leaderWeeklyMailProductionEnabled"), "false")));
+        config.setProperty("leaderWeeklyMailScheduleDay", normalizeLeaderWeeklyMailScheduleDay(Objects.toString(uiSettings.getProperty("leaderWeeklyMailScheduleDay"), Objects.toString(config.getProperty("leaderWeeklyMailScheduleDay"), ""))));
+        config.setProperty("leaderWeeklyMailScheduleTime", normalizeLeaderWeeklyMailScheduleTime(Objects.toString(uiSettings.getProperty("leaderWeeklyMailScheduleTime"), Objects.toString(config.getProperty("leaderWeeklyMailScheduleTime"), ""))));
+        config.setProperty("leaderWeeklyMailLastSentPeriodKey", Objects.toString(uiSettings.getProperty("leaderWeeklyMailLastSentPeriodKey"), Objects.toString(config.getProperty("leaderWeeklyMailLastSentPeriodKey"), "")));
+        config.setProperty("goaffproSyncEnabled", Objects.toString(uiSettings.getProperty("goaffproSyncEnabled"), Objects.toString(config.getProperty("goaffproSyncEnabled"), "true")));
+        config.setProperty("goaffproSyncHourlyEnabled", Objects.toString(uiSettings.getProperty("goaffproSyncHourlyEnabled"), Objects.toString(config.getProperty("goaffproSyncHourlyEnabled"), "false")));
+        config.setProperty("goaffproSyncDeepEnabled", Objects.toString(uiSettings.getProperty("goaffproSyncDeepEnabled"), Objects.toString(config.getProperty("goaffproSyncDeepEnabled"), "false")));
+        config.setProperty("goaffproSyncAssetDownloadEnabled", Objects.toString(uiSettings.getProperty("goaffproSyncAssetDownloadEnabled"), Objects.toString(config.getProperty("goaffproSyncAssetDownloadEnabled"), "true")));
+        config.setProperty("goaffproSyncMaxCallsPerHour", normalizePositiveInteger(Objects.toString(uiSettings.getProperty("goaffproSyncMaxCallsPerHour"), Objects.toString(config.getProperty("goaffproSyncMaxCallsPerHour"), "60")), "60"));
+        config.setProperty("goaffproSyncSlidingWindowEnabled", Objects.toString(uiSettings.getProperty("goaffproSyncSlidingWindowEnabled"), Objects.toString(config.getProperty("goaffproSyncSlidingWindowEnabled"), "true")));
+        config.setProperty("goaffproSyncMinCallSpacingMs", normalizeNonNegativeInteger(Objects.toString(uiSettings.getProperty("goaffproSyncMinCallSpacingMs"), Objects.toString(config.getProperty("goaffproSyncMinCallSpacingMs"), "1500")), "1500"));
+        config.setProperty("goaffproSyncDownloadSkipExistingEnabled", Objects.toString(uiSettings.getProperty("goaffproSyncDownloadSkipExistingEnabled"), Objects.toString(config.getProperty("goaffproSyncDownloadSkipExistingEnabled"), "true")));
+        config.setProperty("goaffproSyncDeltaDownloadsEnabled", Objects.toString(uiSettings.getProperty("goaffproSyncDeltaDownloadsEnabled"), Objects.toString(config.getProperty("goaffproSyncDeltaDownloadsEnabled"), "false")));
+        config.setProperty("goaffproSyncDeltaLookbackDays", normalizePositiveInteger(Objects.toString(uiSettings.getProperty("goaffproSyncDeltaLookbackDays"), Objects.toString(config.getProperty("goaffproSyncDeltaLookbackDays"), "14")), "14"));
+        config.setProperty("goaffproSyncMinFreeBytes", normalizePositiveLong(Objects.toString(uiSettings.getProperty("goaffproSyncMinFreeBytes"), Objects.toString(config.getProperty("goaffproSyncMinFreeBytes"), String.valueOf(512L * 1024L * 1024L))), String.valueOf(512L * 1024L * 1024L)));
+        String syncDataPath = Objects.toString(uiSettings.getProperty("goaffproSyncDataPath"), Objects.toString(config.getProperty("goaffproSyncDataPath"), "")).trim();
+        if (!syncDataPath.isBlank()) config.setProperty("goaffproSyncDataPath", syncDataPath);
         config.setProperty("eInvoiceEnabled", Objects.toString(uiSettings.getProperty("eInvoiceEnabled"), Objects.toString(config.getProperty("eInvoiceEnabled"), "true")));
         config.setProperty("eInvoiceAttachAndStoreEnabled", Objects.toString(uiSettings.getProperty("eInvoiceAttachAndStoreEnabled"), Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true")));
         config.setProperty("eInvoiceBuyerName", Objects.toString(uiSettings.getProperty("eInvoiceBuyerName"), Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh")));
@@ -4195,6 +6625,7 @@ public class WebUiServer {
 
         config.setProperty(MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(MAIL_LOG_KEY), Objects.toString(config.getProperty(MAIL_LOG_KEY), "")));
         config.setProperty(REMINDER_LOG_KEY, Objects.toString(uiSettings.getProperty(REMINDER_LOG_KEY), Objects.toString(config.getProperty(REMINDER_LOG_KEY), "")));
+        config.setProperty(LEADER_WEEKLY_MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(LEADER_WEEKLY_MAIL_LOG_KEY), Objects.toString(config.getProperty(LEADER_WEEKLY_MAIL_LOG_KEY), "")));
 
         ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
     }
@@ -4212,6 +6643,31 @@ public class WebUiServer {
         }
         if (Objects.toString(config.getProperty("goaffproAPIKey"), "").isBlank()) {
             config.setProperty("goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY);
+        }
+        config.setProperty("leaderWeeklyMailSchedulerEnabled",
+                Objects.toString(config.getProperty("leaderWeeklyMailSchedulerEnabled"), "false").trim().isBlank()
+                        ? "false" : Objects.toString(config.getProperty("leaderWeeklyMailSchedulerEnabled"), "false").trim());
+        config.setProperty("leaderWeeklyMailProductionEnabled",
+                Objects.toString(config.getProperty("leaderWeeklyMailProductionEnabled"), "false").trim().isBlank()
+                        ? "false" : Objects.toString(config.getProperty("leaderWeeklyMailProductionEnabled"), "false").trim());
+        config.setProperty("leaderWeeklyMailScheduleDay", normalizeLeaderWeeklyMailScheduleDay(Objects.toString(config.getProperty("leaderWeeklyMailScheduleDay"), "")));
+        config.setProperty("leaderWeeklyMailScheduleTime", normalizeLeaderWeeklyMailScheduleTime(Objects.toString(config.getProperty("leaderWeeklyMailScheduleTime"), "")));
+        if (!config.containsKey("leaderWeeklyMailLastSentPeriodKey")) {
+            config.setProperty("leaderWeeklyMailLastSentPeriodKey", "");
+        }
+        config.setProperty("goaffproSyncEnabled", Objects.toString(config.getProperty("goaffproSyncEnabled"), "true").trim().isBlank() ? "true" : Objects.toString(config.getProperty("goaffproSyncEnabled"), "true").trim());
+        config.setProperty("goaffproSyncHourlyEnabled", Objects.toString(config.getProperty("goaffproSyncHourlyEnabled"), "false").trim().isBlank() ? "false" : Objects.toString(config.getProperty("goaffproSyncHourlyEnabled"), "false").trim());
+        config.setProperty("goaffproSyncDeepEnabled", Objects.toString(config.getProperty("goaffproSyncDeepEnabled"), "false").trim().isBlank() ? "false" : Objects.toString(config.getProperty("goaffproSyncDeepEnabled"), "false").trim());
+        config.setProperty("goaffproSyncAssetDownloadEnabled", Objects.toString(config.getProperty("goaffproSyncAssetDownloadEnabled"), "true").trim().isBlank() ? "true" : Objects.toString(config.getProperty("goaffproSyncAssetDownloadEnabled"), "true").trim());
+        config.setProperty("goaffproSyncMaxCallsPerHour", normalizePositiveInteger(Objects.toString(config.getProperty("goaffproSyncMaxCallsPerHour"), "60"), "60"));
+        config.setProperty("goaffproSyncSlidingWindowEnabled", Objects.toString(config.getProperty("goaffproSyncSlidingWindowEnabled"), "true").trim().isBlank() ? "true" : Objects.toString(config.getProperty("goaffproSyncSlidingWindowEnabled"), "true").trim());
+        config.setProperty("goaffproSyncMinCallSpacingMs", normalizeNonNegativeInteger(Objects.toString(config.getProperty("goaffproSyncMinCallSpacingMs"), "1500"), "1500"));
+        config.setProperty("goaffproSyncDownloadSkipExistingEnabled", Objects.toString(config.getProperty("goaffproSyncDownloadSkipExistingEnabled"), "true").trim().isBlank() ? "true" : Objects.toString(config.getProperty("goaffproSyncDownloadSkipExistingEnabled"), "true").trim());
+        config.setProperty("goaffproSyncDeltaDownloadsEnabled", Objects.toString(config.getProperty("goaffproSyncDeltaDownloadsEnabled"), "false").trim().isBlank() ? "false" : Objects.toString(config.getProperty("goaffproSyncDeltaDownloadsEnabled"), "false").trim());
+        config.setProperty("goaffproSyncDeltaLookbackDays", normalizePositiveInteger(Objects.toString(config.getProperty("goaffproSyncDeltaLookbackDays"), "14"), "14"));
+        config.setProperty("goaffproSyncMinFreeBytes", normalizePositiveLong(Objects.toString(config.getProperty("goaffproSyncMinFreeBytes"), String.valueOf(512L * 1024L * 1024L)), String.valueOf(512L * 1024L * 1024L)));
+        if (Objects.toString(config.getProperty("goaffproSyncDataPath"), "").trim().isBlank()) {
+            config.setProperty("goaffproSyncDataPath", GoAffProSyncService.resolveDataDir(config).toString());
         }
         if (Objects.toString(config.getProperty(COMMISSION_HISTORY_KEY), "").isBlank()) {
             for (String commission : DEFAULT_COMMISSION_HISTORY) {
