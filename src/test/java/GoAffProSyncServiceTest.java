@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -524,6 +525,62 @@ class GoAffProSyncServiceTest {
             try (ResultSet rs = ps.executeQuery()) {
                 assertTrue(rs.next());
                 assertEquals(expected, rs.getInt(1));
+            }
+        }
+    }
+
+    @Test
+    void describeThrowableBleibtAuchOhneMeldungAussagekraeftig() {
+        assertEquals("IOException: Platte voll", GoAffProSyncService.describeThrowable(new java.io.IOException("Platte voll")));
+        // getMessage() ist häufig null - dann sagt der Klassenname mehr als ein leerer Text
+        assertEquals("NullPointerException", GoAffProSyncService.describeThrowable(new NullPointerException()));
+        assertEquals("IllegalStateException", GoAffProSyncService.describeThrowable(new IllegalStateException("   ")));
+        assertEquals("Unbekannter Fehler", GoAffProSyncService.describeThrowable(null));
+    }
+
+    @Test
+    void verwaisteLaeufeWerdenNachProzessstartUnterschieden(@TempDir Path tempDir) throws Exception {
+        Path db = tempDir.resolve("goaffpro_sync.sqlite");
+        initDatabase(db);
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + db)) {
+            // vor dem Prozessstart -> echter Neustart; nach dem Prozessstart -> Absturz im Prozess
+            insertRunRow(connection, 1, "running", "2020-01-01T10:00:00Z");
+            insertRunRow(connection, 2, "running", Instant.now().plusSeconds(60).toString());
+            insertRunRow(connection, 3, "success", "2020-01-01T10:00:00Z");
+
+            Method method = GoAffProSyncService.class.getDeclaredMethod("repairOrphanRuns", Connection.class);
+            method.setAccessible(true);
+            method.invoke(null, connection);
+
+            assertEquals("error", runField(connection, 1, "status"));
+            assertEquals(GoAffProSyncService.ORPHAN_RESTART_MESSAGE, runField(connection, 1, "error"));
+            assertEquals("error", runField(connection, 2, "status"));
+            assertEquals(GoAffProSyncService.ORPHAN_CRASH_MESSAGE, runField(connection, 2, "error"));
+            assertFalse(runField(connection, 1, "finished_at").isBlank(), "Verwaiste Läufe brauchen ein Endedatum");
+
+            // Abgeschlossene Läufe bleiben unangetastet
+            assertEquals("success", runField(connection, 3, "status"));
+            assertEquals("", runField(connection, 3, "error"));
+        }
+    }
+
+    private static void insertRunRow(Connection connection, long id, String status, String startedAt) throws Exception {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "INSERT INTO sync_runs(id, mode, status, started_at, error) VALUES(?,?,?,?,'')")) {
+            ps.setLong(1, id);
+            ps.setString(2, "delta");
+            ps.setString(3, status);
+            ps.setString(4, startedAt);
+            ps.executeUpdate();
+        }
+    }
+
+    private static String runField(Connection connection, long id, String column) throws Exception {
+        try (PreparedStatement ps = connection.prepareStatement("SELECT " + column + " FROM sync_runs WHERE id=?")) {
+            ps.setLong(1, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next(), "Lauf " + id + " fehlt");
+                return Objects.toString(rs.getString(1), "");
             }
         }
     }

@@ -73,6 +73,34 @@ public class GoAffProSyncService {
         SKIP_WITH_WARNING
     }
 
+    /** Startzeit dieses Prozesses – unterscheidet "vom Neustart verwaist" von "hier abgestürzt". */
+    private static final Instant PROCESS_START =
+            ProcessHandle.current().info().startInstant().orElseGet(Instant::now);
+
+    /** Null-sicherer Fehlertext: Throwable.getMessage() ist oft null (dann sagt die Klasse mehr). */
+    static String describeThrowable(Throwable t) {
+        if (t == null) return "Unbekannter Fehler";
+        String message = t.getMessage();
+        return (message == null || message.isBlank())
+                ? t.getClass().getSimpleName()
+                : t.getClass().getSimpleName() + ": " + message;
+    }
+
+    private static void logSyncFailure(String context, Throwable t) {
+        System.err.println("GoAffPro " + context + " abgebrochen: " + describeThrowable(t));
+        if (t != null) t.printStackTrace();
+    }
+
+    private static Map<String, Object> failedRunStatus(String mode, Throwable t) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("mode", mode);
+        row.put("status", "error");
+        row.put("phase", "finished");
+        row.put("error", describeThrowable(t));
+        row.put("finishedAt", Instant.now().toString());
+        return row;
+    }
+
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean diagnosticsRunning = new AtomicBoolean(false);
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
@@ -108,14 +136,14 @@ public class GoAffProSyncService {
         snapshot.putAll(config);
         String apiKeySnapshot = Objects.toString(apiKey, "");
         executor.submit(() -> {
+            // Throwable statt Exception: bei einem Error (z. B. NoClassDefFoundError) bliebe der
+            // Zustand sonst dauerhaft auf "läuft" stehen, und submit() verwirft das Future -
+            // der Fehler wäre nirgends sichtbar.
             try {
                 runSync(snapshot, apiKeySnapshot, normalizedMode);
-            } catch (Exception e) {
-                currentRun = Map.of(
-                        "mode", normalizedMode,
-                        "status", "error",
-                        "error", e.getMessage(),
-                        "finishedAt", Instant.now().toString());
+            } catch (Throwable t) {
+                logSyncFailure("Sync (" + normalizedMode + ")", t);
+                currentRun = failedRunStatus(normalizedMode, t);
             } finally {
                 running.set(false);
             }
@@ -143,12 +171,9 @@ public class GoAffProSyncService {
         executor.submit(() -> {
             try {
                 runDiagnostics(snapshot, apiKeySnapshot, selectedEndpointKeys);
-            } catch (Exception e) {
-                currentDiagnosticRun = Map.of(
-                        "mode", "diagnostics",
-                        "status", "error",
-                        "error", e.getMessage(),
-                        "finishedAt", Instant.now().toString());
+            } catch (Throwable t) {
+                logSyncFailure("Sync-Diagnose", t);
+                currentDiagnosticRun = failedRunStatus("diagnostics", t);
             } finally {
                 diagnosticsRunning.set(false);
             }
@@ -315,16 +340,21 @@ public class GoAffProSyncService {
             run.finishedAt = Instant.now().toString();
             updateRun(connection, runId, run);
             return run;
-        } catch (Exception e) {
+        } catch (Throwable t) {
+            // Auch Error abfangen, damit der Lauf in der DB nicht auf "running" stehen bleibt.
             run.status = "error";
-            run.error = e.getMessage();
+            run.error = describeThrowable(t);
             run.phase = "finished";
             run.finishedAt = Instant.now().toString();
             try (Connection connection = connect(db)) {
                 if (run.runId > 0) updateRun(connection, run.runId, run);
-            } catch (Exception ignored) {
+            } catch (Exception writeFailure) {
+                System.err.println("GoAffPro Sync: Lauf-Status konnte nicht geschrieben werden: "
+                        + describeThrowable(writeFailure));
             }
-            throw e;
+            if (t instanceof Exception ex) throw ex;
+            if (t instanceof Error err) throw err;
+            throw new IOException(describeThrowable(t), t);
         } finally {
             currentRun = run.toStatusMap();
         }
@@ -1336,12 +1366,41 @@ public class GoAffProSyncService {
         }
     }
 
-    /** Läufe, deren Thread durch einen Anwendungsneustart gestorben ist, als Fehler abschließen. */
+    static final String ORPHAN_RESTART_MESSAGE = "Abgebrochen (Anwendung neu gestartet)";
+    static final String ORPHAN_CRASH_MESSAGE = "Unerwartet beendet – Details im Server-Log";
+
+    /**
+     * Offen gebliebene Läufe als Fehler abschließen und dabei ehrlich benennen, was passiert ist:
+     * Läufe von vor dem Prozessstart sind einem Neustart zum Opfer gefallen, jüngere sind in
+     * diesem Prozess abgestürzt. Der Vergleich läuft bewusst in Java statt in SQL, weil
+     * Instant.toString() Nachkommastellen kürzt und ein lexikografischer Vergleich bei
+     * sekundengleichen Zeitstempeln falsch wäre.
+     */
     private static void repairOrphanRuns(Connection connection) throws Exception {
+        Map<Long, String> startedAtById = new LinkedHashMap<>();
+        try (PreparedStatement ps = connection.prepareStatement("SELECT id, started_at FROM sync_runs WHERE status='running'");
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                startedAtById.put(rs.getLong("id"), rs.getString("started_at"));
+            }
+        }
+        if (startedAtById.isEmpty()) return;
+
+        String now = Instant.now().toString();
         try (PreparedStatement ps = connection.prepareStatement(
-                "UPDATE sync_runs SET status='error', error='Abgebrochen (Anwendung neu gestartet)', finished_at=? WHERE status='running'")) {
-            ps.setString(1, Instant.now().toString());
-            ps.executeUpdate();
+                "UPDATE sync_runs SET status='error', error=?, finished_at=? WHERE id=?")) {
+            for (Map.Entry<Long, String> entry : startedAtById.entrySet()) {
+                boolean startedBeforeThisProcess = true; // unparsbar -> konservativ als Neustart werten
+                try {
+                    startedBeforeThisProcess = Instant.parse(entry.getValue()).isBefore(PROCESS_START);
+                } catch (Exception ignored) {
+                }
+                ps.setString(1, startedBeforeThisProcess ? ORPHAN_RESTART_MESSAGE : ORPHAN_CRASH_MESSAGE);
+                ps.setString(2, now);
+                ps.setLong(3, entry.getKey());
+                ps.addBatch();
+            }
+            ps.executeBatch();
         }
     }
 

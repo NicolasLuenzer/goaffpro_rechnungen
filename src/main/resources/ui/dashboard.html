@@ -1054,6 +1054,7 @@
           <button id="syncResumeBtn" class="secondary" type="button">Sync fortsetzen</button>
         </div>
         <p id="syncStatusText" class="status">Noch kein Syncstatus geladen.</p>
+        <div id="syncErrorBanner" class="warning-banner" style="display:none"></div>
         <div id="syncWarnings" class="warning-banner" style="display:none"></div>
         <div id="syncStatusCard" class="sync-status-card"></div>
         <div id="syncProgressCard" class="sync-status-card" style="display:none"></div>
@@ -1686,7 +1687,12 @@
       const state = data.state || (data.running ? 'Läuft' : 'Unbekannt');
       const cls = syncStateClass(state, data.running);
 
-      status.textContent = `Syncstatus: ${state}. Letzter erfolgreicher Sync: ${formatSyncTimestamp(data.lastSuccessAt)}.`;
+      const lastRun = data.lastRun || {};
+      const lastRunFailed = lastRun.status === 'error';
+      const lastRunError = String(lastRun.error || '').trim();
+      status.textContent = `Syncstatus: ${state}${lastRunFailed && lastRunError ? ` – ${lastRunError}` : ''}. `
+        + `Letzter erfolgreicher Sync: ${formatSyncTimestamp(data.lastSuccessAt)}.`;
+      renderSyncErrorBanner(lastRun, lastRunFailed, data.running);
       if (warnings) {
         warnings.style.display = warningRows.length ? '' : 'none';
         warnings.innerHTML = warningRows.map(w => escapeHtml(String(w))).join('<br>');
@@ -1763,6 +1769,26 @@
       `).join('');
       renderSyncProgress(data);
       updateEmptyTablesVisibility(document);
+    }
+
+    /** Zeigt den Fehler des letzten Laufs prominent an – bisher stand er nur klein in der Läufe-Tabelle. */
+    function renderSyncErrorBanner(lastRun, lastRunFailed, running) {
+      const banner = document.getElementById('syncErrorBanner');
+      if (!banner) return;
+      if (!lastRunFailed || running) {
+        banner.style.display = 'none';
+        banner.innerHTML = '';
+        return;
+      }
+      const mode = String(lastRun.mode || '').trim();
+      const modeLabel = mode === 'delta' ? 'Delta-Sync' : (mode === 'deep' ? 'Deep-Check' : 'Initialsync');
+      banner.style.display = '';
+      banner.innerHTML = `<div><strong>Letzter Sync fehlgeschlagen</strong> — ${escapeHtml(modeLabel)}`
+        + `${lastRun.id ? ` (Lauf #${escapeHtml(String(lastRun.id))})` : ''}`
+        + `, ${escapeHtml(formatSyncTimestamp(lastRun.finishedAt || lastRun.startedAt))}</div>`
+        + `<div style="margin-top:4px;font-weight:500;">${escapeHtml(String(lastRun.error || 'Kein Fehlertext hinterlegt.'))}</div>`
+        + `<div class="toolbar" style="margin-top:10px;"><button id="syncRetryBtn" type="button" class="secondary">Erneut versuchen</button></div>`;
+      document.getElementById('syncRetryBtn')?.addEventListener('click', () => startGoAffProSync(mode || 'delta'));
     }
 
     function formatDuration(seconds) {
