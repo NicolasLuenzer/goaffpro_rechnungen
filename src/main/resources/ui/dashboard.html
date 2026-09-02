@@ -2067,8 +2067,14 @@
         if (status) status.textContent = `Starte ${mode}-Sync...`;
         const data = await apiPost('/api/sync/run', { mode });
         renderSyncStatus(data);
-        startSyncFastPoll();
-        window.setTimeout(loadSyncStatus, 2000);
+        // Server-Meldung sichtbar machen: bei pausiertem Sync antwortet der Server mit HTTP 200
+        // und einem Hinweis - ohne Anzeige sieht es so aus, als passiere gar nichts.
+        const gestartet = data.running === true;
+        if (status && data.message) status.textContent = data.message;
+        if (gestartet) {
+          startSyncFastPoll();
+          window.setTimeout(loadSyncStatus, 2000);
+        }
       } catch (error) {
         if (status) status.textContent = `Sync konnte nicht gestartet werden: ${error.message}`;
       }
@@ -2077,11 +2083,15 @@
     async function pauseGoAffProSync() {
       const data = await apiPost('/api/sync/pause', {});
       renderSyncStatus(data);
+      const status = document.getElementById('syncStatusText');
+      if (status && data.message) status.textContent = data.message;
     }
 
     async function resumeGoAffProSync() {
       const data = await apiPost('/api/sync/resume', {});
       renderSyncStatus(data);
+      const status = document.getElementById('syncStatusText');
+      if (status && data.message) status.textContent = data.message;
     }
 
     function renderValidationTable() {
