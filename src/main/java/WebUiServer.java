@@ -130,6 +130,17 @@ public class WebUiServer {
     private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
     private static final Object CONFIG_LOCK = new Object();
 
+    // ── Datensicherung: Hintergrund-Job (Muster wie GoAffProSyncService.startAsync) ──
+    private static final java.util.concurrent.atomic.AtomicBoolean BACKUP_RUNNING =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+    private static volatile Map<String, Object> BACKUP_STATE = null;
+    private static final java.util.concurrent.ExecutorService BACKUP_EXECUTOR =
+            Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "goaffpro-backup");
+                t.setDaemon(true);
+                return t;
+            });
+
     public static void main(String[] args) throws IOException {
         HttpServer server;
         try {
@@ -206,7 +217,18 @@ public class WebUiServer {
         server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
         server.createContext("/api/validation/send-reminder", new ValidationReminderMailHandler());
         server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
-        server.setExecutor(null);
+        server.createContext("/api/backup/status", new BackupStatusHandler());
+        server.createContext("/api/backup/export", new BackupExportHandler());
+        server.createContext("/api/backup/download", new BackupDownloadHandler());
+        server.createContext("/api/backup/import/upload", new BackupImportUploadHandler());
+        server.createContext("/api/backup/import/apply", new BackupImportApplyHandler());
+        // Ohne Executor bearbeitet der Dispatcher-Thread alle Anfragen nacheinander - ein
+        // grosser Download (Datensicherung) wuerde die gesamte Anwendung blockieren.
+        server.setExecutor(Executors.newFixedThreadPool(8, r -> {
+            Thread t = new Thread(r, "http-worker");
+            t.setDaemon(true);
+            return t;
+        }));
         server.start();
         startLeaderWeeklyMailScheduler();
         startGoAffProSyncScheduler();
@@ -1238,6 +1260,324 @@ public class WebUiServer {
             }
         }
     }
+
+    // ══════════════ DATENSICHERUNG UND UMZUG ─ BEGIN ══════════════
+
+    private static BackupService.BackupLocations backupLocations(Properties config) {
+        return new BackupService.BackupLocations(
+                CONFIG_PATH.toAbsolutePath(),
+                GoAffProSyncService.resolveDataDir(config),
+                resolveSettingsDirectory(config));
+    }
+
+    /** Meldet Fortschritt in die von der Oberfläche gepollte Momentaufnahme. */
+    private static BackupService.ProgressSink backupProgress(String job) {
+        return new BackupService.ProgressSink() {
+            @Override public void phase(String key, String label) { updateBackupState(job, key, label, -1, -1, null); }
+            @Override public void progress(long done, long total) { updateBackupState(job, null, null, done, total, null); }
+            @Override public void note(String message) { updateBackupState(job, null, null, -1, -1, message); }
+        };
+    }
+
+    private static synchronized void updateBackupState(String job, String phaseKey, String label,
+                                                       long done, long total, String note) {
+        Map<String, Object> state = new LinkedHashMap<>();
+        if (BACKUP_STATE != null) state.putAll(BACKUP_STATE);
+        state.put("job", job);
+        state.put("running", true);
+        state.put("status", "running");
+        if (phaseKey != null) state.put("phase", phaseKey);
+        if (label != null) state.put("phaseLabel", label);
+        if (done >= 0) state.put("doneBytes", done);
+        if (total >= 0) state.put("totalBytes", total);
+        if (note != null) {
+            List<String> notes = new ArrayList<>();
+            Object existing = state.get("notes");
+            if (existing instanceof List<?> list) list.forEach(n -> notes.add(String.valueOf(n)));
+            notes.add(note);
+            state.put("notes", notes);
+        }
+        BACKUP_STATE = state;
+    }
+
+    private static void finishBackupState(String job, String status, String message, Map<String, Object> extra) {
+        Map<String, Object> state = new LinkedHashMap<>();
+        if (BACKUP_STATE != null) state.putAll(BACKUP_STATE);
+        state.put("job", job);
+        state.put("running", false);
+        state.put("status", status);
+        state.put("message", message);
+        state.put("finishedAt", Instant.now().toString());
+        if (extra != null) state.putAll(extra);
+        BACKUP_STATE = state;
+    }
+
+    private static List<Map<String, Object>> listBackupArchives(Properties config) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        Path dir = backupLocations(config).backupDir();
+        if (!Files.isDirectory(dir)) return rows;
+        try (var list = Files.list(dir)) {
+            List<Path> files = list.filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().endsWith(".zip"))
+                    .sorted(java.util.Comparator.comparing((Path p) -> p.getFileName().toString()).reversed())
+                    .toList();
+            for (Path file : files) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("name", file.getFileName().toString());
+                row.put("bytes", Files.size(file));
+                row.put("modifiedAt", Files.getLastModifiedTime(file).toInstant().toString());
+                rows.add(row);
+            }
+        } catch (Exception ignored) {
+        }
+        return rows;
+    }
+
+    private static Map<String, Object> backupStatusPayload(Properties config) {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("running", BACKUP_RUNNING.get());
+        payload.put("job", BACKUP_STATE);
+        payload.put("archives", listBackupArchives(config));
+        payload.put("syncBusy", GOAFFPRO_SYNC_SERVICE.isBusy());
+        payload.put("backupDir", backupLocations(config).backupDir().toString());
+        return payload;
+    }
+
+    private static class BackupStatusHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            try {
+                sendResponse(exchange, 200, "application/json",
+                        OBJECT_MAPPER.writeValueAsString(backupStatusPayload(loadConfigWithUiSettings())));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class BackupExportHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                boolean includeSecrets = body.has("includeSecrets") && body.get("includeSecrets").asBoolean(false);
+                Properties config = loadConfigWithUiSettings();
+
+                if (!BACKUP_RUNNING.compareAndSet(false, true)) {
+                    sendResponse(exchange, 409, "application/json",
+                            "{\"error\":\"Es läuft bereits eine Sicherung oder ein Import.\",\"code\":\"BACKUP_BUSY\"}");
+                    return;
+                }
+                if (!GOAFFPRO_SYNC_SERVICE.beginMaintenance()) {
+                    BACKUP_RUNNING.set(false);
+                    sendResponse(exchange, 409, "application/json",
+                            "{\"error\":\"Ein GoAffPro Sync läuft gerade. Bitte den Sync pausieren oder das Ende abwarten.\","
+                                    + "\"code\":\"SYNC_BUSY\",\"syncRunning\":true}");
+                    return;
+                }
+
+                BACKUP_STATE = new LinkedHashMap<>(Map.of("job", "export", "running", true, "status", "running"));
+                BackupService.BackupLocations loc = backupLocations(config);
+                BACKUP_EXECUTOR.submit(() -> {
+                    try {
+                        Files.createDirectories(loc.backupDir());
+                        BackupService.pruneOldArchives(loc.backupDir(), "export_", 2);
+                        Path target = loc.backupDir().resolve(BackupService.archiveFileName("export", includeSecrets));
+                        BackupService.createArchive(loc, includeSecrets, target, backupProgress("export"));
+                        finishBackupState("export", "success", "Sicherung erstellt: " + target.getFileName(),
+                                Map.of("file", target.getFileName().toString(), "bytes", Files.size(target)));
+                    } catch (Throwable t) {
+                        System.err.println("GoAffPro Sicherung fehlgeschlagen: " + GoAffProSyncService.describeThrowable(t));
+                        t.printStackTrace();
+                        finishBackupState("export", "error", GoAffProSyncService.describeThrowable(t), null);
+                    } finally {
+                        GOAFFPRO_SYNC_SERVICE.endMaintenance();
+                        BACKUP_RUNNING.set(false);
+                    }
+                });
+                Map<String, Object> payload = backupStatusPayload(config);
+                payload.put("message", "Sicherung wird erstellt.");
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    /** Liefert ein Archiv aus. Nimmt bewusst nur einen Dateinamen, nie einen Pfad vom Client. */
+    private static class BackupDownloadHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            try {
+                Properties config = loadConfigWithUiSettings();
+                Path dir = backupLocations(config).backupDir();
+                String name = sanitizeFilename(Objects.toString(parseQueryParams(exchange.getRequestURI()).get("file"), ""));
+                Path file = dir.resolve(name).normalize();
+                if (name.isBlank() || !file.startsWith(dir.toAbsolutePath().normalize()) || !Files.isRegularFile(file)) {
+                    sendResponse(exchange, 404, "application/json", "{\"error\":\"Archiv nicht gefunden\"}");
+                    return;
+                }
+                exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
+                exchange.getResponseHeaders().add("Content-Type", "application/zip");
+                exchange.getResponseHeaders().add("Content-Disposition", "attachment; filename=\"" + name + "\"");
+                exchange.sendResponseHeaders(200, Files.size(file));
+                try (OutputStream os = exchange.getResponseBody()) {
+                    Files.copy(file, os);
+                }
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    /** Nimmt das Archiv als rohen Body entgegen (kein multipart) und liest nur das Manifest. */
+    private static class BackupImportUploadHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            Path tmp = null;
+            try {
+                Properties config = loadConfigWithUiSettings();
+                Path dir = backupLocations(config).backupDir();
+                Files.createDirectories(dir);
+                String token = "upload_" + FILE_TIMESTAMP.format(LocalDateTime.now()) + ".zip";
+                tmp = dir.resolve(token);
+
+                long written = 0;
+                long max = 4L * 1024 * 1024 * 1024;
+                byte[] buffer = new byte[64 * 1024];
+                try (InputStream in = exchange.getRequestBody();
+                     OutputStream out = Files.newOutputStream(tmp)) {
+                    int n;
+                    while ((n = in.read(buffer)) > 0) {
+                        written += n;
+                        if (written > max) throw new IOException("Archiv zu groß (Grenze 4 GB).");
+                        out.write(buffer, 0, n);
+                    }
+                }
+                JsonNode manifest = BackupService.readManifest(tmp);
+                Map<String, Object> payload = new LinkedHashMap<>();
+                payload.put("token", token);
+                payload.put("bytes", written);
+                payload.put("manifest", manifest);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                if (tmp != null) try { Files.deleteIfExists(tmp); } catch (IOException ignored) { }
+                sendResponse(exchange, 400, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class BackupImportApplyHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                String token = sanitizeFilename(asText(body, "token").trim());
+                // Bestätigung serverseitig prüfen: der Schutz darf nicht am Browser hängen.
+                if (!"IMPORTIEREN".equals(asText(body, "confirm").trim())) {
+                    sendResponse(exchange, 400, "application/json",
+                            "{\"error\":\"Bestätigung fehlt. Bitte IMPORTIEREN eingeben.\"}");
+                    return;
+                }
+                Properties config = loadConfigWithUiSettings();
+                BackupService.BackupLocations loc = backupLocations(config);
+                Path archive = loc.backupDir().resolve(token).normalize();
+                if (token.isBlank() || !archive.startsWith(loc.backupDir().toAbsolutePath().normalize())
+                        || !Files.isRegularFile(archive)) {
+                    sendResponse(exchange, 404, "application/json", "{\"error\":\"Hochgeladenes Archiv nicht gefunden.\"}");
+                    return;
+                }
+
+                if (!BACKUP_RUNNING.compareAndSet(false, true)) {
+                    sendResponse(exchange, 409, "application/json",
+                            "{\"error\":\"Es läuft bereits eine Sicherung oder ein Import.\",\"code\":\"BACKUP_BUSY\"}");
+                    return;
+                }
+                if (!GOAFFPRO_SYNC_SERVICE.beginMaintenance()) {
+                    BACKUP_RUNNING.set(false);
+                    sendResponse(exchange, 409, "application/json",
+                            "{\"error\":\"Ein GoAffPro Sync läuft gerade. Bitte den Sync pausieren oder das Ende abwarten.\","
+                                    + "\"code\":\"SYNC_BUSY\",\"syncRunning\":true}");
+                    return;
+                }
+
+                BACKUP_STATE = new LinkedHashMap<>(Map.of("job", "import", "running", true, "status", "running"));
+                Path staging = loc.backupDir().resolve("import_" + FILE_TIMESTAMP.format(LocalDateTime.now()));
+                BACKUP_EXECUTOR.submit(() -> {
+                    try {
+                        updateBackupState("import", "sicherung", "Sicherung des bisherigen Standes", -1, -1, null);
+                        BackupService.pruneOldArchives(loc.backupDir(), "pre-import_", 2);
+                        // Die Vorab-Sicherung enthält immer die Zugangsdaten - sie bleibt lokal.
+                        BackupService.createArchive(loc, true,
+                                loc.backupDir().resolve(BackupService.archiveFileName("pre-import", false)), null);
+
+                        BackupService.ImportReport report =
+                                BackupService.applyArchive(archive, loc, staging, backupProgress("import"));
+                        persistSettings(report.settings());
+                        GOAFFPRO_SYNC_SERVICE.resetAfterRestore();
+                        BackupService.deleteRecursively(staging);
+                        try { Files.deleteIfExists(archive); } catch (IOException ignored) { }
+
+                        Map<String, Object> extra = new LinkedHashMap<>();
+                        extra.put("filePathsRebased", report.filePathsRebased());
+                        extra.put("filePathsMissing", report.filePathsMissing());
+                        extra.put("filePathsForeign", report.filePathsForeign());
+                        extra.put("mailLogRebased", report.mailLogRebased());
+                        extra.put("mailLogDropped", report.mailLogDropped());
+                        extra.put("countersTaken", report.countersTaken());
+                        extra.put("secretsIncluded", report.secretsIncluded());
+                        extra.put("notes", report.notes());
+                        finishBackupState("import", "success", "Import abgeschlossen.", extra);
+                    } catch (Throwable t) {
+                        System.err.println("GoAffPro Import fehlgeschlagen: " + GoAffProSyncService.describeThrowable(t));
+                        t.printStackTrace();
+                        finishBackupState("import", "error", GoAffProSyncService.describeThrowable(t), null);
+                    } finally {
+                        GOAFFPRO_SYNC_SERVICE.endMaintenance();
+                        BACKUP_RUNNING.set(false);
+                    }
+                });
+                Map<String, Object> payload = backupStatusPayload(config);
+                payload.put("message", "Import wird ausgeführt.");
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+    // ══════════════ DATENSICHERUNG ─ END ══════════════
 
     private static class GoAffProSyncRunHandler implements HttpHandler {
         @Override
@@ -3631,12 +3971,19 @@ public class WebUiServer {
                     sendResponse(exchange, 404, "application/json", "{\"error\":\"Datei nicht gefunden\"}");
                     return;
                 }
-                byte[] bytes = Files.readAllBytes(p);
+                // Nur Dateien aus dem Belegverzeichnis ausliefern. Ohne diese Prüfung wäre über
+                // ?path=… jede lesbare Datei abrufbar (config.properties, .env, die Sync-Datenbank).
+                Path allowedRoot = resolveSettingsDirectory(loadConfigWithUiSettings());
+                if (!isUnderRoot(p, allowedRoot)) {
+                    sendResponse(exchange, 403, "application/json",
+                            "{\"error\":\"Die Datei liegt außerhalb des Exportordners.\"}");
+                    return;
+                }
                 exchange.getResponseHeaders().add("Access-Control-Allow-Origin", "*");
                 exchange.getResponseHeaders().add("Content-Type", "application/octet-stream");
                 exchange.getResponseHeaders().add("Content-Disposition", "attachment; filename=\"" + p.getFileName().toString().replace("\"", "") + "\"");
-                exchange.sendResponseHeaders(200, bytes.length);
-                try (OutputStream os = exchange.getResponseBody()) { os.write(bytes); }
+                exchange.sendResponseHeaders(200, Files.size(p));
+                try (OutputStream os = exchange.getResponseBody()) { Files.copy(p, os); }
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
@@ -6679,25 +7026,40 @@ public class WebUiServer {
         return OBJECT_MAPPER.readTree(body);
     }
 
+    // Die Konfiguration lebt in zwei geteilten Dateien und wird im Read-Modify-Write-Zyklus
+    // fortgeschrieben. Seit der HTTP-Server einen Threadpool nutzt, muss CONFIG_LOCK diese
+    // Zyklen klammern - sonst schreiben parallele Anfragen einander Schlüssel weg, im
+    // schlimmsten Fall die Belegnummern-Zähler. Der Monitor ist reentrant, verschachtelte
+    // Aufrufe (persistSettings -> storeConfig) sind also unbedenklich.
     private static Properties loadConfig() throws IOException {
-        Properties properties = new Properties();
-        if (!Files.exists(CONFIG_PATH)) {
+        synchronized (CONFIG_LOCK) {
+            Properties properties = new Properties();
+            if (!Files.exists(CONFIG_PATH)) {
+                return properties;
+            }
+            try (InputStream is = Files.newInputStream(CONFIG_PATH)) {
+                properties.load(is);
+            }
             return properties;
         }
-        try (InputStream is = Files.newInputStream(CONFIG_PATH)) {
-            properties.load(is);
-        }
-        return properties;
     }
 
     private static Properties loadConfigWithUiSettings() throws IOException {
-        Properties config = loadConfig();
-        Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
-        mergeUiSettingsIntoConfig(config, uiSettings);
-        return config;
+        synchronized (CONFIG_LOCK) {
+            Properties config = loadConfig();
+            Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
+            mergeUiSettingsIntoConfig(config, uiSettings);
+            return config;
+        }
     }
 
     private static void storeConfig(Properties properties) throws IOException {
+        synchronized (CONFIG_LOCK) {
+            storeConfigUnlocked(properties);
+        }
+    }
+
+    private static void storeConfigUnlocked(Properties properties) throws IOException {
         Properties forStore = new Properties();
         forStore.putAll(properties);
         for (String[] mapping : SECRET_ENV_MAPPINGS) {
@@ -7004,6 +7366,12 @@ public class WebUiServer {
     }
 
     private static void saveUiSettings(Path directory, Properties source) throws IOException {
+        synchronized (CONFIG_LOCK) {
+            saveUiSettingsUnlocked(directory, source);
+        }
+    }
+
+    private static void saveUiSettingsUnlocked(Path directory, Properties source) throws IOException {
         Files.createDirectories(directory);
         Properties ui = new Properties();
         ui.setProperty("pdfExportPath", Objects.toString(source.getProperty("pdfExportPath"), directory.toString()));
@@ -7203,6 +7571,12 @@ public class WebUiServer {
     }
 
     private static void persistSettings(Properties config) throws IOException {
+        synchronized (CONFIG_LOCK) {
+            persistSettingsUnlocked(config);
+        }
+    }
+
+    private static void persistSettingsUnlocked(Properties config) throws IOException {
         if (Objects.toString(config.getProperty("pdfExportPath"), "").isBlank()) {
             config.setProperty("pdfExportPath", DEFAULT_PDF_EXPORT_PATH);
         }
@@ -7540,6 +7914,20 @@ private static String toGermanDate(String input) {
             mod = (mod * 10 + (numeric.charAt(i) - '0')) % 97;
         }
         return mod == 1;
+    }
+
+    /**
+     * Prüft, ob ein Pfad wirklich unterhalb einer erlaubten Wurzel liegt.
+     * toRealPath() löst dabei auch Symlinks auf; Path#startsWith vergleicht Pfadelemente,
+     * sodass ein Geschwisterverzeichnis mit gleichem Namenspräfix nicht durchrutscht.
+     */
+    static boolean isUnderRoot(Path candidate, Path root) {
+        if (candidate == null || root == null) return false;
+        try {
+            return candidate.toRealPath().startsWith(root.toRealPath());
+        } catch (IOException e) {
+            return candidate.toAbsolutePath().normalize().startsWith(root.toAbsolutePath().normalize());
+        }
     }
 
     private static String sanitizeFilename(String value) {

@@ -101,6 +101,38 @@ public class GoAffProSyncService {
         return row;
     }
 
+    /** Wartungsmodus: währenddessen darf kein Sync starten (Sicherung/Import laufen). */
+    private final AtomicBoolean maintenance = new AtomicBoolean(false);
+
+    public boolean isBusy() {
+        return running.get() || diagnosticsRunning.get();
+    }
+
+    public boolean isMaintenance() {
+        return maintenance.get();
+    }
+
+    /** Belegt den Wartungsmodus, sofern gerade kein Lauf aktiv ist. */
+    public boolean beginMaintenance() {
+        if (isBusy()) return false;
+        if (!maintenance.compareAndSet(false, true)) return false;
+        if (isBusy()) { // Rennen: ein Lauf startete zwischen Prüfung und CAS
+            maintenance.set(false);
+            return false;
+        }
+        return true;
+    }
+
+    public void endMaintenance() {
+        maintenance.set(false);
+    }
+
+    /** Nach einem Import zeigen die Momentaufnahmen auf Läufe der alten Datenbank. */
+    public void resetAfterRestore() {
+        currentRun = null;
+        currentDiagnosticRun = null;
+    }
+
     private final AtomicBoolean running = new AtomicBoolean(false);
     private final AtomicBoolean diagnosticsRunning = new AtomicBoolean(false);
     private final ExecutorService executor = Executors.newSingleThreadExecutor(r -> {
@@ -116,6 +148,11 @@ public class GoAffProSyncService {
 
     public Map<String, Object> startAsync(Properties config, String apiKey, String mode) throws Exception {
         String normalizedMode = normalizeMode(mode);
+        if (maintenance.get()) {
+            Map<String, Object> payload = status(config);
+            payload.put("message", "Wartungsmodus: Es läuft gerade eine Sicherung oder ein Import.");
+            return payload;
+        }
         if (!isSyncEnabled(config)) {
             Map<String, Object> payload = status(config);
             payload.put("message", "GoAffPro Sync ist pausiert. Bitte zuerst fortsetzen.");
@@ -154,6 +191,11 @@ public class GoAffProSyncService {
     }
 
     public Map<String, Object> startDiagnosticsAsync(Properties config, String apiKey, List<String> endpointKeys) throws Exception {
+        if (maintenance.get()) {
+            Map<String, Object> payload = diagnosticsLatest(config);
+            payload.put("message", "Wartungsmodus: Es läuft gerade eine Sicherung oder ein Import.");
+            return payload;
+        }
         if (running.get()) {
             Map<String, Object> payload = diagnosticsLatest(config);
             payload.put("message", "Ein normaler GoAffPro Sync läuft bereits. Diagnose wurde nicht gestartet.");
@@ -2123,6 +2165,22 @@ public class GoAffProSyncService {
             configured = System.getenv().getOrDefault("GOAFFPRO_SYNC_DATA_PATH", System.getenv().getOrDefault("DATA_PATH", "data"));
         }
         return Paths.get(configured).toAbsolutePath();
+    }
+
+    /**
+     * WAL-sichere, kompakte Kopie der Datenbank. VACUUM INTO liest über eine normale Verbindung,
+     * sieht also den vollständigen Stand inklusive WAL, und schreibt eine Datei ohne
+     * Seitendateien. Die Zieldatei darf dabei nicht existieren.
+     */
+    public static void snapshotDatabase(Path sourceDb, Path targetFile) throws Exception {
+        Path parent = targetFile.getParent();
+        if (parent != null) Files.createDirectories(parent);
+        Files.deleteIfExists(targetFile);
+        try (Connection connection = connect(sourceDb); Statement st = connection.createStatement()) {
+            // Backslashes sind in SQLite-Stringliteralen bedeutungslos; nur ' muss verdoppelt werden.
+            String literal = targetFile.toAbsolutePath().toString().replace("'", "''");
+            st.execute("VACUUM INTO '" + literal + "'");
+        }
     }
 
     public static Path resolveDbPath(Properties config) {

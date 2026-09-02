@@ -1087,6 +1087,44 @@
         <table><thead><tr><th>Endpoint</th><th>Entität</th><th>Gelesen</th><th>Neu</th><th>Geändert</th><th>Unverändert</th><th>Downloads</th><th>API-Calls</th><th>Vollständig</th><th>Warnung</th></tr></thead><tbody id="syncEndpointBody"></tbody></table>
         <div class="toolbar"><strong>Letzte Sync-Läufe</strong></div>
         <table><thead><tr><th>ID</th><th>Modus</th><th>Status</th><th>Start</th><th>Ende</th><th>API-Calls</th><th>Gesehen</th><th>Neu</th><th>Geändert</th><th>Warnungen</th><th>Fehler</th></tr></thead><tbody id="syncRunsBody"></tbody></table>
+
+        <div class="toolbar"><strong>Datensicherung &amp; Umzug</strong></div>
+        <div class="settings-group" style="background:#fff;margin-bottom:16px;">
+          <p class="settings-hint">
+            Der Export packt <strong>alles</strong> in eine ZIP-Datei: die Sync-Datenbank, alle heruntergeladenen
+            Dateien und Assets, alle erzeugten Belege (PDF, JSON, ZUGFeRD), sämtliche Einstellungen und Vorlagen,
+            das Versandprotokoll sowie die Belegnummern-Zähler.
+          </p>
+          <div class="toolbar">
+            <label><input id="backupIncludeSecrets" type="checkbox" /> Zugangsdaten einschließen (API-Key, SMTP-Benutzer und -Passwort)</label>
+            <button id="backupExportBtn" class="secondary" type="button">Sicherung erstellen</button>
+          </div>
+          <div class="settings-hint">
+            Ohne Haken enthält das Archiv keine Zugangsdaten; sie müssen auf der Zielumgebung neu eingetragen werden.
+            Stehen sie in Umgebungsvariablen (Docker/Portainer), sind sie <em>nie</em> Teil des Archivs.
+            Die Datei enthält alle Beleg- und Beraterinnendaten inklusive Bankverbindungen — bitte vertraulich behandeln.
+          </div>
+          <p id="backupStatusText" class="status">Noch keine Sicherung erstellt.</p>
+          <div id="backupJobCard" class="sync-status-card" style="display:none"></div>
+          <div id="backupArchiveList" class="pill-list"></div>
+
+          <div class="toolbar" style="margin-top:14px;"><strong>Sicherung einspielen</strong></div>
+          <div class="warning-banner">
+            Achtung: Der Import <strong>ersetzt den gesamten Datenbestand dieser Umgebung</strong> — Datenbank,
+            Dateien, Belege, Einstellungen, Vorlagen und Belegnummern-Zähler. Vom jetzigen Stand wird vorher
+            automatisch eine Sicherung angelegt.
+          </div>
+          <div class="toolbar">
+            <input id="backupImportFile" type="file" accept=".zip,application/zip" />
+            <button id="backupImportCheckBtn" class="secondary" type="button">Archiv prüfen</button>
+          </div>
+          <div id="backupImportPreview" class="settings-hint"></div>
+          <div class="toolbar" id="backupImportConfirmRow" style="display:none">
+            <label for="backupImportConfirmInput">Zum Bestätigen <code>IMPORTIEREN</code> eintippen:</label>
+            <input id="backupImportConfirmInput" type="text" style="max-width:200px" placeholder="IMPORTIEREN" />
+            <button id="backupImportApplyBtn" class="danger" type="button" disabled>Jetzt importieren und alles ersetzen</button>
+          </div>
+        </div>
       `;
       panels.appendChild(panel);
     }
@@ -1924,6 +1962,160 @@
       if (syncFastPollTimer) {
         window.clearInterval(syncFastPollTimer);
         syncFastPollTimer = null;
+      }
+    }
+
+    // ── Datensicherung & Umzug ──────────────────────────────────────────────────
+    let backupPollTimer = null;
+    let backupUploadToken = null;
+
+    function formatBytes(bytes) {
+      const n = Number(bytes || 0);
+      if (!Number.isFinite(n) || n <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let v = n, i = 0;
+      while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
+      return `${v.toLocaleString('de-DE', { maximumFractionDigits: i === 0 ? 0 : 1 })} ${units[i]}`;
+    }
+
+    async function loadBackupStatus() {
+      try {
+        const data = await apiGet('/api/backup/status');
+        renderBackupJob(data);
+        renderBackupArchives(data.archives || []);
+        if (data.running) startBackupPoll(); else stopBackupPoll();
+      } catch (error) {
+        // stiller Fehlschlag - der nächste Aufruf versucht es erneut
+      }
+    }
+
+    function renderBackupJob(data) {
+      const card = document.getElementById('backupJobCard');
+      const status = document.getElementById('backupStatusText');
+      const job = data.job;
+      if (!card) return;
+      if (!job) { card.style.display = 'none'; card.innerHTML = ''; return; }
+
+      const laeuft = job.running === true;
+      const titel = job.job === 'import' ? 'Import' : 'Sicherung';
+      if (status) {
+        if (laeuft) status.textContent = `${titel} läuft: ${job.phaseLabel || 'wird vorbereitet'} …`;
+        else if (job.status === 'error') status.textContent = `${titel} fehlgeschlagen: ${job.message || ''}`;
+        else status.textContent = job.message || `${titel} abgeschlossen.`;
+      }
+
+      const done = Number(job.doneBytes || 0), total = Number(job.totalBytes || 0);
+      const pct = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : -1;
+      const bar = laeuft
+        ? `<div class="sync-bar large${pct < 0 ? ' indeterminate' : ''}"><span style="width:${pct < 0 ? 30 : Math.max(2, pct)}%"></span></div>`
+        : '';
+      const badgeClass = laeuft ? 'running' : (job.status === 'error' ? 'error' : 'ok');
+      const badgeText = laeuft ? `${titel} läuft` : (job.status === 'error' ? 'Fehler' : 'Fertig');
+
+      let bericht = '';
+      if (!laeuft && job.job === 'import' && job.status === 'success') {
+        const zeilen = [
+          `Dateien neu zugeordnet: ${job.filePathsRebased ?? 0}` +
+            (Number(job.filePathsMissing || 0) > 0 ? `, fehlend: ${job.filePathsMissing}` : '') +
+            (Number(job.filePathsForeign || 0) > 0 ? `, nicht zuordenbar: ${job.filePathsForeign}` : ''),
+          `Versandprotokoll angepasst: ${job.mailLogRebased ?? 0} Pfade` +
+            (Number(job.mailLogDropped || 0) > 0 ? `, ${job.mailLogDropped} ohne Entsprechung` : ''),
+          job.countersTaken ? 'Belegnummern-Zähler übernommen.' : 'Belegnummern-Zähler dieser Umgebung beibehalten.',
+          ...(Array.isArray(job.notes) ? job.notes : [])
+        ];
+        bericht = `<div class="settings-hint" style="margin-top:8px;">${zeilen.map(z => escapeHtml(String(z))).join('<br>')}</div>`;
+      }
+
+      card.style.display = '';
+      card.innerHTML = `<div class="sync-status-head">
+          <div><strong>${escapeHtml(titel)}</strong>
+            <div class="settings-hint">${escapeHtml(job.phaseLabel || job.message || '')}</div></div>
+          <span class="sync-state-badge ${badgeClass}">${escapeHtml(badgeText)}</span>
+        </div>${bar}${bericht}`;
+    }
+
+    function renderBackupArchives(list) {
+      const box = document.getElementById('backupArchiveList');
+      if (!box) return;
+      if (!list.length) { box.innerHTML = '<span class="settings-hint">Noch keine Archive vorhanden.</span>'; return; }
+      box.innerHTML = list.map(a => {
+        const href = `${API_BASE}/api/backup/download?file=${encodeURIComponent(a.name)}`;
+        return `<span class="pill"><a href="${href}">${escapeHtml(a.name)}</a> · ${escapeHtml(formatBytes(a.bytes))}</span>`;
+      }).join('');
+    }
+
+    function startBackupPoll() {
+      if (!backupPollTimer) backupPollTimer = window.setInterval(loadBackupStatus, 2000);
+    }
+    function stopBackupPoll() {
+      if (backupPollTimer) { window.clearInterval(backupPollTimer); backupPollTimer = null; }
+    }
+
+    async function startBackupExport() {
+      const status = document.getElementById('backupStatusText');
+      try {
+        const includeSecrets = !!document.getElementById('backupIncludeSecrets')?.checked;
+        if (includeSecrets && !window.confirm('Das Archiv enthält dann Zugangsdaten im Klartext. Fortfahren?')) return;
+        if (status) status.textContent = 'Sicherung wird gestartet …';
+        await apiPost('/api/backup/export', { includeSecrets });
+        startBackupPoll();
+        await loadBackupStatus();
+      } catch (error) {
+        if (status) status.textContent = `Sicherung nicht gestartet: ${error.message}`;
+      }
+    }
+
+    async function checkBackupArchive() {
+      const status = document.getElementById('backupStatusText');
+      const preview = document.getElementById('backupImportPreview');
+      const row = document.getElementById('backupImportConfirmRow');
+      const file = document.getElementById('backupImportFile')?.files?.[0];
+      backupUploadToken = null;
+      if (row) row.style.display = 'none';
+      if (!file) { if (preview) preview.textContent = 'Bitte zuerst eine Archivdatei auswählen.'; return; }
+      try {
+        if (status) status.textContent = `Archiv wird geprüft (${formatBytes(file.size)}) …`;
+        const response = await fetch(`${API_BASE}/api/backup/import/upload`, { method: 'POST', body: file });
+        const json = await response.json();
+        if (!response.ok) throw new Error(json.error || 'Archiv konnte nicht gelesen werden.');
+        backupUploadToken = json.token;
+        const m = json.manifest || {};
+        const zaehler = m.counters || {};
+        const zeilen = [
+          `Erstellt: ${escapeHtml(String(m.createdAt || '-'))}`,
+          `Quelle: ${escapeHtml(String((m.source || {}).osName || '-'))} — ${escapeHtml(String((m.source || {}).pdfExportPath || '-'))}`,
+          `Größe: ${escapeHtml(formatBytes(json.bytes))}`,
+          `Zugangsdaten: ${(m.contents || {}).secrets === 'included' ? 'enthalten' : 'nicht enthalten'}`,
+          `Belegnummern-Zähler: ${zaehler.gutschriftCounter ? `GS ${escapeHtml(String(zaehler.gutschriftCounter))}` : 'keine'}` +
+            `${zaehler.rechnungCounter ? `, RE ${escapeHtml(String(zaehler.rechnungCounter))}` : ''}`,
+          `Datensätze: ${escapeHtml(String((m.database || {}).entityCount ?? '-'))}`
+        ];
+        if (preview) preview.innerHTML = zeilen.join('<br>');
+        if (row) row.style.display = '';
+        if (status) status.textContent = 'Archiv geprüft. Bitte Import bestätigen.';
+      } catch (error) {
+        if (preview) preview.textContent = '';
+        if (status) status.textContent = `Archiv abgelehnt: ${error.message}`;
+      }
+    }
+
+    async function applyBackupImport() {
+      const status = document.getElementById('backupStatusText');
+      try {
+        if (!backupUploadToken) { if (status) status.textContent = 'Bitte zuerst ein Archiv prüfen.'; return; }
+        if (status) status.textContent = 'Import wird gestartet …';
+        await apiPost('/api/backup/import/apply', {
+          token: backupUploadToken,
+          confirm: document.getElementById('backupImportConfirmInput')?.value.trim() || ''
+        });
+        backupUploadToken = null;
+        document.getElementById('backupImportConfirmRow').style.display = 'none';
+        startBackupPoll();
+        await loadBackupStatus();
+        // Nach dem Import sind Tabellen, Einstellungen und Zahllaufliste veraltet.
+        window.setTimeout(() => window.location.reload(), 4000);
+      } catch (error) {
+        if (status) status.textContent = `Import nicht gestartet: ${error.message}`;
       }
     }
 
@@ -4076,6 +4268,13 @@
         if (sendLeaderWeeklyMailTestBtn) sendLeaderWeeklyMailTestBtn.addEventListener('click', () => sendLeaderWeeklyMails(false));
         if (sendLeaderWeeklyMailProductionBtn) sendLeaderWeeklyMailProductionBtn.addEventListener('click', () => sendLeaderWeeklyMails(true));
         if (syncRefreshBtn) syncRefreshBtn.addEventListener('click', loadSyncStatus);
+        document.getElementById('backupExportBtn')?.addEventListener('click', startBackupExport);
+        document.getElementById('backupImportCheckBtn')?.addEventListener('click', checkBackupArchive);
+        document.getElementById('backupImportApplyBtn')?.addEventListener('click', applyBackupImport);
+        document.getElementById('backupImportConfirmInput')?.addEventListener('input', (evt) => {
+          const btn = document.getElementById('backupImportApplyBtn');
+          if (btn) btn.disabled = evt.target.value.trim() !== 'IMPORTIEREN';
+        });
         if (syncInitialBtn) syncInitialBtn.addEventListener('click', () => startGoAffProSync('initial'));
         if (syncDeltaBtn) syncDeltaBtn.addEventListener('click', () => startGoAffProSync('delta'));
         if (syncDeepBtn) syncDeepBtn.addEventListener('click', () => startGoAffProSync('deep'));
@@ -4113,6 +4312,7 @@
         await loadMailLog();
         await loadReminderLog();
         await loadSyncStatus();
+        await loadBackupStatus();
         await loadSyncDiagnostics();
         window.setInterval(loadSyncStatus, 30000);
         updateEmptyTablesVisibility(document);

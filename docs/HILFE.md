@@ -105,6 +105,11 @@ Auszahlungsdatum werden im Dokument separat ausgewiesen.
 - `POST /api/commissions/add-latest` – neuesten Zahllauf hinzufügen
 - `POST /api/commissions/remove` – Zahllauf aus Historie entfernen
 - `GET /api/help` – diese Hilfe-Dokumentation
+- `GET /api/backup/status` – Zustand des Sicherungsauftrags und Liste der Archive
+- `POST /api/backup/export` – Sicherung im Hintergrund erstellen
+- `GET /api/backup/download` – erstelltes Archiv herunterladen (nur Dateiname, kein Pfad)
+- `POST /api/backup/import/upload` – Archiv hochladen und Manifest zur Vorschau lesen
+- `POST /api/backup/import/apply` – Import ausführen (verlangt `confirm=IMPORTIEREN`)
 
 ## 7) Frontend-Funktionen (JavaScript, gruppiert)
 
@@ -132,6 +137,10 @@ Auszahlungsdatum werden im Dokument separat ausgewiesen.
 ### Polling
 - `pollOnce`, `togglePolling`, `setPollingButtonState`
 
+### Datensicherung & Umzug
+- `loadBackupStatus`, `renderBackupJob`, `renderBackupArchives`, `startBackupPoll`, `stopBackupPoll`
+- `startBackupExport`, `checkBackupArchive`, `applyBackupImport`, `formatBytes`
+
 ### Version
 - `loadVersion`, `loadVersionHistory`, `wireVersionPopup`
 
@@ -145,6 +154,7 @@ Auszahlungsdatum werden im Dokument separat ausgewiesen.
   - Config-/UI-Settings-Persistenz
   - API-Aufrufe gegen GoAffPro
   - E-Mail-Versand
+  - Datensicherung und Import (`BackupService`: Archiv packen, Manifest lesen, Pfade umschreiben, Bestand ersetzen)
 
 ---
 
@@ -212,3 +222,72 @@ Die Filter sind kombinierbar und wirken direkt auf die geladene Tabelle.
 - Wenn keine Änderungen an den Einstellungen erkannt wurden, ist der Speichern-Button heller dargestellt.
 - Sobald eine Änderung erkannt wird, wird der Button kräftiger hervorgehoben.
 - Die Erkennung basiert auf einem Snapshot-Vergleich der relevanten Einstellungsfelder.
+
+## 14) Datensicherung und Umzug
+
+Zu finden im Reiter **Sync** ganz unten unter **Datensicherung & Umzug**.
+
+### Sicherung erstellen
+
+Ein Klick auf **Sicherung erstellen** packt den gesamten Bestand in eine ZIP-Datei:
+Einstellungen und Vorlagen, das Versandprotokoll, die Belegnummern-Zähler, die
+GoAffPro-Datenbank mit allen synchronisierten Datensätzen, die heruntergeladenen
+Dateien sowie sämtliche erzeugten Belege (PDF, JSON, ZUGFeRD).
+
+Der Vorgang läuft im Hintergrund; eine Fortschrittskarte zeigt den aktuellen Schritt.
+Ist er fertig, erscheint das Archiv in der Liste darunter und lässt sich herunterladen.
+Die drei neuesten Archive bleiben auf dem Server liegen, ältere werden entfernt.
+
+**Zugangsdaten einschließen** (Haken, standardmäßig aus): API-Key, SMTP-Passwort und
+SMTP-Benutzername werden nur mitgesichert, wenn dieser Haken gesetzt ist. Für einen
+Umzug ist er nötig; für eine reine Datensicherung nicht. Ist er gesetzt, trägt die
+Datei den Zusatz `_mit-zugangsdaten` im Namen.
+
+Läuft gerade ein Sync, wird die Sicherung abgelehnt. Der Knopf **Sync pausieren** steht
+im selben Reiter weiter oben.
+
+### Sicherung einspielen
+
+1. Datei auswählen und **Archiv prüfen** klicken. Das Archiv wird hochgeladen, aber
+   noch nichts verändert.
+2. Die Vorschau zeigt Erstellungsdatum, Quellumgebung, Belegnummern-Stand, Anzahl der
+   Datensätze und Belegordner sowie ob Zugangsdaten enthalten sind.
+3. Zum Bestätigen `IMPORTIEREN` in das Feld tippen und **Import starten**.
+
+**Der Import ersetzt den gesamten bisherigen Bestand.** Vorher wird davon automatisch
+eine Sicherung angelegt (`pre-import_*.zip`, immer mit Zugangsdaten), die in der
+Archivliste erscheint. Nach dem Import lädt sich die Oberfläche selbst neu; ein
+Neustart der Anwendung ist nicht nötig.
+
+### Was beim Import angepasst wird
+
+Alle gespeicherten Dateipfade sind absolut. Beim Import werden sie auf die
+Zielumgebung umgeschrieben — das funktioniert auch zwischen Windows und Linux. Betroffen
+sind die Dateiverweise der synchronisierten Datensätze und die vier Pfadfelder je
+Eintrag im Versandprotokoll.
+
+Lässt sich eine Datei nicht zuordnen oder fehlt sie, wird der Verweis **geleert** statt
+auf einen falschen Pfad gesetzt: Der nächste Sync lädt sie dann sauber nach, und die
+Bestandsanzeige bleibt ehrlich. Der Bericht nennt beide Zahlen (etwa „25 von 25
+zugeordnet, 0 fehlend").
+
+Die Export- und Datenverzeichnisse werden **nicht** aus dem Archiv übernommen, sondern
+auf die Werte der Zielumgebung gesetzt.
+
+### Belegnummern-Zähler
+
+Die Zähler stehen ausschließlich in `config.properties` — **nicht** in der Datenbank.
+Ein Import übernimmt sie aus dem Archiv, weil das für einen Umzug der richtige Fall
+ist. Läuft die alte Umgebung danach weiter, vergeben beide dieselben Nummern; die alte
+Instanz gehört dann abgeschaltet.
+
+### Sicherheit
+
+Die Anwendung kennt keine Anmeldung — auch diese Funktionen nicht. Wer den Port
+erreicht, kann den kompletten Datenbestand herunterladen oder überschreiben. Das
+Archiv enthält Bankverbindungen, Steuernummern und Umsätze aller Beraterinnen und ist
+unverschlüsselt; es gehört nicht in E-Mail-Anhänge oder Cloud-Ordner.
+
+Belegdownloads sind auf den Exportordner begrenzt. Liegt eine Datei außerhalb, meldet
+der Server *„Die Datei liegt außerhalb des Exportordners."* — der Beleg muss dann neu
+erzeugt werden.
