@@ -54,6 +54,34 @@ Die Navigation ist bewusst flach aufgebaut: **Rechnungsservice**, **Validierunge
   - `export_<belegdatum>_<hoechste-payment-id>_<beraterinnenname>`
 - Dort werden die generierten Dateien (PDF/JSON) abgelegt.
 
+## 4a) Altfälle bis 31.12.2025 (Gutschrift oder Rechnung)
+
+Die Dokumentart wird **automatisch aus dem Provisionsdatum** abgeleitet — es gibt bewusst keinen
+manuellen Schalter:
+
+- Transaktionen **vor** dem Stichtag (Standard: 01.01.2026, Europe/Berlin) → **Rechnung**
+  gegen die **VEMMiNA Qualitäts- Haushaltsprodukte GmbH**, eigener Nummernkreis `RE-JJJJ-NNNN`,
+  ZUGFeRD-TypeCode 380, ohne §-14-Gutschrifts- und Widerspruchshinweise.
+- Transaktionen **ab** dem Stichtag → **Gutschrift** gegen die **S+R Linear Technology GmbH**,
+  Nummernkreis `GS-JJJJ-NNNN`, TypeCode 389, mit §-14-Hinweisen (unverändertes Verhalten).
+
+Grundlage ist `payment.transactions[].created_at`. Fehlen alle Transaktionsdaten, entscheidet
+das Zahllauf-Datum; fehlt auch das, wird als sicherer Rückfall eine Gutschrift erstellt.
+
+**Gemischte Zahlläufe** (Transaktionen vor *und* ab dem Stichtag) werden **nicht automatisch**
+entschieden: Der Server antwortet mit `409 MIXED_PERIOD`, es wird **kein Beleg erzeugt und keine
+Belegnummer verbraucht**. Die Oberfläche zeigt die Aufteilung nach Anzahl und Summe und lässt
+bewusst wählen. Diese manuelle Entscheidung wird im Versandprotokoll mit ⚠ vermerkt.
+
+Einstellungen dafür: Gruppe „Altfälle bis 31.12.2025“ (Stichtag, Anschrift, USt-IdNr. und
+Steuernummer der Alt-Gesellschaft). Die Rechnungsvorlagen sind im E-Mail-Designer als
+„Rechnung PDF-Ansicht (Altfälle)“ und „Rechnungsmail (Altfälle)“ getrennt pflegbar, damit die
+Gutschriftsvorlagen unberührt bleiben.
+
+Rechnungsnummer und Rechnungsdatum tragen den **Ausstellungstag** (der Zähler setzt pro Jahr
+zurück; eine Rückdatierung würde doppelte Nummern erzeugen). Leistungszeitraum und
+Auszahlungsdatum werden im Dokument separat ausgewiesen.
+
 ## 5) E-Mail-Text und Versandverhalten
 
 - E-Mail-Anrede wird personalisiert (wenn Name vorhanden).

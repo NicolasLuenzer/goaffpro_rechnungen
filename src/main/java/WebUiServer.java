@@ -556,6 +556,8 @@ public class WebUiServer {
                 String emailTemplateHtml = Objects.toString(config.getProperty("emailTemplateHtml"), "");
                 String validationReminderTemplateHtml = Objects.toString(config.getProperty("validationReminderTemplateHtml"), "");
                 String eInvoicePdfTemplateHtml = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "");
+                String eInvoicePdfTemplateHtmlRechnung = Objects.toString(config.getProperty("eInvoicePdfTemplateHtmlRechnung"), "");
+                String emailTemplateHtmlRechnung = Objects.toString(config.getProperty("emailTemplateHtmlRechnung"), "");
                 String leaderWeeklyReportTemplateHtml = Objects.toString(config.getProperty("leaderWeeklyReportTemplateHtml"), "");
                 boolean leaderWeeklyMailSchedulerEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("leaderWeeklyMailSchedulerEnabled"), "false"));
                 boolean leaderWeeklyMailProductionEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("leaderWeeklyMailProductionEnabled"), "false"));
@@ -588,6 +590,15 @@ public class WebUiServer {
                 String eInvoiceBankAccountHolder = Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), "").trim();
                 String eInvoicePaymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
                 String nachweisFirmenname = Objects.toString(config.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH").trim();
+                String rechnungCutoffDate = rechnungCutoffDateRaw(config);
+                String legacyBuyerName = Objects.toString(config.getProperty("legacyBuyerName"), DEFAULT_LEGACY_BUYER_NAME).trim();
+                String legacyBuyerStreet = Objects.toString(config.getProperty("legacyBuyerStreet"), "").trim();
+                String legacyBuyerZip = Objects.toString(config.getProperty("legacyBuyerZip"), "").trim();
+                String legacyBuyerCity = Objects.toString(config.getProperty("legacyBuyerCity"), "").trim();
+                String legacyBuyerCountry = Objects.toString(config.getProperty("legacyBuyerCountry"), "DE").trim();
+                String legacyBuyerVatId = Objects.toString(config.getProperty("legacyBuyerVatId"), "").trim();
+                String legacyBuyerTaxNumber = Objects.toString(config.getProperty("legacyBuyerTaxNumber"), "").trim();
+                String legacyNachweisFirmenname = Objects.toString(config.getProperty("legacyNachweisFirmenname"), DEFAULT_LEGACY_BUYER_NAME).trim();
                 ensureCommissionInHistory(config, activeCommission);
                 persistSettings(config);
 
@@ -611,6 +622,10 @@ public class WebUiServer {
                 payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
                 payload.put("eInvoicePdfTemplateHtml", eInvoicePdfTemplateHtml.isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : eInvoicePdfTemplateHtml);
                 payload.put("eInvoicePdfTemplateHtmlDefault", getDefaultEInvoicePdfViewHtmlTemplate());
+                payload.put("eInvoicePdfTemplateHtmlRechnung", eInvoicePdfTemplateHtmlRechnung.isBlank() ? getDefaultRechnungPdfViewHtmlTemplate() : eInvoicePdfTemplateHtmlRechnung);
+                payload.put("eInvoicePdfTemplateHtmlRechnungDefault", getDefaultRechnungPdfViewHtmlTemplate());
+                payload.put("emailTemplateHtmlRechnung", emailTemplateHtmlRechnung.isBlank() ? getDefaultRechnungMailHtmlTemplate() : emailTemplateHtmlRechnung);
+                payload.put("emailTemplateHtmlRechnungDefault", getDefaultRechnungMailHtmlTemplate());
                 payload.put("leaderWeeklyReportTemplateHtml", leaderWeeklyReportTemplateHtml.isBlank() ? getDefaultLeaderWeeklyReportHtmlTemplate() : leaderWeeklyReportTemplateHtml);
                 payload.put("leaderWeeklyReportTemplateHtmlDefault", getDefaultLeaderWeeklyReportHtmlTemplate());
                 payload.put("leaderWeeklyMailSchedulerEnabled", leaderWeeklyMailSchedulerEnabled);
@@ -645,6 +660,15 @@ public class WebUiServer {
                 payload.put("eInvoiceBankAccountHolder", eInvoiceBankAccountHolder);
                 payload.put("eInvoicePaymentTerms", eInvoicePaymentTerms);
                 payload.put("nachweisFirmenname", nachweisFirmenname);
+                payload.put("rechnungCutoffDate", rechnungCutoffDate);
+                payload.put("legacyBuyerName", legacyBuyerName);
+                payload.put("legacyBuyerStreet", legacyBuyerStreet);
+                payload.put("legacyBuyerZip", legacyBuyerZip);
+                payload.put("legacyBuyerCity", legacyBuyerCity);
+                payload.put("legacyBuyerCountry", legacyBuyerCountry);
+                payload.put("legacyBuyerVatId", legacyBuyerVatId);
+                payload.put("legacyBuyerTaxNumber", legacyBuyerTaxNumber);
+                payload.put("legacyNachweisFirmenname", legacyNachweisFirmenname);
                 payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -670,6 +694,8 @@ public class WebUiServer {
                     String emailTemplateHtml = asText(body, "emailTemplateHtml");
                     String validationReminderTemplateHtml = asText(body, "validationReminderTemplateHtml");
                     String eInvoicePdfTemplateHtml = asText(body, "eInvoicePdfTemplateHtml");
+                    String eInvoicePdfTemplateHtmlRechnung = asText(body, "eInvoicePdfTemplateHtmlRechnung");
+                    String emailTemplateHtmlRechnung = asText(body, "emailTemplateHtmlRechnung");
                     String leaderWeeklyReportTemplateHtml = asText(body, "leaderWeeklyReportTemplateHtml");
                     boolean leaderWeeklyMailSchedulerEnabled = body.has("leaderWeeklyMailSchedulerEnabled") && body.get("leaderWeeklyMailSchedulerEnabled").asBoolean(false);
                     boolean leaderWeeklyMailProductionEnabled = body.has("leaderWeeklyMailProductionEnabled") && body.get("leaderWeeklyMailProductionEnabled").asBoolean(false);
@@ -701,6 +727,15 @@ public class WebUiServer {
                     String eInvoiceBankAccountHolder = asText(body, "eInvoiceBankAccountHolder").trim();
                     String eInvoicePaymentTerms = asText(body, "eInvoicePaymentTerms").trim();
                     String nachweisFirmenname = asText(body, "nachweisFirmenname").trim();
+                    String rechnungCutoffDate = normalizeIsoDate(asText(body, "rechnungCutoffDate"), DEFAULT_RECHNUNG_CUTOFF_DATE);
+                    String legacyBuyerName = asText(body, "legacyBuyerName").trim();
+                    String legacyBuyerStreet = asText(body, "legacyBuyerStreet").trim();
+                    String legacyBuyerZip = asText(body, "legacyBuyerZip").trim();
+                    String legacyBuyerCity = asText(body, "legacyBuyerCity").trim();
+                    String legacyBuyerCountry = asText(body, "legacyBuyerCountry").trim();
+                    String legacyBuyerVatId = asText(body, "legacyBuyerVatId").trim();
+                    String legacyBuyerTaxNumber = asText(body, "legacyBuyerTaxNumber").trim();
+                    String legacyNachweisFirmenname = asText(body, "legacyNachweisFirmenname").trim();
                     if (!"advisor".equals(emailRecipientMode)) emailRecipientMode = "contact";
 
                     Properties config = loadConfig();
@@ -741,6 +776,16 @@ public class WebUiServer {
                     } else {
                         config.remove("eInvoicePdfTemplateHtml");
                     }
+                    if (!eInvoicePdfTemplateHtmlRechnung.isBlank()) {
+                        config.setProperty("eInvoicePdfTemplateHtmlRechnung", eInvoicePdfTemplateHtmlRechnung);
+                    } else {
+                        config.remove("eInvoicePdfTemplateHtmlRechnung");
+                    }
+                    if (!emailTemplateHtmlRechnung.isBlank()) {
+                        config.setProperty("emailTemplateHtmlRechnung", emailTemplateHtmlRechnung);
+                    } else {
+                        config.remove("emailTemplateHtmlRechnung");
+                    }
                     if (!leaderWeeklyReportTemplateHtml.isBlank()) {
                         config.setProperty("leaderWeeklyReportTemplateHtml", leaderWeeklyReportTemplateHtml);
                     } else {
@@ -778,6 +823,15 @@ public class WebUiServer {
                     config.setProperty("eInvoiceBankAccountHolder", eInvoiceBankAccountHolder);
                     config.setProperty("eInvoicePaymentTerms", eInvoicePaymentTerms);
                     config.setProperty("nachweisFirmenname", nachweisFirmenname);
+                    config.setProperty("rechnungCutoffDate", rechnungCutoffDate);
+                    config.setProperty("legacyBuyerName", legacyBuyerName);
+                    config.setProperty("legacyBuyerStreet", legacyBuyerStreet);
+                    config.setProperty("legacyBuyerZip", legacyBuyerZip);
+                    config.setProperty("legacyBuyerCity", legacyBuyerCity);
+                    config.setProperty("legacyBuyerCountry", legacyBuyerCountry);
+                    config.setProperty("legacyBuyerVatId", legacyBuyerVatId);
+                    config.setProperty("legacyBuyerTaxNumber", legacyBuyerTaxNumber);
+                    config.setProperty("legacyNachweisFirmenname", legacyNachweisFirmenname);
 
                     persistSettings(config);
 
@@ -802,6 +856,10 @@ public class WebUiServer {
                     payload.put("validationReminderTemplateHtmlDefault", getDefaultValidationReminderHtmlTemplate());
                     payload.put("eInvoicePdfTemplateHtml", Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "").isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), ""));
                     payload.put("eInvoicePdfTemplateHtmlDefault", getDefaultEInvoicePdfViewHtmlTemplate());
+                    payload.put("eInvoicePdfTemplateHtmlRechnung", Objects.toString(config.getProperty("eInvoicePdfTemplateHtmlRechnung"), "").isBlank() ? getDefaultRechnungPdfViewHtmlTemplate() : Objects.toString(config.getProperty("eInvoicePdfTemplateHtmlRechnung"), ""));
+                    payload.put("eInvoicePdfTemplateHtmlRechnungDefault", getDefaultRechnungPdfViewHtmlTemplate());
+                    payload.put("emailTemplateHtmlRechnung", Objects.toString(config.getProperty("emailTemplateHtmlRechnung"), "").isBlank() ? getDefaultRechnungMailHtmlTemplate() : Objects.toString(config.getProperty("emailTemplateHtmlRechnung"), ""));
+                    payload.put("emailTemplateHtmlRechnungDefault", getDefaultRechnungMailHtmlTemplate());
                     payload.put("leaderWeeklyReportTemplateHtml", Objects.toString(config.getProperty("leaderWeeklyReportTemplateHtml"), "").isBlank() ? getDefaultLeaderWeeklyReportHtmlTemplate() : Objects.toString(config.getProperty("leaderWeeklyReportTemplateHtml"), ""));
                     payload.put("leaderWeeklyReportTemplateHtmlDefault", getDefaultLeaderWeeklyReportHtmlTemplate());
                     payload.put("leaderWeeklyMailSchedulerEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("leaderWeeklyMailSchedulerEnabled"), "false")));
@@ -836,6 +894,15 @@ public class WebUiServer {
                     payload.put("eInvoiceBankAccountHolder", Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), ""));
                     payload.put("eInvoicePaymentTerms", Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug"));
                     payload.put("nachweisFirmenname", Objects.toString(config.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH"));
+                    payload.put("rechnungCutoffDate", rechnungCutoffDateRaw(config));
+                    payload.put("legacyBuyerName", Objects.toString(config.getProperty("legacyBuyerName"), DEFAULT_LEGACY_BUYER_NAME));
+                    payload.put("legacyBuyerStreet", Objects.toString(config.getProperty("legacyBuyerStreet"), ""));
+                    payload.put("legacyBuyerZip", Objects.toString(config.getProperty("legacyBuyerZip"), ""));
+                    payload.put("legacyBuyerCity", Objects.toString(config.getProperty("legacyBuyerCity"), ""));
+                    payload.put("legacyBuyerCountry", Objects.toString(config.getProperty("legacyBuyerCountry"), "DE"));
+                    payload.put("legacyBuyerVatId", Objects.toString(config.getProperty("legacyBuyerVatId"), ""));
+                    payload.put("legacyBuyerTaxNumber", Objects.toString(config.getProperty("legacyBuyerTaxNumber"), ""));
+                    payload.put("legacyNachweisFirmenname", Objects.toString(config.getProperty("legacyNachweisFirmenname"), DEFAULT_LEGACY_BUYER_NAME));
                     payload.put("lastImportedComissionHistory", getCommissionHistory(config));
                 payload.put("commissionHistoryLabels", buildCommissionHistoryLabels(config));
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
@@ -3763,25 +3830,59 @@ public class WebUiServer {
                 String belegFolder = belegDate != null ? belegDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : "unbekanntes-datum";
                 String advisorFolderToken = affiliate != null ? asText(affiliate, "name") : "ohne-beraterin";
                 Path runExportDir = exportDir.resolve("export_" + sanitizeFilename(belegFolder + "_" + paymentId + "_" + advisorFolderToken));
+
+                // Zeitraum und Dokumentart ZUERST bestimmen (rein lesend). Erst danach darf eine
+                // Belegnummer gezogen werden – generateNextDocumentNumber persistiert sofort.
+                String periodLabel = buildPaymentPeriodLabel(payment);
+                DocumentKindDecision decision = resolveDocumentKind(payment, config);
+                DocumentKind kind;
+                boolean kindOverridden = false;
+                if (decision.mixed()) {
+                    DocumentKind override = DocumentKind.fromWireValue(asText(body, "documentKind").trim(), null);
+                    if (override == null) {
+                        Map<String, Object> conflict = new LinkedHashMap<>();
+                        conflict.put("error", "Der Zahllauf enthält Provisionen vor und ab dem Stichtag "
+                                + rechnungCutoffDateRaw(config)
+                                + ". Es wurde kein Beleg erzeugt und keine Belegnummer vergeben. "
+                                + "Bitte manuell entscheiden, ob eine Gutschrift oder eine Rechnung ausgestellt wird.");
+                        conflict.put("code", "MIXED_PERIOD");
+                        conflict.put("paymentId", paymentId);
+                        conflict.put("periodLabel", periodLabel);
+                        conflict.put("cutoffDate", rechnungCutoffDateRaw(config));
+                        conflict.put("beforeCutoffCount", decision.beforeCutoffCount());
+                        conflict.put("fromCutoffCount", decision.fromCutoffCount());
+                        conflict.put("beforeCutoffAmount", decision.beforeCutoffAmount());
+                        conflict.put("fromCutoffAmount", decision.fromCutoffAmount());
+                        conflict.put("suggestedDocumentKind",
+                                decision.fromCutoffAmount() >= decision.beforeCutoffAmount() ? "gutschrift" : "rechnung");
+                        sendResponse(exchange, 409, "application/json", OBJECT_MAPPER.writeValueAsString(conflict));
+                        return;
+                    }
+                    kind = override;
+                    kindOverridden = true;
+                } else {
+                    // Außerhalb des Mixed-Falls wird ein mitgesendetes documentKind bewusst ignoriert.
+                    kind = decision.kind();
+                }
+
                 Files.createDirectories(runExportDir);
 
                 String timestamp = FILE_TIMESTAMP.format(LocalDateTime.now());
-                String gutschriftNr = generateNextGutschriftNumber(config);
+                String gutschriftNr = generateNextDocumentNumber(config, kind);
                 boolean isKleinunternehmer = affiliate == null || asText(affiliate, "tax_identification_number").isBlank();
-                String periodLabel = buildPaymentPeriodLabel(payment);
                 String baseFilename = "provisionsnachweis_" + sanitizeFilename(gutschriftNr) + "_" + timestamp;
                 Path pdfPath = runExportDir.resolve(baseFilename + ".pdf");
                 Path jsonPath = runExportDir.resolve(baseFilename + ".json");
                 boolean eInvoiceAttachAndStoreEnabled = includeEInvoiceArtifactsRequest != null
                         ? includeEInvoiceArtifactsRequest
                         : Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
-                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("gutschrift_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".xml") : null;
-                Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve("gutschrift_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".pdf") : null;
-                createInvoiceDetailsPdf(pdfPath, response, affiliate, config, gutschriftNr);
+                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".xml") : null;
+                Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".pdf") : null;
+                createInvoiceDetailsPdf(pdfPath, response, affiliate, config, gutschriftNr, kind);
                 writeOriginalJson(jsonPath, response);
                 if (eInvoiceAttachAndStoreEnabled) {
-                    createZugferdInvoiceXml(zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer);
-                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer);
+                    createZugferdInvoiceXml(zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer, kind);
+                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer, kind);
                 }
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
@@ -3798,9 +3899,9 @@ public class WebUiServer {
                 }
                 if (sendEmailsEnabled) {
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty("emailTemplateHtml"), ""), resolveSmtpConfig(config), gutschriftNr);
-                    String subject = "Ihre VEMMiNA-Provisionsgutschrift " + gutschriftNr + " – " + periodLabel;
-                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath);
+                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty(kind.mailTemplateKey), ""), resolveSmtpConfig(config), gutschriftNr, kind);
+                    String subject = documentMailSubject(kind, gutschriftNr, periodLabel);
+                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, kind, gutschriftNr, kindOverridden);
                 }
 
                 boolean opened = false;
@@ -3820,7 +3921,12 @@ public class WebUiServer {
                 persistSettings(config);
 
                 Map<String, Object> payload = new HashMap<>();
-                payload.put("message", sendEmailsEnabled ? ("advisor".equals(emailRecipientMode) ? "Gutschrift-PDF erstellt und an Beraterinnen-E-Mail versendet." : "Gutschrift-PDF erstellt und an Kontakt-E-Mail versendet.") : "Gutschrift-PDF erstellt (E-Mail-Versand deaktiviert).");
+                payload.put("message", sendEmailsEnabled ? ("advisor".equals(emailRecipientMode) ? kind.label + "-PDF erstellt und an Beraterinnen-E-Mail versendet." : kind.label + "-PDF erstellt und an Kontakt-E-Mail versendet.") : kind.label + "-PDF erstellt (E-Mail-Versand deaktiviert).");
+                payload.put("documentKind", kind.wireValue());
+                payload.put("documentKindLabel", kind.label);
+                payload.put("documentNumber", gutschriftNr);
+                payload.put("documentKindSource", decision.source());
+                payload.put("documentKindOverridden", kindOverridden);
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
@@ -3838,7 +3944,7 @@ public class WebUiServer {
             }
         }
 
-        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate, Properties config, String gutschriftNr) throws IOException {
+        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate, Properties config, String gutschriftNr, DocumentKind kind) throws IOException {
             try (PDDocument document = new PDDocument()) {
                 JsonNode payments = apiResponse.get("payments");
                 JsonNode payment = (payments != null && payments.isArray() && payments.size() > 0) ? payments.get(0) : null;
@@ -3925,7 +4031,7 @@ public class WebUiServer {
                     float keyWidth = totalWidth * 0.30f;
                     float valueWidth = totalWidth * 0.70f;
 
-                    String titleText = "Provisionsübersicht zur Gutschrift " + gutschriftNr;
+                    String titleText = "Provisionsübersicht zur " + kind.label + " " + gutschriftNr;
                     List<String> titleLines = wrapForPdf(titleText, 46);
                     float titleLineHeight = 22f;
                     float heroHeight = Math.max(62f, 18f + (titleLines.size() * titleLineHeight));
@@ -4033,7 +4139,7 @@ public class WebUiServer {
                     String[] notes = new String[]{
                             "• Diesen Provisionsnachweis zusammen mit dem Kontoauszug (Zahlungseingang/SEPA-Gutschrift) ablegen.",
                             "• Falls ihr umsatzsteuerpflichtig seid: prüfen, ob die Provision netto/brutto ausgewiesen werden muss.",
-                            "• Bei Kleinunternehmerregelung (§ 19 UStG): sicherstellen, dass die Gutschrift korrekt ausgestellt wurde.",
+                            "• Bei Kleinunternehmerregelung (§ 19 UStG): sicherstellen, dass die " + kind.label + " korrekt ausgestellt wurde.",
                             "• Team-/Downline-Provisionen: Referenzen im System aufbewahren und bei Bedarf nachreichen.",
                             "• Aufbewahrung: Unterlagen nach Jahr/Monat/Zahllauf archivieren.",
                             "• Stammdaten aktuell halten (Name/IBAN/Adresse/Steuernummer), damit Zuordnung eindeutig bleibt."
@@ -4050,8 +4156,9 @@ public class WebUiServer {
                     }
 
                     y -= 8;
-                    String nachweisFirmenname = Objects.toString(config.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH").trim();
-                    String providerNote = "Diese Provisionsübersicht wurde von der " + nachweisFirmenname + " als Anlage zur Gutschrift " + gutschriftNr + " gemäß § 14 UStG erstellt. " +
+                    String nachweisFirmenname = documentProviderName(config, kind);
+                    String providerNote = "Diese Provisionsübersicht wurde von der " + nachweisFirmenname + " als Anlage zur " + kind.label + " " + gutschriftNr
+                            + (kind.selfBilling ? " gemäß § 14 UStG" : "") + " erstellt. " +
                             "Bei Rückfragen wenden Sie sich bitte an info@vemmina.com. " +
                             "Die zugrundeliegenden Rohdaten können bei Bedarf angefragt werden.";
                     for (String line : wrapForPdf(providerNote, 100)) {
@@ -4678,20 +4785,26 @@ public class WebUiServer {
     }
 
     private static void createZugferdInvoiceXml(Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
-                                                String gutschriftNr, String periodLabel, boolean isKleinunternehmer) throws IOException {
+                                                String documentNumber, String periodLabel, boolean isKleinunternehmer) throws IOException {
+        createZugferdInvoiceXml(xmlPath, payment, affiliate, config, documentNumber, periodLabel, isKleinunternehmer, DocumentKind.GUTSCHRIFT);
+    }
+
+    private static void createZugferdInvoiceXml(Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
+                                                String documentNumber, String periodLabel, boolean isKleinunternehmer,
+                                                DocumentKind kind) throws IOException {
         boolean enabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true"));
         if (!enabled) {
-            Files.writeString(xmlPath, "<!-- ZUGFeRD/E-Gutschrift deaktiviert -->", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            Files.writeString(xmlPath, "<!-- ZUGFeRD/E-" + kind.label + " deaktiviert -->", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
             return;
         }
 
-        String buyerName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
-        String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
-        String buyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
-        String buyerCity = Objects.toString(config.getProperty("eInvoiceBuyerCity"), "").trim();
-        String buyerCountry = Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE").trim();
-        String buyerVatId = Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "").trim();
-        String buyerTaxNumber = Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "").trim();
+        String buyerName = buyerProperty(config, kind, "Name", kind.defaultBuyerName);
+        String buyerStreet = buyerProperty(config, kind, "Street", "");
+        String buyerZip = buyerProperty(config, kind, "Zip", "");
+        String buyerCity = buyerProperty(config, kind, "City", "");
+        String buyerCountry = buyerProperty(config, kind, "Country", "DE");
+        String buyerVatId = buyerProperty(config, kind, "VatId", "");
+        String buyerTaxNumber = buyerProperty(config, kind, "TaxNumber", "");
         String paymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
 
         String sellerName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
@@ -4706,7 +4819,11 @@ public class WebUiServer {
         String bankAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
         if (bankAccountHolder.isBlank()) bankAccountHolder = parseAffiliatePaymentField(affiliate, "name");
 
-        String issueDate = formatDateYmd(asText(payment, "created_at"));
+        // Altfall-Rechnungen tragen als Rechnungsdatum den Ausstellungstag (passend zum Nummernjahr);
+        // Auszahlungsdatum und Leistungszeitraum werden im Dokument separat ausgewiesen.
+        String issueDate = kind == DocumentKind.RECHNUNG
+                ? LocalDate.now(BERLIN_ZONE).format(DateTimeFormatter.BASIC_ISO_DATE)
+                : formatDateYmd(asText(payment, "created_at"));
         String currency = asText(payment, "currency");
         if (currency.isBlank()) currency = "EUR";
         double netAmount = parseDoubleSafeStatic(asText(payment, "amount"));
@@ -4731,7 +4848,7 @@ public class WebUiServer {
                   </rsm:ExchangedDocumentContext>
                   <rsm:ExchangedDocument>
                     <ram:ID>{{gutschriftNr}}</ram:ID>
-                    <ram:TypeCode>389</ram:TypeCode>
+                    <ram:TypeCode>{{typeCode}}</ram:TypeCode>
                     <ram:IssueDateTime><udt:DateTimeString format="102">{{issueDate}}</udt:DateTimeString></ram:IssueDateTime>
                   </rsm:ExchangedDocument>
                   <rsm:SupplyChainTradeTransaction>
@@ -4789,7 +4906,8 @@ public class WebUiServer {
                   </rsm:SupplyChainTradeTransaction>
                 </rsm:CrossIndustryInvoice>
                 """;
-        xml = xml.replace("{{gutschriftNr}}", escapeXml(gutschriftNr))
+        xml = xml.replace("{{typeCode}}", kind.zugferdTypeCode)
+                .replace("{{gutschriftNr}}", escapeXml(documentNumber))
                 .replace("{{issueDate}}", escapeXml(issueDate))
                 .replace("{{periodLabel}}", escapeXml(periodLabel))
                 .replace("{{sellerName}}", escapeXml(sellerName))
@@ -5088,27 +5206,40 @@ public class WebUiServer {
         return "";
     }
 
-    private static String buildPaymentPeriodLabel(JsonNode payment) {
+    /** Min/Max der Transaktions-Zeitstempel eines Zahllaufs. Einzige Quelle für Zeitraum UND Stichtag. */
+    private record TransactionDateRange(OffsetDateTime min, OffsetDateTime max, int datedCount, int totalCount) {
+        boolean hasDates() {
+            return min != null && max != null;
+        }
+    }
+
+    private static TransactionDateRange extractTransactionDateRange(JsonNode payment) {
         JsonNode transactions = payment != null ? payment.get("transactions") : null;
         if (transactions == null || !transactions.isArray() || transactions.size() == 0) {
-            return "ohne Zeitraum";
+            return new TransactionDateRange(null, null, 0, 0);
         }
-
         OffsetDateTime minDate = null;
         OffsetDateTime maxDate = null;
+        int dated = 0;
         for (JsonNode tx : transactions) {
             try {
                 OffsetDateTime dt = OffsetDateTime.parse(asText(tx, "created_at"));
                 if (minDate == null || dt.isBefore(minDate)) minDate = dt;
                 if (maxDate == null || dt.isAfter(maxDate)) maxDate = dt;
+                dated++;
             } catch (Exception ignored) {
             }
         }
-        if (minDate == null || maxDate == null) return "ohne Zeitraum";
+        return new TransactionDateRange(minDate, maxDate, dated, transactions.size());
+    }
+
+    private static String buildPaymentPeriodLabel(JsonNode payment) {
+        TransactionDateRange range = extractTransactionDateRange(payment);
+        if (!range.hasDates()) return "ohne Zeitraum";
         DateTimeFormatter f = DateTimeFormatter.ofPattern("dd.MM.yyyy");
-        return minDate.atZoneSameInstant(ZoneId.of("Europe/Berlin")).format(f)
+        return range.min().atZoneSameInstant(BERLIN_ZONE).format(f)
                 + " bis "
-                + maxDate.atZoneSameInstant(ZoneId.of("Europe/Berlin")).format(f);
+                + range.max().atZoneSameInstant(BERLIN_ZONE).format(f);
     }
 
     private static void writeOriginalJson(Path jsonPath, JsonNode response) throws IOException {
@@ -5116,7 +5247,12 @@ public class WebUiServer {
         Files.writeString(jsonPath, pretty, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig, String gutschriftNr) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig, String documentNumber) throws Exception {
+        sendInvoiceMailWithAttachment(toEmail, bccEmail, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, includeEInvoiceAttachments,
+                affiliateName, periodLabel, payment, affiliate, configuredEmailTemplateHtml, smtpConfig, documentNumber, DocumentKind.GUTSCHRIFT);
+    }
+
+    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig, String gutschriftNr, DocumentKind kind) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -5134,11 +5270,11 @@ public class WebUiServer {
         }
 
         String displayName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
-        String subject = "Ihre VEMMiNA-Provisionsgutschrift " + gutschriftNr + " – " + periodLabel;
+        String subject = documentMailSubject(kind, gutschriftNr, periodLabel);
         message.setSubject(subject, StandardCharsets.UTF_8.name());
 
-        String plainTextBody = buildInvoiceMailBody(payment, affiliate, periodLabel, gutschriftNr);
-        String htmlBody = buildInvoiceMailHtml(payment, affiliate, periodLabel, configuredEmailTemplateHtml, gutschriftNr);
+        String plainTextBody = buildInvoiceMailBody(payment, affiliate, periodLabel, gutschriftNr, kind);
+        String htmlBody = buildInvoiceMailHtml(payment, affiliate, periodLabel, configuredEmailTemplateHtml, gutschriftNr, kind);
 
         MimeBodyPart contentPart = new MimeBodyPart();
         MimeMultipart alternative = new MimeMultipart("alternative");
@@ -5200,7 +5336,11 @@ public class WebUiServer {
     }
 
 
-    private static String buildInvoiceMailBody(JsonNode payment, JsonNode affiliate, String periodLabel, String gutschriftNr) {
+    private static String buildInvoiceMailBody(JsonNode payment, JsonNode affiliate, String periodLabel, String documentNumber) {
+        return buildInvoiceMailBody(payment, affiliate, periodLabel, documentNumber, DocumentKind.GUTSCHRIFT);
+    }
+
+    private static String buildInvoiceMailBody(JsonNode payment, JsonNode affiliate, String periodLabel, String gutschriftNr, DocumentKind kind) {
         String affiliateName = affiliate != null ? asText(affiliate, "name") : "";
         String salutationName = (affiliateName == null || affiliateName.isBlank()) ? "liebe Beraterin" : ("liebe " + affiliateName.trim());
         String paymentId = payment != null ? asText(payment, "id") : "";
@@ -5211,6 +5351,29 @@ public class WebUiServer {
         int txCount = 0;
         JsonNode transactions = payment != null ? payment.get("transactions") : null;
         if (transactions != null && transactions.isArray()) txCount = transactions.size();
+
+        if (kind == DocumentKind.RECHNUNG) {
+            return """
+                Hallo %s,
+
+                der Provisionslauf für %s wurde abgeschlossen.
+
+                Im Anhang finden Sie Ihre Rechnung %s (PDF) über die Vermittlungsprovision sowie die Provisionsübersicht mit den vermittelten Aufträgen.
+
+                Kurze Übersicht:
+                - Rechnungsnummer: %s
+                - Zeitraum: %s
+                - Auszahlungsbetrag: %s
+                - Zahlungsmethode: %s
+                - Auszahlungsdatum (System): %s
+                - Anzahl Transaktionen: %s
+
+                Bitte prüfen Sie die Unterlagen. Falls Ihnen Abweichungen auffallen, melden Sie sich bitte zeitnah bei uns.
+
+                Viele Grüße
+                Ihr VEMMiNA Team
+                """.formatted(salutationName, periodLabel, gutschriftNr, gutschriftNr, periodLabel, payout, method, created, txCount);
+        }
 
         return """
                 Hallo %s,
@@ -5234,7 +5397,11 @@ public class WebUiServer {
                 """.formatted(salutationName, periodLabel, gutschriftNr, gutschriftNr, periodLabel, payout, method, created, txCount);
     }
 
-    private static String buildInvoiceMailHtml(JsonNode payment, JsonNode affiliate, String periodLabel, String configuredTemplateHtml, String gutschriftNr) {
+    private static String buildInvoiceMailHtml(JsonNode payment, JsonNode affiliate, String periodLabel, String configuredTemplateHtml, String documentNumber) {
+        return buildInvoiceMailHtml(payment, affiliate, periodLabel, configuredTemplateHtml, documentNumber, DocumentKind.GUTSCHRIFT);
+    }
+
+    private static String buildInvoiceMailHtml(JsonNode payment, JsonNode affiliate, String periodLabel, String configuredTemplateHtml, String gutschriftNr, DocumentKind kind) {
         String affiliateName = affiliate != null ? asText(affiliate, "name") : "";
         String salutationName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
         String paymentId = payment != null ? asText(payment, "id") : "-";
@@ -5247,12 +5414,13 @@ public class WebUiServer {
         if (transactions != null && transactions.isArray()) txCount = transactions.size();
 
         String template = (configuredTemplateHtml == null || configuredTemplateHtml.isBlank())
-                ? getDefaultInvoiceMailHtmlTemplate()
+                ? defaultMailTemplate(kind)
                 : configuredTemplateHtml;
 
         return template
                 .replace("{{salutationName}}", escapeHtmlEmail(salutationName))
                 .replace("{{periodLabel}}", escapeHtmlEmail(periodLabel))
+                .replace("{{documentNumber}}", escapeHtmlEmail(gutschriftNr))
                 .replace("{{gutschriftNr}}", escapeHtmlEmail(gutschriftNr))
                 .replace("{{paymentId}}", escapeHtmlEmail(paymentId))
                 .replace("{{payout}}", escapeHtmlEmail(payout))
@@ -5288,6 +5456,54 @@ public class WebUiServer {
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Auszahlungsbetrag</strong><br/><span style="font-size:20px;font-weight:700;color:#108474;">{{payout}}</span></td></tr>
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Zahlungsmethode</strong><br/>{{method}}</td></tr>
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Ausstellungsdatum</strong><br/>{{created}}</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;"><strong>Anzahl Transaktionen</strong><br/>{{txCount}}</td></tr>
+                              </table>
+
+                              <p style="margin:18px 0 0 0;font-size:15px;line-height:1.7;color:#334155;">Falls Ihnen Abweichungen auffallen, melden Sie sich bitte zeitnah bei uns.</p>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:20px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;">
+                              <p style="margin:0;font-size:14px;color:#64748b;">Viele Grüße<br/><strong style="color:#0f172a;">Ihr VEMMiNA Team</strong></p>
+                            </td>
+                          </tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+                </body>
+                </html>
+                """;
+    }
+
+    // LEGACY-RECHNUNG: Mailvorlage für Altfälle. Layoutgleich, aber Rechnungs-Wortlaut ohne § 14.
+    private static String getDefaultRechnungMailHtmlTemplate() {
+        return """
+                <!doctype html>
+                <html lang="de">
+                <body style="margin:0;padding:0;background:#eef4f8;font-family:Arial,sans-serif;color:#1f2937;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#eef4f8;padding:22px 0;">
+                    <tr>
+                      <td align="center">
+                        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="680" style="max-width:680px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #dbe3ef;box-shadow:0 10px 24px rgba(15,23,42,0.08);">
+                          <tr>
+                            <td style="padding:26px 28px;background:linear-gradient(135deg,#6FA3C4 0%,#5c8fb1 100%);color:#ffffff;">
+                              <p style="margin:0;font-size:13px;letter-spacing:1.2px;text-transform:uppercase;opacity:0.88;">VEMMiNA</p>
+                              <h1 style="margin:8px 0 6px 0;font-size:34px;line-height:1.2;">Ihre Provisionsrechnung</h1>
+                              <p style="margin:0;font-size:16px;line-height:1.5;opacity:0.95;">Der Provisionslauf für {{periodLabel}} wurde abgeschlossen.</p>
+                            </td>
+                          </tr>
+                          <tr>
+                            <td style="padding:28px;">
+                              <p style="margin:0 0 14px 0;font-size:24px;line-height:1.35;color:#1e293b;">Hallo {{salutationName}},</p>
+                              <p style="margin:0 0 18px 0;font-size:16px;line-height:1.7;color:#334155;">im Anhang finden Sie Ihre Rechnung über die Vermittlungsprovision sowie die Provisionsübersicht mit den vermittelten Aufträgen. Bitte prüfen Sie die Unterlagen.</p>
+
+                              <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:separate;border-spacing:0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Rechnungsnummer</strong><br/>{{documentNumber}}</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Zeitraum</strong><br/>{{periodLabel}}</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Auszahlungsbetrag</strong><br/><span style="font-size:20px;font-weight:700;color:#108474;">{{payout}}</span></td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Zahlungsmethode</strong><br/>{{method}}</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Auszahlungsdatum</strong><br/>{{created}}</td></tr>
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;"><strong>Anzahl Transaktionen</strong><br/>{{txCount}}</td></tr>
                               </table>
 
@@ -5394,9 +5610,18 @@ public class WebUiServer {
     }
 
     private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath) {
+        appendMailLogEntry(config, paymentId, recipientMode, toEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoiceViewPdfPath,
+                DocumentKind.GUTSCHRIFT, "", false);
+    }
+
+    private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath,
+                                           DocumentKind kind, String documentNumber, boolean kindOverridden) {
         List<Map<String, String>> entries = readMailLogEntries(config);
         Map<String, String> row = new LinkedHashMap<>();
         row.put("paymentId", Objects.toString(paymentId, ""));
+        row.put("documentKind", (kind != null ? kind : DocumentKind.GUTSCHRIFT).wireValue());
+        row.put("documentNumber", Objects.toString(documentNumber, ""));
+        if (kindOverridden) row.put("documentKindOverridden", "true");
         row.put("recipientMode", Objects.toString(recipientMode, "contact"));
         row.put("toEmail", Objects.toString(toEmail, ""));
         row.put("subject", Objects.toString(subject, ""));
@@ -5460,9 +5685,16 @@ public class WebUiServer {
     }
 
     private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
-                                                         String gutschriftNr, String periodLabel, boolean isKleinunternehmer) throws IOException {
+                                                         String documentNumber, String periodLabel, boolean isKleinunternehmer) throws IOException {
+        createEInvoicePdfWithEmbeddedXml(pdfPath, xmlPath, payment, affiliate, config,
+                documentNumber, periodLabel, isKleinunternehmer, DocumentKind.GUTSCHRIFT);
+    }
+
+    private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
+                                                         String gutschriftNr, String periodLabel, boolean isKleinunternehmer,
+                                                         DocumentKind kind) throws IOException {
         if (!Boolean.getBoolean("goaffpro.legacyEInvoicePdfRenderer")) {
-            createEInvoicePdfFromHtmlTemplate(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer);
+            createEInvoicePdfFromHtmlTemplate(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer, kind);
             return;
         }
 
@@ -5777,10 +6009,10 @@ public class WebUiServer {
     }
 
     private static void createEInvoicePdfFromHtmlTemplate(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
-                                                         String gutschriftNr, String periodLabel, boolean isKleinunternehmer) throws IOException {
-        String configuredTemplate = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "").trim();
-        String template = configuredTemplate.isBlank() ? getDefaultEInvoicePdfViewHtmlTemplate() : configuredTemplate;
-        String renderedHtml = renderEInvoicePdfViewHtml(template, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer);
+                                                         String documentNumber, String periodLabel, boolean isKleinunternehmer,
+                                                         DocumentKind kind) throws IOException {
+        String template = documentPdfTemplateHtml(config, kind);
+        String renderedHtml = renderEInvoicePdfViewHtml(template, payment, affiliate, config, documentNumber, periodLabel, isKleinunternehmer, kind);
         String xhtml = normalizeHtmlForPdf(renderedHtml);
         String baseUri = pdfPath.toAbsolutePath().getParent() == null
                 ? Paths.get(".").toAbsolutePath().toUri().toString()
@@ -5919,7 +6151,13 @@ public class WebUiServer {
     }
 
     private static String renderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate, Properties config,
-                                                    String gutschriftNr, String periodLabel, boolean isKleinunternehmer) {
+                                                    String documentNumber, String periodLabel, boolean isKleinunternehmer) {
+        return renderEInvoicePdfViewHtml(template, payment, affiliate, config, documentNumber, periodLabel, isKleinunternehmer, DocumentKind.GUTSCHRIFT);
+    }
+
+    private static String renderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate, Properties config,
+                                                    String gutschriftNr, String periodLabel, boolean isKleinunternehmer,
+                                                    DocumentKind kind) {
         String advisorName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
         String advisorAddress = formatAffiliateAddress(affiliate);
         String advisorEmail = affiliate != null ? asText(affiliate, "email") : "";
@@ -5935,13 +6173,13 @@ public class WebUiServer {
         String grossAmountFormatted = euroStatic(grossAmountVal);
         String vatLine = isKleinunternehmer ? "Gem. § 19 UStG keine USt." : "Umsatzsteuer (19 %)";
         String currency = payment != null ? asText(payment, "currency") : "EUR";
-        String buyerCompanyName = Objects.toString(config.getProperty("eInvoiceBuyerName"), "S+R linear technology gmbh").trim();
-        String buyerStreet = Objects.toString(config.getProperty("eInvoiceBuyerStreet"), "").trim();
-        String buyerZip = Objects.toString(config.getProperty("eInvoiceBuyerZip"), "").trim();
-        String buyerCity = Objects.toString(config.getProperty("eInvoiceBuyerCity"), "").trim();
-        String buyerCountry = Objects.toString(config.getProperty("eInvoiceBuyerCountry"), "DE").trim();
-        String buyerVatId = Objects.toString(config.getProperty("eInvoiceBuyerVatId"), "").trim();
-        String buyerTaxNumber = Objects.toString(config.getProperty("eInvoiceBuyerTaxNumber"), "").trim();
+        String buyerCompanyName = buyerProperty(config, kind, "Name", kind.defaultBuyerName);
+        String buyerStreet = buyerProperty(config, kind, "Street", "");
+        String buyerZip = buyerProperty(config, kind, "Zip", "");
+        String buyerCity = buyerProperty(config, kind, "City", "");
+        String buyerCountry = buyerProperty(config, kind, "Country", "DE");
+        String buyerVatId = buyerProperty(config, kind, "VatId", "");
+        String buyerTaxNumber = buyerProperty(config, kind, "TaxNumber", "");
         String buyerAddress = String.join(", ", List.of(
                 buyerStreet,
                 (buyerZip + " " + buyerCity).trim(),
@@ -5967,6 +6205,10 @@ public class WebUiServer {
                 .replace("{{buyerTaxNumber}}", escapeHtmlEmail(buyerTaxNumber))
                 .replace("{{gutschriftNr}}", escapeHtmlEmail(gutschriftNr))
                 .replace("{{invoiceNumber}}", escapeHtmlEmail(gutschriftNr))
+                .replace("{{documentNumber}}", escapeHtmlEmail(gutschriftNr))
+                .replace("{{issueDate}}", escapeHtmlEmail(kind == DocumentKind.RECHNUNG
+                        ? LocalDate.now(BERLIN_ZONE).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
+                        : created))
                 .replace("{{paymentId}}", escapeHtmlEmail(paymentId))
                 .replace("{{periodLabel}}", escapeHtmlEmail(periodLabel))
                 .replace("{{vatLine}}", escapeHtmlEmail(vatLine))
@@ -5975,6 +6217,113 @@ public class WebUiServer {
                 .replace("{{created}}", escapeHtmlEmail(created))
                 .replace("{{amount}}", escapeHtmlEmail(amount))
                 .replace("{{currency}}", escapeHtmlEmail(currency));
+    }
+
+    // LEGACY-RECHNUNG: Vorlage für Altfälle. Layoutgleich zur Gutschrift, aber Rechnungs-Wortlaut,
+    // ohne § 14 / Widerspruchshinweis, mit getrenntem Rechnungs- und Auszahlungsdatum.
+    private static String getDefaultRechnungPdfViewHtmlTemplate() {
+        return """
+                <!doctype html>
+                <html lang="de">
+                <head>
+                  <meta charset="UTF-8" />
+                  <style>
+                    @page { size: A4; margin: 18mm 16mm; }
+                    body { font-family: Arial, sans-serif; color:#111827; font-size:10px; line-height:1.35; }
+                    table { border-collapse: collapse; }
+                    .muted { color:#5f6b7a; }
+                    .rule { border-top:1px solid #d6dbe2; }
+                  </style>
+                </head>
+                <body>
+                  <table style="width:100%;margin-bottom:42px;">
+                    <tr>
+                      <td style="vertical-align:top;width:48%;">
+                        <img src="{{vemminaLogoDataUri}}" alt="VEMMiNA" style="width:150px;height:auto;" />
+                      </td>
+                      <td style="vertical-align:top;text-align:right;width:52%;font-size:10px;">
+                        <div style="font-weight:700;">{{buyerCompanyName}}</div>
+                        <div>{{buyerAddress}}</div>
+                        <div style="margin-top:8px;font-weight:700;">Rechnungsempf&auml;ngerin (Leistungsempf&auml;ngerin)</div>
+                        <div>USt-IdNr: {{buyerVatId}}</div>
+                        <div>Steuernummer: {{buyerTaxNumber}}</div>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <div class="muted" style="font-size:8px;border-bottom:1px solid #cfd5dd;padding-bottom:4px;width:64%;margin-bottom:10px;">
+                    {{buyerCompanyName}}, {{buyerAddress}}
+                  </div>
+
+                  <table style="width:100%;margin-bottom:42px;">
+                    <tr>
+                      <td style="vertical-align:top;width:58%;font-size:10px;">
+                        <div style="font-weight:700;">{{advisorName}}</div>
+                        <div>{{advisorAddress}}</div>
+                        <div style="margin-top:8px;" class="muted">Rechnungsstellerin (Leistungserbringerin)</div>
+                        <div class="muted">E-Mail: {{advisorEmail}}</div>
+                        <div class="muted">Telefon: {{advisorPhone}}</div>
+                        <div class="muted">Steuernummer: {{advisorTaxNumber}}</div>
+                      </td>
+                      <td style="vertical-align:top;width:42%;">
+                        <table style="width:100%;font-size:10px;">
+                          <tr><td class="muted" style="padding:0 0 5px 0;">Rechnungsnummer</td><td style="text-align:right;padding:0 0 5px 0;">{{documentNumber}}</td></tr>
+                          <tr><td class="muted" style="padding:0 0 5px 0;">Rechnungsdatum</td><td style="text-align:right;padding:0 0 5px 0;">{{issueDate}}</td></tr>
+                          <tr><td class="muted" style="padding:0 0 5px 0;">Auszahlungsdatum</td><td style="text-align:right;padding:0 0 5px 0;">{{created}}</td></tr>
+                          <tr><td class="muted" style="padding:0 0 5px 0;">Zahllauf-ID</td><td style="text-align:right;padding:0 0 5px 0;">{{paymentId}}</td></tr>
+                          <tr><td class="muted" style="padding:0 0 5px 0;">Leistungszeitraum</td><td style="text-align:right;padding:0 0 5px 0;">{{periodLabel}}</td></tr>
+                        </table>
+                      </td>
+                    </tr>
+                  </table>
+
+                  <div style="font-size:18px;margin-bottom:30px;">Rechnung</div>
+
+                  <table style="width:100%;font-size:10px;margin-bottom:34px;">
+                    <thead>
+                      <tr class="rule">
+                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:48px;">Pos</th>
+                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;">Beschreibung</th>
+                        <th style="text-align:right;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:140px;">Betrag</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">1</td>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">Vermittlungsprovision - Provisionszeitraum {{periodLabel}}</td>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">{{amount}} ({{currency}})</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <table style="width:42%;margin-left:58%;font-size:10px;margin-bottom:28px;">
+                    <tr><td style="padding:4px 0;">Zwischensumme (netto)</td><td style="padding:4px 0;text-align:right;">{{amount}}</td></tr>
+                    <tr><td style="padding:4px 0;">{{vatLine}}</td><td style="padding:4px 0;text-align:right;">{{vatAmount}}</td></tr>
+                    <tr><td style="padding:4px 0;border-top:1px solid #d6dbe2;">Gesamtsumme</td><td style="padding:4px 0;border-top:1px solid #d6dbe2;text-align:right;">{{grossAmount}}</td></tr>
+                    <tr><td style="padding:5px 0;font-weight:700;">Auszahlungsbetrag</td><td style="padding:5px 0;text-align:right;font-weight:700;">{{grossAmount}}</td></tr>
+                  </table>
+
+                  <div style="margin-bottom:20px;">
+                    <div>Zahlbar sofort ohne Abzug auf das unten genannte Konto.</div>
+                    <div>Diese Rechnung wurde maschinell erstellt und ist ohne Unterschrift g&uuml;ltig.</div>
+                  </div>
+
+                  <div style="margin-top:18px;border-top:1px solid #d6dbe2;padding-top:10px;font-size:10px;">
+                    <div style="font-weight:700;">Bankverbindung der Rechnungsstellerin</div>
+                    <div>Kontoinhaber: {{advisorAccountHolder}}</div>
+                    <div>IBAN: {{advisorIban}}</div>
+                    <div>BIC: {{advisorBic}}</div>
+                  </div>
+
+                  <div style="margin-top:42px;border-top:1px solid #d6dbe2;padding-top:10px;text-align:center;font-size:9px;line-height:1.45;" class="muted">
+                    <div>{{buyerCompanyName}}</div>
+                    <div>{{buyerAddress}}</div>
+                    <div>USt-IdNr: {{buyerVatId}}</div>
+                    <div>Steuernummer: {{buyerTaxNumber}}</div>
+                  </div>
+                </body>
+                </html>
+                """.replace("{{vemminaLogoDataUri}}", VEMMINA_LOGO_DATA_URI);
     }
 
     private static String getDefaultEInvoicePdfViewHtmlTemplate() {
@@ -6368,23 +6717,224 @@ public class WebUiServer {
         }
     }
 
-    private static String generateNextGutschriftNumber(Properties config) throws IOException {
+    // ══════════════ LEGACY-RECHNUNG (Altfälle bis 31.12.2025) ─ BEGIN ══════════════
+    // Provisionen mit einem Transaktionsdatum vor dem Stichtag werden als RECHNUNG gegen die
+    // Alt-Gesellschaft ausgestellt, ab Stichtag als GUTSCHRIFT (Regelfall). Rein datumsgesteuert,
+    // kein manueller Schalter.
+    // ENTFERNEN: diesen Block löschen, dann alle Referenzen auf DocumentKind sowie die
+    // Config-Keys mit Präfix "legacy" und "rechnung" abräumen.
+
+    private enum DocumentKind {
+        GUTSCHRIFT(
+                "GS", "gutschriftCounter", "gutschriftCounterYear",
+                "389", "gutschrift",
+                "Gutschrift", "Gutschriftnummer",
+                true,
+                "eInvoiceBuyer", "S+R linear technology gmbh",
+                "nachweisFirmenname", "S+R Linear Technology GmbH",
+                "eInvoicePdfTemplateHtml", "emailTemplateHtml"),
+        RECHNUNG(
+                "RE", "rechnungCounter", "rechnungCounterYear",
+                "380", "rechnung",
+                "Rechnung", "Rechnungsnummer",
+                false,
+                "legacyBuyer", "VEMMiNA Qualitäts- Haushaltsprodukte GmbH",
+                "legacyNachweisFirmenname", "VEMMiNA Qualitäts- Haushaltsprodukte GmbH",
+                "eInvoicePdfTemplateHtmlRechnung", "emailTemplateHtmlRechnung");
+
+        final String numberPrefix;
+        final String counterKey;
+        final String counterYearKey;
+        final String zugferdTypeCode;
+        final String filePrefix;
+        final String label;
+        final String numberLabel;
+        final boolean selfBilling;
+        final String buyerKeyPrefix;
+        final String defaultBuyerName;
+        final String providerNameKey;
+        final String defaultProviderName;
+        final String pdfTemplateKey;
+        final String mailTemplateKey;
+
+        DocumentKind(String numberPrefix, String counterKey, String counterYearKey,
+                     String zugferdTypeCode, String filePrefix,
+                     String label, String numberLabel, boolean selfBilling,
+                     String buyerKeyPrefix, String defaultBuyerName,
+                     String providerNameKey, String defaultProviderName,
+                     String pdfTemplateKey, String mailTemplateKey) {
+            this.numberPrefix = numberPrefix;
+            this.counterKey = counterKey;
+            this.counterYearKey = counterYearKey;
+            this.zugferdTypeCode = zugferdTypeCode;
+            this.filePrefix = filePrefix;
+            this.label = label;
+            this.numberLabel = numberLabel;
+            this.selfBilling = selfBilling;
+            this.buyerKeyPrefix = buyerKeyPrefix;
+            this.defaultBuyerName = defaultBuyerName;
+            this.providerNameKey = providerNameKey;
+            this.defaultProviderName = defaultProviderName;
+            this.pdfTemplateKey = pdfTemplateKey;
+            this.mailTemplateKey = mailTemplateKey;
+        }
+
+        String wireValue() {
+            return name().toLowerCase(java.util.Locale.ROOT);
+        }
+
+        static DocumentKind fromWireValue(String raw, DocumentKind fallback) {
+            if (raw == null) return fallback;
+            String value = raw.trim().toLowerCase(java.util.Locale.ROOT);
+            if ("rechnung".equals(value)) return RECHNUNG;
+            if ("gutschrift".equals(value)) return GUTSCHRIFT;
+            return fallback;
+        }
+    }
+
+    /** Firmen-/Gegenparteidaten je Dokumentart: Key-Präfix + Suffix ergibt den bestehenden Config-Key. */
+    private static String buyerProperty(Properties config, DocumentKind kind, String suffix, String fallback) {
+        return Objects.toString(config.getProperty(kind.buyerKeyPrefix + suffix), fallback).trim();
+    }
+
+    private static String documentProviderName(Properties config, DocumentKind kind) {
+        String value = Objects.toString(config.getProperty(kind.providerNameKey), "").trim();
+        return value.isBlank() ? kind.defaultProviderName : value;
+    }
+
+    private static String defaultPdfViewTemplate(DocumentKind kind) {
+        return kind == DocumentKind.RECHNUNG
+                ? getDefaultRechnungPdfViewHtmlTemplate()
+                : getDefaultEInvoicePdfViewHtmlTemplate();
+    }
+
+    private static String defaultMailTemplate(DocumentKind kind) {
+        return kind == DocumentKind.RECHNUNG
+                ? getDefaultRechnungMailHtmlTemplate()
+                : getDefaultInvoiceMailHtmlTemplate();
+    }
+
+    private static String documentPdfTemplateHtml(Properties config, DocumentKind kind) {
+        String value = Objects.toString(config.getProperty(kind.pdfTemplateKey), "").trim();
+        return value.isBlank() ? defaultPdfViewTemplate(kind) : value;
+    }
+
+    private static String documentMailTemplateHtml(Properties config, DocumentKind kind) {
+        String value = Objects.toString(config.getProperty(kind.mailTemplateKey), "").trim();
+        return value.isBlank() ? defaultMailTemplate(kind) : value;
+    }
+
+    private static String documentMailSubject(DocumentKind kind, String documentNumber, String periodLabel) {
+        return kind == DocumentKind.RECHNUNG
+                ? "Ihre VEMMiNA-Provisionsrechnung " + documentNumber + " – " + periodLabel
+                : "Ihre VEMMiNA-Provisionsgutschrift " + documentNumber + " – " + periodLabel;
+    }
+
+    private static final String DEFAULT_RECHNUNG_CUTOFF_DATE = "2026-01-01";
+    private static final String DEFAULT_LEGACY_BUYER_NAME = "VEMMiNA Qualitäts- Haushaltsprodukte GmbH";
+
+    /** Akzeptiert nur ein gültiges ISO-Datum (yyyy-MM-dd); sonst greift der Fallback. */
+    private static String normalizeIsoDate(String raw, String fallback) {
+        String value = Objects.toString(raw, "").trim();
+        if (value.isBlank()) return fallback;
+        try {
+            return LocalDate.parse(value).toString();
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private static String rechnungCutoffDateRaw(Properties config) {
+        String raw = Objects.toString(config.getProperty("rechnungCutoffDate"), "").trim();
+        return raw.isBlank() ? DEFAULT_RECHNUNG_CUTOFF_DATE : raw;
+    }
+
+    /** Stichtag als Tagesbeginn in Europe/Berlin. Vergleich später über Instant (offset-korrekt). */
+    private static Instant resolveRechnungCutoffInstant(Properties config) {
+        LocalDate date;
+        try {
+            date = LocalDate.parse(rechnungCutoffDateRaw(config));
+        } catch (Exception ignored) {
+            date = LocalDate.parse(DEFAULT_RECHNUNG_CUTOFF_DATE);
+        }
+        return date.atStartOfDay(BERLIN_ZONE).toInstant();
+    }
+
+    /** Ergebnis der Stichtagsprüfung. mixed == true bedeutet: kein Dokument, keine Nummer. */
+    private record DocumentKindDecision(DocumentKind kind, boolean mixed, String source,
+                                        int beforeCutoffCount, int fromCutoffCount,
+                                        double beforeCutoffAmount, double fromCutoffAmount) {
+    }
+
+    private static DocumentKindDecision resolveDocumentKind(JsonNode payment, Properties config) {
+        Instant cutoff = resolveRechnungCutoffInstant(config);
+        JsonNode transactions = payment != null ? payment.get("transactions") : null;
+
+        int before = 0;
+        int from = 0;
+        double beforeSum = 0.0;
+        double fromSum = 0.0;
+        if (transactions != null && transactions.isArray()) {
+            for (JsonNode tx : transactions) {
+                Instant ts;
+                try {
+                    ts = OffsetDateTime.parse(asText(tx, "created_at")).toInstant();
+                } catch (Exception ignored) {
+                    continue; // undatierte Transaktionen zählen nicht mit (spiegelt buildPaymentPeriodLabel)
+                }
+                double amount = parseDoubleSafeStatic(asText(tx, "amount"));
+                if (ts.isBefore(cutoff)) {
+                    before++;
+                    beforeSum += amount;
+                } else {
+                    from++;
+                    fromSum += amount;
+                }
+            }
+        }
+
+        if (before > 0 && from > 0) {
+            return new DocumentKindDecision(null, true, "transactions", before, from, beforeSum, fromSum);
+        }
+        if (before > 0) {
+            return new DocumentKindDecision(DocumentKind.RECHNUNG, false, "transactions", before, 0, beforeSum, 0.0);
+        }
+        if (from > 0) {
+            return new DocumentKindDecision(DocumentKind.GUTSCHRIFT, false, "transactions", 0, from, 0.0, fromSum);
+        }
+
+        // Kein auswertbares Transaktionsdatum -> Rückfall auf das Zahllauf-Datum.
+        try {
+            Instant paid = OffsetDateTime.parse(asText(payment, "created_at")).toInstant();
+            DocumentKind kind = paid.isBefore(cutoff) ? DocumentKind.RECHNUNG : DocumentKind.GUTSCHRIFT;
+            return new DocumentKindDecision(kind, false, "paymentCreatedAt", 0, 0, 0.0, 0.0);
+        } catch (Exception ignored) {
+            return new DocumentKindDecision(DocumentKind.GUTSCHRIFT, false, "default", 0, 0, 0.0, 0.0);
+        }
+    }
+
+    private static String generateNextDocumentNumber(Properties config, DocumentKind kind) throws IOException {
         synchronized (CONFIG_LOCK) {
             int year = LocalDate.now().getYear();
             int storedYear = 0;
-            try { storedYear = Integer.parseInt(config.getProperty("gutschriftCounterYear", "0")); } catch (NumberFormatException ignored) {}
+            try { storedYear = Integer.parseInt(config.getProperty(kind.counterYearKey, "0")); } catch (NumberFormatException ignored) {}
             int counter;
             if (storedYear == year) {
-                try { counter = Integer.parseInt(config.getProperty("gutschriftCounter", "0")); } catch (NumberFormatException ignored) { counter = 0; }
+                try { counter = Integer.parseInt(config.getProperty(kind.counterKey, "0")); } catch (NumberFormatException ignored) { counter = 0; }
                 counter++;
             } else {
                 counter = 1;
             }
-            config.setProperty("gutschriftCounter", String.valueOf(counter));
-            config.setProperty("gutschriftCounterYear", String.valueOf(year));
+            config.setProperty(kind.counterKey, String.valueOf(counter));
+            config.setProperty(kind.counterYearKey, String.valueOf(year));
             storeConfig(config);
-            return String.format("GS-%d-%04d", year, counter);
+            return String.format("%s-%d-%04d", kind.numberPrefix, year, counter);
         }
+    }
+    // ══════════════ LEGACY-RECHNUNG ─ END ══════════════
+
+    private static String generateNextGutschriftNumber(Properties config) throws IOException {
+        return generateNextDocumentNumber(config, DocumentKind.GUTSCHRIFT);
     }
 
     private static double calculateVat(double netAmount, boolean isKleinunternehmer) {
@@ -6471,6 +7021,8 @@ public class WebUiServer {
         ui.setProperty("emailTemplateHtml", Objects.toString(source.getProperty("emailTemplateHtml"), ""));
         ui.setProperty("validationReminderTemplateHtml", Objects.toString(source.getProperty("validationReminderTemplateHtml"), ""));
         ui.setProperty("eInvoicePdfTemplateHtml", Objects.toString(source.getProperty("eInvoicePdfTemplateHtml"), ""));
+        ui.setProperty("eInvoicePdfTemplateHtmlRechnung", Objects.toString(source.getProperty("eInvoicePdfTemplateHtmlRechnung"), ""));
+        ui.setProperty("emailTemplateHtmlRechnung", Objects.toString(source.getProperty("emailTemplateHtmlRechnung"), ""));
         ui.setProperty("leaderWeeklyReportTemplateHtml", Objects.toString(source.getProperty("leaderWeeklyReportTemplateHtml"), ""));
         ui.setProperty("leaderWeeklyMailSchedulerEnabled", Objects.toString(source.getProperty("leaderWeeklyMailSchedulerEnabled"), "false"));
         ui.setProperty("leaderWeeklyMailProductionEnabled", Objects.toString(source.getProperty("leaderWeeklyMailProductionEnabled"), "false"));
@@ -6503,6 +7055,15 @@ public class WebUiServer {
         ui.setProperty("eInvoiceBankAccountHolder", Objects.toString(source.getProperty("eInvoiceBankAccountHolder"), ""));
         ui.setProperty("eInvoicePaymentTerms", Objects.toString(source.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug"));
         ui.setProperty("nachweisFirmenname", Objects.toString(source.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH"));
+        ui.setProperty("rechnungCutoffDate", normalizeIsoDate(source.getProperty("rechnungCutoffDate"), DEFAULT_RECHNUNG_CUTOFF_DATE));
+        ui.setProperty("legacyBuyerName", Objects.toString(source.getProperty("legacyBuyerName"), DEFAULT_LEGACY_BUYER_NAME));
+        ui.setProperty("legacyBuyerStreet", Objects.toString(source.getProperty("legacyBuyerStreet"), ""));
+        ui.setProperty("legacyBuyerZip", Objects.toString(source.getProperty("legacyBuyerZip"), ""));
+        ui.setProperty("legacyBuyerCity", Objects.toString(source.getProperty("legacyBuyerCity"), ""));
+        ui.setProperty("legacyBuyerCountry", Objects.toString(source.getProperty("legacyBuyerCountry"), "DE"));
+        ui.setProperty("legacyBuyerVatId", Objects.toString(source.getProperty("legacyBuyerVatId"), ""));
+        ui.setProperty("legacyBuyerTaxNumber", Objects.toString(source.getProperty("legacyBuyerTaxNumber"), ""));
+        ui.setProperty("legacyNachweisFirmenname", Objects.toString(source.getProperty("legacyNachweisFirmenname"), DEFAULT_LEGACY_BUYER_NAME));
         ui.setProperty(COMMISSION_HISTORY_KEY, String.join(",", getCommissionHistory(source)));
         ui.setProperty(COMMISSION_HISTORY_DATES_KEY, Objects.toString(source.getProperty(COMMISSION_HISTORY_DATES_KEY), ""));
         ui.setProperty(MAIL_LOG_KEY, Objects.toString(source.getProperty(MAIL_LOG_KEY), ""));
@@ -6589,6 +7150,8 @@ public class WebUiServer {
         config.setProperty("emailTemplateHtml", Objects.toString(uiSettings.getProperty("emailTemplateHtml"), Objects.toString(config.getProperty("emailTemplateHtml"), "")));
         config.setProperty("validationReminderTemplateHtml", Objects.toString(uiSettings.getProperty("validationReminderTemplateHtml"), Objects.toString(config.getProperty("validationReminderTemplateHtml"), "")));
         config.setProperty("eInvoicePdfTemplateHtml", Objects.toString(uiSettings.getProperty("eInvoicePdfTemplateHtml"), Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "")));
+        config.setProperty("eInvoicePdfTemplateHtmlRechnung", Objects.toString(uiSettings.getProperty("eInvoicePdfTemplateHtmlRechnung"), Objects.toString(config.getProperty("eInvoicePdfTemplateHtmlRechnung"), "")));
+        config.setProperty("emailTemplateHtmlRechnung", Objects.toString(uiSettings.getProperty("emailTemplateHtmlRechnung"), Objects.toString(config.getProperty("emailTemplateHtmlRechnung"), "")));
         config.setProperty("leaderWeeklyReportTemplateHtml", Objects.toString(uiSettings.getProperty("leaderWeeklyReportTemplateHtml"), Objects.toString(config.getProperty("leaderWeeklyReportTemplateHtml"), "")));
         config.setProperty("leaderWeeklyMailSchedulerEnabled", Objects.toString(uiSettings.getProperty("leaderWeeklyMailSchedulerEnabled"), Objects.toString(config.getProperty("leaderWeeklyMailSchedulerEnabled"), "false")));
         config.setProperty("leaderWeeklyMailProductionEnabled", Objects.toString(uiSettings.getProperty("leaderWeeklyMailProductionEnabled"), Objects.toString(config.getProperty("leaderWeeklyMailProductionEnabled"), "false")));
@@ -6622,6 +7185,15 @@ public class WebUiServer {
         config.setProperty("eInvoiceBankAccountHolder", Objects.toString(uiSettings.getProperty("eInvoiceBankAccountHolder"), Objects.toString(config.getProperty("eInvoiceBankAccountHolder"), "")));
         config.setProperty("eInvoicePaymentTerms", Objects.toString(uiSettings.getProperty("eInvoicePaymentTerms"), Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug")));
         config.setProperty("nachweisFirmenname", Objects.toString(uiSettings.getProperty("nachweisFirmenname"), Objects.toString(config.getProperty("nachweisFirmenname"), "S+R Linear Technology GmbH")));
+        config.setProperty("rechnungCutoffDate", normalizeIsoDate(Objects.toString(uiSettings.getProperty("rechnungCutoffDate"), config.getProperty("rechnungCutoffDate")), DEFAULT_RECHNUNG_CUTOFF_DATE));
+        config.setProperty("legacyBuyerName", Objects.toString(uiSettings.getProperty("legacyBuyerName"), Objects.toString(config.getProperty("legacyBuyerName"), DEFAULT_LEGACY_BUYER_NAME)));
+        config.setProperty("legacyBuyerStreet", Objects.toString(uiSettings.getProperty("legacyBuyerStreet"), Objects.toString(config.getProperty("legacyBuyerStreet"), "")));
+        config.setProperty("legacyBuyerZip", Objects.toString(uiSettings.getProperty("legacyBuyerZip"), Objects.toString(config.getProperty("legacyBuyerZip"), "")));
+        config.setProperty("legacyBuyerCity", Objects.toString(uiSettings.getProperty("legacyBuyerCity"), Objects.toString(config.getProperty("legacyBuyerCity"), "")));
+        config.setProperty("legacyBuyerCountry", Objects.toString(uiSettings.getProperty("legacyBuyerCountry"), Objects.toString(config.getProperty("legacyBuyerCountry"), "DE")));
+        config.setProperty("legacyBuyerVatId", Objects.toString(uiSettings.getProperty("legacyBuyerVatId"), Objects.toString(config.getProperty("legacyBuyerVatId"), "")));
+        config.setProperty("legacyBuyerTaxNumber", Objects.toString(uiSettings.getProperty("legacyBuyerTaxNumber"), Objects.toString(config.getProperty("legacyBuyerTaxNumber"), "")));
+        config.setProperty("legacyNachweisFirmenname", Objects.toString(uiSettings.getProperty("legacyNachweisFirmenname"), Objects.toString(config.getProperty("legacyNachweisFirmenname"), DEFAULT_LEGACY_BUYER_NAME)));
 
         config.setProperty(MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(MAIL_LOG_KEY), Objects.toString(config.getProperty(MAIL_LOG_KEY), "")));
         config.setProperty(REMINDER_LOG_KEY, Objects.toString(uiSettings.getProperty(REMINDER_LOG_KEY), Objects.toString(config.getProperty(REMINDER_LOG_KEY), "")));

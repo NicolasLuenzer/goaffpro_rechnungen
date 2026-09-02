@@ -60,6 +60,14 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <version>3.2.5</version>
+                <configuration>
+                    <!-- Tests dürfen niemals in die echte config.properties schreiben:
+                         storeConfig() (z. B. aus generateNextDocumentNumber) zielt auf CONFIG_PATH
+                         und würde sonst Belegnummern-Zähler und lokale Einstellungen überschreiben. -->
+                    <environmentVariables>
+                        <CONFIG_PATH>${project.build.directory}/test-config.properties</CONFIG_PATH>
+                    </environmentVariables>
+                </configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

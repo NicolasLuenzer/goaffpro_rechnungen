@@ -6,42 +6,56 @@
   <title>VEMMiNA Assistent</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📊</text></svg>">
   <style>
-    /* ── Design Tokens ── */
+    /* ── Design Tokens (VEMMiNA-Farbwelt: Pastellblau, Tannengrün, Altrosa, Gold) ── */
     :root {
-      --clr-bg: #f0f5ff;
+      --clr-bg: #f4f6f7;
       --clr-surface: #ffffff;
-      --clr-sidebar: #0c1a30;
-      --clr-sidebar-hover: rgba(255,255,255,.08);
-      --clr-sidebar-active: rgba(59,130,246,.3);
-      --clr-accent-1: #3b82f6;
-      --clr-accent-2: #06b6d4;
-      --clr-accent-3: #f59e0b;
-      --clr-accent-4: #8b5cf6;
-      --clr-danger: #ef4444;
-      --clr-text: #0f172a;
-      --clr-muted: #64748b;
-      --clr-border: #dbeafe;
-      --clr-border-strong: #93c5fd;
-      --clr-surface-light: #eff6ff;
-      --clr-surface-tint: #f8faff;
-      --clr-border-medium: #bfdbfe;
-      --clr-accent-1b: #2563eb;
-      --clr-accent-2-end: #0891b2;
-      --clr-accent-4-end: #7c3aed;
-      --clr-danger-end: #dc2626;
-      --clr-accent-3-end: #d97706;
-      --clr-accent-4-dark: #6d28d9;
-      --clr-text-code: #0f172a;
-      --clr-border-neutral: #e2e8f0;
+      --clr-sidebar: #2d4a5e;
+      --clr-sidebar-hover: #eef5f9;
+      --clr-sidebar-active: #dcebf4;
+      --clr-accent-1: #6fa3c4;
+      --clr-accent-2: #108474;
+      --clr-accent-3: #e9b949;
+      --clr-accent-4: #d499a2;
+      --clr-danger: #d05353;
+      --clr-text: #26282a;
+      --clr-muted: #5b6771;
+      --clr-border: #e4eaee;
+      --clr-border-strong: #b8cfdf;
+      --clr-surface-light: #eaf3f9;
+      --clr-surface-tint: #f8fafb;
+      --clr-border-medium: #cfdfe9;
+      --clr-accent-1b: #55809e;
+      --clr-accent-2-end: #0c6a5d;
+      --clr-accent-4-end: #c07f8a;
+      --clr-danger-end: #b83e3e;
+      --clr-accent-3-end: #d8a419;
+      --clr-accent-4-dark: #a96874;
+      --clr-text-code: #26282a;
+      --clr-border-neutral: #e4e8eb;
+      --clr-success: #0b6355;
+      --clr-success-bg: #e3f4f1;
+      --clr-success-border: #9fd6cb;
+      --clr-warn: #8a6212;
+      --clr-warn-bg: #fdf3d7;
+      --clr-warn-border: #f0d089;
+      --clr-error: #9c3c3c;
+      --clr-error-bg: #fbeaea;
+      --clr-error-border: #eec4c4;
+      --clr-info: #2d5f7e;
+      --clr-info-hover: #234d66;
+      --clr-info-bg: #eaf3f9;
+      --clr-info-border: #a8cadd;
+      --clr-focus-ring: rgba(111,163,196,.28);
       --radius-sm: 8px;
       --radius-md: 12px;
       --radius-lg: 16px;
-      --shadow-sm: 0 1px 4px rgba(30,58,138,.06);
-      --shadow-md: 0 4px 16px rgba(30,58,138,.10);
-      --shadow-lg: 0 8px 32px rgba(30,58,138,.18);
+      --shadow-sm: 0 1px 3px rgba(38,40,42,.05);
+      --shadow-md: 0 4px 14px rgba(38,40,42,.07);
+      --shadow-lg: 0 10px 30px rgba(38,40,42,.12);
       --fs-sm: 12px;
       --fs-body: 14px;
       --fs-sub: 18px;
@@ -49,20 +63,25 @@
     }
 
     /* ── Base ── */
-    body { font-family: 'Inter', system-ui, sans-serif; margin: 0; padding: 20px; background: var(--clr-bg); background-image: radial-gradient(ellipse at 15% 40%, rgba(59,130,246,.07) 0%, transparent 55%), radial-gradient(ellipse at 85% 15%, rgba(6,182,212,.05) 0%, transparent 50%); color: var(--clr-text); min-height: 100vh; }
-    h1 { margin: 0; font-size: var(--fs-heading); font-weight: 700; color: #fff; }
+    body { font-family: 'Poppins', 'Inter', system-ui, sans-serif; margin: 0; padding: 20px; background: var(--clr-bg); background-image: radial-gradient(ellipse at 15% 40%, rgba(111,163,196,.08) 0%, transparent 55%), radial-gradient(ellipse at 85% 15%, rgba(212,153,162,.06) 0%, transparent 50%); color: var(--clr-text); min-height: 100vh; }
+    h1 { margin: 0; font-size: var(--fs-heading); font-weight: 700; color: var(--clr-text); }
     h2 { color: var(--clr-text); }
+    :focus-visible { outline: none; box-shadow: 0 0 0 3px var(--clr-focus-ring); }
 
     /* ── Header ── */
-    .app-header { display:flex; align-items:center; gap:14px; margin-bottom: 20px; background: linear-gradient(135deg, #0c1a30 0%, #1e3a5f 45%, #3b82f6 100%); border-radius: var(--radius-lg); padding: 14px 20px; box-shadow: var(--shadow-lg); }
-    .app-logo { height: 40px; width: auto; filter: drop-shadow(0 2px 8px rgba(0,0,0,0.28)); }
-    .app-subtitle { margin: 3px 0 0; color: rgba(255,255,255,.72); font-size: var(--fs-body); font-weight: 500; }
+    .app-header { display:flex; align-items:center; gap:14px; margin-bottom: 20px; background: var(--clr-surface); border-bottom: 3px solid var(--clr-accent-1); border-radius: var(--radius-lg); padding: 14px 20px; box-shadow: var(--shadow-md); }
+    .app-brand { display:flex; align-items:center; gap:14px; padding-right:6px; }
+    .app-brand-divider { width:1px; height:36px; background:var(--clr-border); display:inline-block; }
+    .app-logo { height: 40px; width: auto; }
+    .app-logo-wordmark { height: 34px; }
+    .app-logo-round { height: 42px; }
+    .app-subtitle { margin: 3px 0 0; color: var(--clr-muted); font-size: var(--fs-body); font-weight: 500; }
     .header-spacer { flex:1; }
-    .header-btn { background: rgba(255,255,255,.15) !important; color: #fff !important; border: 1px solid rgba(255,255,255,.3) !important; backdrop-filter: blur(8px); font-family: inherit; }
-    .header-btn:hover { background: rgba(255,255,255,.28) !important; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,0,0,.18) !important; }
+    .header-btn { background: var(--clr-surface-light) !important; color: var(--clr-info) !important; border: 1.5px solid var(--clr-border-strong) !important; font-family: inherit; }
+    .header-btn:hover { background: var(--clr-sidebar-active) !important; transform: translateY(-1px); box-shadow: var(--shadow-sm) !important; }
 
     /* ── Login Overlay ── */
-    .login-overlay { position:fixed; inset:0; background:rgba(15,7,35,.65); backdrop-filter:blur(8px); z-index:5000; display:none; align-items:center; justify-content:center; }
+    .login-overlay { position:fixed; inset:0; background:rgba(38,40,42,.55); backdrop-filter:blur(8px); z-index:5000; display:none; align-items:center; justify-content:center; }
     .login-card { width:min(420px,94vw); background:var(--clr-surface); border:1.5px solid var(--clr-border-strong); border-radius:var(--radius-lg); padding:28px; box-shadow:var(--shadow-lg); }
 
     /* ── Area Tabs ── */
@@ -72,9 +91,9 @@
 
     /* ── Main Tabs ── */
     .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
-    .tab { border: 1.5px solid var(--clr-border-strong); border-radius: 99px; padding: 8px 20px; background: var(--clr-surface); color: var(--clr-accent-1); font-weight: 600; font-size: var(--fs-body); cursor: pointer; transition: all .18s ease; font-family: inherit; }
+    .tab { border: 1.5px solid var(--clr-border-strong); border-radius: 99px; padding: 8px 20px; background: var(--clr-surface); color: var(--clr-info); font-weight: 600; font-size: var(--fs-body); cursor: pointer; transition: all .18s ease; font-family: inherit; }
     .tab:hover { background: var(--clr-surface-light); border-color: var(--clr-accent-1); transform: translateY(-1px); }
-    .tab.active { background: linear-gradient(135deg, var(--clr-accent-1), var(--clr-accent-1b)); color: white; border-color: transparent; box-shadow: 0 4px 14px rgba(59,130,246,.42); }
+    .tab.active { background: var(--clr-info); color: white; border-color: transparent; box-shadow: 0 4px 12px rgba(45,95,126,.28); }
 
     /* ── Panels ── */
     .panel { display: none; border: 1px solid var(--clr-border); border-radius: var(--radius-lg); background: var(--clr-surface); padding: 20px; box-shadow: var(--shadow-sm); }
@@ -86,27 +105,29 @@
     .settings { margin: 12px 0; padding: 16px; border: 1px solid var(--clr-border); border-radius: var(--radius-md); background: var(--clr-surface-tint); }
     .settings-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(520px,1fr)); gap:16px; }
     .settings-group { border:1px solid var(--clr-border); border-radius:var(--radius-md); background:var(--clr-surface); padding:16px; box-shadow: var(--shadow-sm); }
-    .settings-group h3 { margin:0 0 10px; font-size:var(--fs-sub); color:var(--clr-accent-1); font-weight:700; }
+    .settings-group h3 { margin:0 0 10px; font-size:var(--fs-sub); color:var(--clr-info); font-weight:700; }
     .settings-hint { color:var(--clr-muted); font-size:var(--fs-sm); margin-top:6px; line-height:1.5; }
 
     /* ── Inputs ── */
-    input[type="text"], input[type="email"], input[type="number"], select { min-width: 420px; padding: 9px 12px; border: 1.5px solid var(--clr-border-strong); border-radius: var(--radius-sm); font-family: inherit; font-size: var(--fs-body); color: var(--clr-text); background: var(--clr-surface-tint); transition: border-color .15s, box-shadow .15s; }
-    input:focus, select:focus { outline: none; border-color: var(--clr-accent-1); box-shadow: 0 0 0 3px rgba(59,130,246,.15); }
+    input[type="text"], input[type="email"], input[type="number"], select { min-width: 420px; padding: 9px 12px; border: 1.5px solid var(--clr-border-strong); border-radius: var(--radius-sm); font-family: inherit; font-size: var(--fs-body); color: var(--clr-text); background: var(--clr-surface); transition: border-color .15s, box-shadow .15s; }
+    input:focus, select:focus { outline: none; border-color: var(--clr-accent-1); box-shadow: 0 0 0 3px var(--clr-focus-ring); }
 
     /* ── Buttons ── */
-    button { background: linear-gradient(135deg, var(--clr-accent-4), var(--clr-accent-4-end)); color: white; border: none; border-radius: var(--radius-sm); padding: 10px 16px; cursor: pointer; font-family: inherit; font-weight: 600; font-size: var(--fs-body); transition: all .18s ease; }
-    button:hover { transform: translateY(-1px); box-shadow: 0 4px 14px rgba(5,150,105,.42); }
-    button.secondary { background: linear-gradient(135deg, var(--clr-accent-2), var(--clr-accent-2-end)); }
-    button.secondary:hover { box-shadow: 0 4px 14px rgba(59,130,246,.42); }
-    button.danger { background: linear-gradient(135deg, var(--clr-danger), var(--clr-danger-end)); }
-    button.danger:hover { box-shadow: 0 4px 14px rgba(220,38,38,.42); }
-    button:disabled { background: #d1d5db; color: #9ca3af; cursor: not-allowed; transform: none; box-shadow: none; }
+    button { background: var(--clr-info); color: white; border: 1.5px solid transparent; border-radius: var(--radius-sm); padding: 10px 16px; cursor: pointer; font-family: inherit; font-weight: 600; font-size: var(--fs-body); transition: all .18s ease; }
+    button:hover { transform: translateY(-1px); background: var(--clr-info-hover); box-shadow: 0 4px 12px rgba(45,95,126,.28); }
+    button.secondary { background: var(--clr-surface-light); color: var(--clr-info); border-color: var(--clr-border-strong); }
+    button.secondary:hover { background: var(--clr-sidebar-active); box-shadow: var(--shadow-sm); }
+    button.danger { background: var(--clr-danger); }
+    button.danger:hover { background: var(--clr-danger-end); box-shadow: 0 4px 12px rgba(208,83,83,.35); }
+    button:disabled { background: #e2e6e9; color: #9aa4ad; border-color: transparent; cursor: not-allowed; transform: none; box-shadow: none; }
 
     /* ── Tables ── */
     table { width: 100%; border-collapse: collapse; margin-top: 12px; }
-    th, td { border: 1px solid var(--clr-border); padding: 9px 12px; text-align: left; font-size: var(--fs-body); }
-    th { background: linear-gradient(135deg, var(--clr-surface-light), var(--clr-border-medium)); cursor: pointer; user-select: none; font-weight: 700; color: var(--clr-accent-1); }
-    th.sort-active { background: linear-gradient(135deg, var(--clr-border-medium), var(--clr-border-strong)); }
+    th, td { border: none; border-bottom: 1px solid var(--clr-border); padding: 9px 12px; text-align: left; font-size: var(--fs-body); }
+    th { background: var(--clr-surface-light); cursor: pointer; user-select: none; font-weight: 700; color: var(--clr-info); border-bottom: 2px solid var(--clr-border-strong); }
+    th:first-child { border-top-left-radius: var(--radius-sm); }
+    th:last-child { border-top-right-radius: var(--radius-sm); }
+    th.sort-active { background: var(--clr-sidebar-active); }
     tr:nth-child(even) td { background: var(--clr-surface-tint); }
     tr:hover td { background: var(--clr-surface-light) !important; transition: background .1s; }
 
@@ -119,14 +140,16 @@
     .pill button { padding:2px 8px; font-size:var(--fs-sm); background:var(--clr-danger); border-radius:99px; }
 
     /* ── Warning ── */
-    .warning-banner { margin: 10px 0; padding: 12px 16px; border: 1.5px solid #fca5a5; background: linear-gradient(135deg, #fee2e2, #fef2f2); color: #991b1b; border-radius: var(--radius-sm); font-weight: 600; }
+    .warning-banner { margin: 10px 0; padding: 12px 16px; border: 1.5px solid var(--clr-error-border); border-left-width: 4px; background: var(--clr-error-bg); color: var(--clr-error); border-radius: var(--radius-sm); font-weight: 600; }
     .recipient-advisor-label { color: var(--clr-text); font-weight: 700; }
-    tr.row-warning td { background: #fef2f2 !important; }
+    .text-error { color: var(--clr-error); }
+    .text-warn { color: var(--clr-warn); }
+    tr.row-warning td { background: #fdf4f4 !important; }
 
     /* ── Version Badge ── */
-    .app-version { position: fixed; top: 14px; right: 18px; background: linear-gradient(135deg, #0c1a30, #3b82f6); color: #fff; padding: 6px 14px; border-radius: 99px; font-size: var(--fs-sm); font-weight: 600; z-index: 1000; cursor: pointer; box-shadow: var(--shadow-sm); font-family: inherit; }
+    .app-version { align-self: center; margin-left: 10px; background: var(--clr-info); color: #fff; padding: 6px 14px; border-radius: 99px; font-size: var(--fs-sm); font-weight: 600; cursor: pointer; box-shadow: var(--shadow-sm); font-family: inherit; white-space: nowrap; }
     .version-popup { position: fixed; top: 52px; right: 18px; width: 460px; max-height: 360px; overflow: auto; background: var(--clr-surface); border: 1.5px solid var(--clr-border-strong); border-radius: var(--radius-md); box-shadow: var(--shadow-lg); z-index: 1001; padding: 14px; }
-    .version-popup-header { font-weight: 700; margin-bottom: 8px; color: var(--clr-accent-1); }
+    .version-popup-header { font-weight: 700; margin-bottom: 8px; color: var(--clr-info); }
     .version-popup ul { margin: 0; padding-left: 18px; }
     .version-popup li { margin-bottom: 8px; font-size: var(--fs-body); }
 
@@ -135,16 +158,16 @@
 
     /* ── Section Tabs ── */
     .section-tabs { display: flex; justify-content: flex-end; gap: 8px; margin: 8px 0 14px; }
-    .section-tab { border: 1.5px solid var(--clr-border-strong); border-radius: 99px; padding: 7px 16px; background: var(--clr-surface); color: var(--clr-accent-1); font-weight: 600; font-size: var(--fs-body); cursor: pointer; transition: all .15s; font-family: inherit; }
+    .section-tab { border: 1.5px solid var(--clr-border-strong); border-radius: 99px; padding: 7px 16px; background: var(--clr-surface); color: var(--clr-info); font-weight: 600; font-size: var(--fs-body); cursor: pointer; transition: all .15s; font-family: inherit; }
     .section-tab:hover { background: var(--clr-surface-light); }
-    .section-tab.active { background: linear-gradient(135deg, var(--clr-accent-1), var(--clr-accent-1b)); color: #fff; border-color: transparent; box-shadow: 0 2px 10px rgba(59,130,246,.35); }
+    .section-tab.active { background: var(--clr-info); color: #fff; border-color: transparent; box-shadow: 0 2px 8px rgba(45,95,126,.25); }
     .section-panel { display: none; }
     .section-panel.active { display: block; }
 
     /* ── Help ── */
     .help-doc { white-space: pre-wrap; background:var(--clr-surface-tint); border:1px solid var(--clr-border); border-radius:var(--radius-sm); padding:16px; font-size:var(--fs-body); line-height:1.6; }
     .help-sections details { border:1px solid var(--clr-border); border-radius:var(--radius-sm); margin:8px 0; background:var(--clr-surface); }
-    .help-sections summary { cursor:pointer; padding:12px 14px; font-weight:700; color:var(--clr-accent-1); }
+    .help-sections summary { cursor:pointer; padding:12px 14px; font-weight:700; color:var(--clr-info); }
     .help-sections .help-section-body { padding:0 14px 14px; white-space:pre-wrap; }
 
     /* ── Advisor Link & Hover Card ── */
@@ -153,35 +176,35 @@
     .advisor-hover-card::after { content:""; position:absolute; left:20px; bottom:-8px; width:14px; height:14px; background:#fff; border-right:1.5px solid var(--clr-border-strong); border-bottom:1.5px solid var(--clr-border-strong); transform:rotate(45deg); }
 
     /* ── Save Button States ── */
-    .save-btn-idle { background:linear-gradient(135deg, #bfdbfe, #93c5fd) !important; color:#1e3a5f !important; }
-    .save-btn-dirty { background:linear-gradient(135deg, var(--clr-accent-1), var(--clr-accent-1b)) !important; color:#fff !important; }
+    .save-btn-idle { background:var(--clr-sidebar-active) !important; color:var(--clr-info) !important; }
+    .save-btn-dirty { background:var(--clr-accent-2) !important; color:#fff !important; }
 
     /* ── Validation Subtabs ── */
     .validation-subtabs { display:flex; gap:8px; margin-bottom:14px; }
-    .validation-subtab { border:1.5px solid var(--clr-border-strong); border-radius:99px; padding:7px 16px; background:var(--clr-surface); color:var(--clr-accent-1); font-weight:600; font-size:var(--fs-body); cursor:pointer; transition: all .15s; font-family: inherit; }
+    .validation-subtab { border:1.5px solid var(--clr-border-strong); border-radius:99px; padding:7px 16px; background:var(--clr-surface); color:var(--clr-info); font-weight:600; font-size:var(--fs-body); cursor:pointer; transition: all .15s; font-family: inherit; }
     .validation-subtab:hover { background: var(--clr-surface-light); }
-    .validation-subtab.active { background:linear-gradient(135deg, var(--clr-accent-1), var(--clr-accent-1b)); color:#fff; border-color:transparent; box-shadow: 0 2px 10px rgba(59,130,246,.35); }
+    .validation-subtab.active { background:var(--clr-info); color:#fff; border-color:transparent; box-shadow: 0 2px 8px rgba(45,95,126,.25); }
     .validation-section { display:none; }
     .validation-section.active { display:block; }
 
     /* ── Tree ── */
     .tree-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
-    .tree-toggle { background: var(--clr-surface-light); color: var(--clr-accent-1); border: 1.5px solid var(--clr-border-strong); border-radius: 4px; padding: 2px 7px; font-size: var(--fs-sm); margin-right: 6px; font-family: inherit; cursor: pointer; }
+    .tree-toggle { background: var(--clr-surface-light); color: var(--clr-info); border: 1.5px solid var(--clr-border-strong); border-radius: 4px; padding: 2px 7px; font-size: var(--fs-sm); margin-right: 6px; font-family: inherit; cursor: pointer; }
     .tree-indent { display:inline-block; }
 
     /* ── Table Filter Menu ── */
     .table-filter-menu { position: fixed; z-index: 3000; width: 280px; max-height: 420px; overflow: auto; background:var(--clr-surface); border:1.5px solid var(--clr-border-strong); border-radius:var(--radius-md); box-shadow:var(--shadow-lg); padding:12px; }
-    .table-filter-menu h4 { margin:0 0 8px; font-size:var(--fs-body); color:var(--clr-accent-1); font-weight:700; }
+    .table-filter-menu h4 { margin:0 0 8px; font-size:var(--fs-body); color:var(--clr-info); font-weight:700; }
     .table-filter-actions { display:flex; gap:6px; flex-wrap:wrap; margin-bottom:8px; }
     .table-filter-actions button { padding:6px 10px; font-size:var(--fs-sm); }
     .table-filter-options { border-top:1px solid var(--clr-border); padding-top:8px; }
     .table-filter-options label { display:flex; align-items:center; gap:8px; font-size:var(--fs-sm); margin:4px 0; }
-    th.filter-active { background: linear-gradient(135deg, var(--clr-border-medium), var(--clr-border-strong)); position:relative; }
-    th.filter-active::after { content:' ⏷'; color:var(--clr-accent-1); font-size:var(--fs-sm); }
+    th.filter-active { background: var(--clr-sidebar-active); position:relative; }
+    th.filter-active::after { content:' ⏷'; color:var(--clr-info); font-size:var(--fs-sm); }
 
     /* ── Column Resizer ── */
     .col-resizer { position:absolute; top:0; right:-2px; width:8px; height:100%; cursor:col-resize; user-select:none; }
-    .col-resizer:hover, th.resizing .col-resizer { background:rgba(59,130,246,.22); }
+    .col-resizer:hover, th.resizing .col-resizer { background:var(--clr-focus-ring); }
 
     /* ── Email Editor ── */
     .email-editor-toolbar { gap:6px; margin-top:8px; }
@@ -193,54 +216,56 @@
 
     /* ── Email Designer Tabs ── */
     .email-designer-tabs { display:flex; gap:8px; margin:12px 0; }
-    .email-designer-tab { border:1.5px solid var(--clr-border-strong); border-radius:99px; padding:7px 16px; background:var(--clr-surface); color:var(--clr-accent-1); font-weight:600; font-size:var(--fs-body); cursor:pointer; transition: all .15s; font-family: inherit; }
+    .email-designer-tab { border:1.5px solid var(--clr-border-strong); border-radius:99px; padding:7px 16px; background:var(--clr-surface); color:var(--clr-info); font-weight:600; font-size:var(--fs-body); cursor:pointer; transition: all .15s; font-family: inherit; }
     .email-designer-tab:hover { background: var(--clr-surface-light); }
-    .email-designer-tab.active { background:linear-gradient(135deg, var(--clr-accent-1), var(--clr-accent-1b)); color:#fff; border-color:transparent; }
+    .email-designer-tab.active { background:var(--clr-info); color:#fff; border-color:transparent; }
     .email-designer-panel { display:none; }
     .email-designer-panel.active { display:block; }
     .email-designer-layout { display:grid; grid-template-columns: minmax(560px,1fr) minmax(420px,1fr); gap:16px; align-items:start; }
     .empty-table-hidden { display:none; }
 
     /* ── Sidebar ── */
-    .side-nav { width:220px; min-width:180px; background: var(--clr-sidebar); border-radius:var(--radius-lg); padding:16px 0 10px; flex-shrink:0; align-self:flex-start; position:sticky; top:8px; box-shadow: 0 8px 32px rgba(12,26,48,.38); }
-    .side-nav-section-label { padding:2px 16px 10px; font-size:10px; font-weight:700; color:rgba(255,255,255,.42); letter-spacing:.1em; text-transform:uppercase; }
-    .side-nav-item { display:flex; align-items:center; width:100%; padding:10px 16px; background:none; border:none; border-left:3px solid transparent; text-align:left; font-size:var(--fs-body); color:rgba(255,255,255,.72); cursor:pointer; line-height:1.4; box-sizing:border-box; transition:all .15s; font-family:inherit; font-weight:600; }
-    .side-nav-item:hover { background: var(--clr-sidebar-hover); color:rgba(255,255,255,.95); border-left-color:rgba(255,255,255,.3); }
-    .side-nav-item.active { background: var(--clr-sidebar-active); color:#fff; font-weight:700; border-left-color:#3b82f6; }
+    .side-nav { width:220px; min-width:180px; background: var(--clr-surface); border:1px solid var(--clr-border); border-radius:var(--radius-lg); padding:16px 0 10px; flex-shrink:0; align-self:flex-start; position:sticky; top:8px; box-shadow: var(--shadow-md); }
+    .side-nav-section-label { padding:2px 16px 10px; font-size:10px; font-weight:700; color:var(--clr-muted); letter-spacing:.08em; text-transform:uppercase; }
+    .side-nav-item { display:flex; align-items:center; width:100%; padding:10px 16px; background:none; border:none; border-left:3px solid transparent; text-align:left; font-size:var(--fs-body); color:var(--clr-muted); cursor:pointer; line-height:1.4; box-sizing:border-box; transition:all .15s; font-family:inherit; font-weight:600; }
+    .side-nav-item:hover { background: var(--clr-sidebar-hover); color:var(--clr-text); border-left-color:var(--clr-border-strong); }
+    .side-nav-item.active { background: var(--clr-sidebar-active); color:var(--clr-info); font-weight:700; border-left-color:var(--clr-accent-1); }
 
     /* ── User Table ── */
     .user-row-selected td { background:var(--clr-surface-light) !important; }
     .user-row { cursor:pointer; }
     .user-row:hover td { background:var(--clr-surface-tint); }
-    .validation-empty-cell { background:#fef2f2; }
+    .validation-empty-cell { background:var(--clr-error-bg); }
     .count-hover { text-decoration: underline dotted; cursor: help; }
 
     /* ── KPI Cards ── */
     .kpi-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin:14px 0; }
-    .kpi-card { border:none; border-radius:var(--radius-md); padding:18px; color:#fff; box-shadow: var(--shadow-md); }
-    .kpi-card:nth-child(4n+1) { background: linear-gradient(135deg, var(--clr-accent-1), var(--clr-accent-1b)); }
-    .kpi-card:nth-child(4n+2) { background: linear-gradient(135deg, var(--clr-accent-2), var(--clr-accent-2-end)); }
-    .kpi-card:nth-child(4n+3) { background: linear-gradient(135deg, var(--clr-accent-3), var(--clr-accent-3-end)); }
-    .kpi-card:nth-child(4n+4) { background: linear-gradient(135deg, var(--clr-accent-4), var(--clr-accent-4-dark)); }
-    .kpi-card b { color:#fff; }
+    .kpi-card { border:1px solid var(--clr-border); border-top:4px solid var(--clr-accent-1); background:var(--clr-surface); border-radius:var(--radius-md); padding:18px; color:var(--clr-text); box-shadow: var(--shadow-sm); }
+    .kpi-card:nth-child(4n+1) { border-top-color: var(--clr-accent-1); }
+    .kpi-card:nth-child(4n+2) { border-top-color: var(--clr-accent-2); }
+    .kpi-card:nth-child(4n+3) { border-top-color: var(--clr-accent-4); }
+    .kpi-card:nth-child(4n+4) { border-top-color: var(--clr-accent-3); }
+    .kpi-card b { color:var(--clr-text); }
+    .kpi-card .kpi-label { font-size:var(--fs-sm); font-weight:600; letter-spacing:.08em; line-height:1.3; text-transform:uppercase; color:var(--clr-muted); }
+    .kpi-card .kpi-value { font-size:22px; font-weight:700; margin-top:4px; }
     .sync-status-card { border:1px solid var(--clr-border); border-radius:var(--radius-md); background:#fff; padding:18px; box-shadow:var(--shadow-sm); }
     .sync-status-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
-    .sync-state-badge { display:inline-flex; align-items:center; padding:6px 12px; border-radius:999px; font-weight:800; font-size:var(--fs-sm); border:1px solid var(--clr-border-neutral); }
-    .sync-state-badge.ok { background:#dcfce7; color:#166534; border-color:#86efac; }
-    .sync-state-badge.running { background:#dbeafe; color:#1d4ed8; border-color:#93c5fd; }
-    .sync-state-badge.warning { background:#fef3c7; color:#92400e; border-color:#fcd34d; }
-    .sync-state-badge.error { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .sync-state-badge { display:inline-flex; align-items:center; padding:6px 12px; border-radius:999px; font-weight:700; font-size:var(--fs-sm); border:1px solid var(--clr-border-neutral); }
+    .sync-state-badge.ok { background:var(--clr-success-bg); color:var(--clr-success); border-color:var(--clr-success-border); }
+    .sync-state-badge.running { background:var(--clr-info-bg); color:var(--clr-info); border-color:var(--clr-info-border); }
+    .sync-state-badge.warning { background:var(--clr-warn-bg); color:var(--clr-warn); border-color:var(--clr-warn-border); }
+    .sync-state-badge.error { background:var(--clr-error-bg); color:var(--clr-error); border-color:var(--clr-error-border); }
     .sync-progress-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:12px 0; }
     .sync-progress-item { border:1px solid var(--clr-border); border-radius:var(--radius-sm); padding:12px; background:var(--clr-surface-tint); }
     .sync-progress-item strong { display:block; margin-bottom:4px; }
-    .sync-bar { height:8px; border-radius:99px; background:#e5e7eb; overflow:hidden; margin-top:8px; }
-    .sync-bar span { display:block; height:100%; background:linear-gradient(135deg,var(--clr-accent-1),var(--clr-accent-2)); }
+    .sync-bar { height:8px; border-radius:99px; background:#e8ecef; overflow:hidden; margin-top:8px; }
+    .sync-bar span { display:block; height:100%; background:linear-gradient(90deg,var(--clr-accent-1),#8db8d3); }
     .sync-bar.large { height:18px; }
     .sync-bar.indeterminate span { width:30% !important; animation:syncSlide 1.4s ease-in-out infinite alternate; }
     @keyframes syncSlide { from { margin-left:0; } to { margin-left:70%; } }
-    .sync-progress-item.pending .sync-bar span { background:#cbd5e1; }
-    .sync-progress-item.done .sync-bar span { background:#16a34a; }
-    .sync-progress-item.warning .sync-bar span { background:#d97706; }
+    .sync-progress-item.pending .sync-bar span { background:#d5dde3; }
+    .sync-progress-item.done .sync-bar span { background:var(--clr-accent-2); }
+    .sync-progress-item.warning .sync-bar span { background:var(--clr-accent-3-end); }
     .sync-progress-item.skipped { opacity:0.6; }
     .sync-progress-eta { margin:8px 0 4px 0; font-weight:600; }
 
@@ -254,16 +279,16 @@
 
     /* ── Mail Log ── */
     .mail-log-badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:var(--fs-sm); font-weight:700; }
-    .mail-log-badge.sent { background:#d1fae5; color:#065f46; border:1px solid #6ee7b7; }
-    .mail-log-badge.none { background:#f3f4f6; color:#6b7280; border:1px solid #d1d5db; }
-    .risk-badge { display:inline-block; min-width:76px; text-align:center; padding:4px 10px; border-radius:999px; font-size:var(--fs-sm); font-weight:800; border:1px solid transparent; }
-    .risk-ok { background:#dcfce7; color:#166534; border-color:#86efac; }
-    .risk-hint { background:#fef3c7; color:#92400e; border-color:#fcd34d; }
-    .risk-review { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+    .mail-log-badge.sent { background:var(--clr-success-bg); color:var(--clr-success); border:1px solid var(--clr-success-border); }
+    .mail-log-badge.none { background:#f1f3f5; color:var(--clr-muted); border:1px solid var(--clr-border-neutral); }
+    .risk-badge { display:inline-block; min-width:76px; text-align:center; padding:4px 10px; border-radius:999px; font-size:var(--fs-sm); font-weight:700; border:1px solid transparent; }
+    .risk-ok { background:var(--clr-success-bg); color:var(--clr-success); border-color:var(--clr-success-border); }
+    .risk-hint { background:var(--clr-warn-bg); color:var(--clr-warn); border-color:var(--clr-warn-border); }
+    .risk-review { background:var(--clr-error-bg); color:var(--clr-error); border-color:var(--clr-error-border); }
     .party-detail-box { margin-top:14px; border:1px solid var(--clr-border); border-radius:var(--radius-md); background:var(--clr-surface-tint); padding:14px; }
     .party-detail-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin:10px 0; }
     .party-detail-card { border:1px solid var(--clr-border); border-radius:var(--radius-sm); background:#fff; padding:12px; }
-    .mail-log-modal { position:fixed; inset:0; background:rgba(15,7,35,.6); backdrop-filter:blur(6px); z-index:3500; display:flex; align-items:center; justify-content:center; }
+    .mail-log-modal { position:fixed; inset:0; background:rgba(38,40,42,.5); backdrop-filter:blur(6px); z-index:3500; display:flex; align-items:center; justify-content:center; }
     .mail-log-modal-card { width:min(920px,95vw); max-height:85vh; overflow:auto; background:var(--clr-surface); border-radius:var(--radius-lg); border:1.5px solid var(--clr-border-strong); box-shadow:var(--shadow-lg); padding:20px; }
 
     /* ── Color Picker WCAG Target Size ── */
@@ -276,21 +301,20 @@
       justify-content: center;
       width: 40px;
       height: 40px;
-      background: rgba(255,255,255,.15);
-      border: 1px solid rgba(255,255,255,.3);
+      background: var(--clr-surface-light);
+      border: 1.5px solid var(--clr-border-strong);
       border-radius: var(--radius-sm);
-      color: #fff;
+      color: var(--clr-info);
       font-size: 22px;
       cursor: pointer;
-      backdrop-filter: blur(8px);
       padding: 0;
       line-height: 1;
       font-family: inherit;
     }
     .hamburger-btn:hover {
-      background: rgba(255,255,255,.28);
+      background: var(--clr-sidebar-active);
       transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(0,0,0,.18);
+      box-shadow: var(--shadow-sm);
     }
 
     /* ── Sidebar Overlay (backdrop when drawer is open) ── */
@@ -298,7 +322,7 @@
       display: none;
       position: fixed;
       inset: 0;
-      background: rgba(15,7,35,.5);
+      background: rgba(38,40,42,.45);
       backdrop-filter: blur(4px);
       z-index: 899;
     }
@@ -402,10 +426,10 @@
 </head>
 <body>
   <div class="app-header">
-    <div style="display:flex;align-items:center;gap:8px;">
-      <img class="app-logo" src="https://cdn.shopify.com/s/files/1/0791/6748/8345/files/grau2.png" alt="VEMMiNA Logo" />
-      <span style="width:1px;height:34px;background:rgba(255,255,255,0.3);display:inline-block;"></span>
-      <img class="app-logo" src="https://sr-gmbh.de/wordpress/wp-content/uploads/2023/02/Logo-rund_negativ.png" alt="S+R Logo" style="background:#0c1a30;border-radius:50%;padding:4px;" />
+    <div class="app-brand">
+      <img class="app-logo app-logo-wordmark" src="https://vemmina.com/cdn/shop/files/grau2.png?width=340" alt="VEMMiNA Logo" />
+      <span class="app-brand-divider"></span>
+      <img class="app-logo app-logo-round" src="https://www.sr-gmbh.de/media/sr-logo.png" alt="S+R Logo" />
     </div>
     <div>
       <h1>VEMMiNA Assistent</h1>
@@ -415,8 +439,8 @@
     <div class="header-spacer"></div>
     <button id="headerSettingsBtn" class="header-btn" type="button">Einstellungen</button>
     <button id="headerHelpBtn" class="header-btn" type="button">Hilfe</button>
+    <div id="appVersion" class="app-version" title="Klicken für Versionshistorie">Version: lädt…</div>
   </div>
-  <div id="appVersion" class="app-version" title="Klicken für Versionshistorie">Version: lädt…</div>
   <div id="versionHistoryPopup" class="version-popup" style="display:none">
     <div class="version-popup-header">Letzte Versionen</div>
     <ul id="versionHistoryList"></ul>
@@ -432,12 +456,12 @@
   </div>
   <div id="mailLogModalRoot"></div>
 
-  <div id="settingsOverlay" style="display:none;position:fixed;inset:0;background:#f0f5ff;z-index:4000;overflow:auto;padding:24px;">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;background:linear-gradient(135deg,#0c1a30,#1e3a5f);border-radius:16px;padding:14px 20px;box-shadow:0 8px 32px rgba(12,26,48,.25);">
-      <h2 style="margin:0;font-size:18px;color:#fff;font-weight:700;">Benutzerverwaltung</h2>
+  <div id="settingsOverlay" style="display:none;position:fixed;inset:0;background:var(--clr-bg);z-index:4000;overflow:auto;padding:24px;">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;background:var(--clr-surface);border-bottom:3px solid var(--clr-accent-1);border-radius:16px;padding:14px 20px;box-shadow:var(--shadow-md);">
+      <h2 style="margin:0;font-size:18px;font-weight:700;">Benutzerverwaltung</h2>
       <div style="flex:1"></div>
-      <button id="settingsOverlaySaveBtn" class="secondary" type="button">Speichern</button>
-      <button id="settingsOverlayCloseBtn" type="button" style="background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);">Schließen</button>
+      <button id="settingsOverlaySaveBtn" type="button">Speichern</button>
+      <button id="settingsOverlayCloseBtn" class="secondary" type="button">Schließen</button>
     </div>
     <div class="settings-group" style="background:#fff;max-width:1200px;margin-bottom:16px;">
       <h3>E-Mail Versand</h3>
@@ -484,6 +508,8 @@
     let defaultEmailTemplateHtml = '';
     let defaultValidationReminderTemplateHtml = '';
     let defaultEInvoicePdfTemplateHtml = '';
+    let defaultEInvoicePdfRechnungTemplateHtml = '';
+    let defaultEmailRechnungTemplateHtml = '';
     let defaultLeaderWeeklyReportTemplateHtml = '';
     let activeEmailTemplateType = 'invoice';
     let emailTemplateHtmlMode = false;
@@ -509,7 +535,12 @@
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
       const json = await response.json();
-      if (!response.ok) throw new Error(json.error || 'API-Fehler');
+      if (!response.ok) {
+        const error = new Error(json.error || 'API-Fehler');
+        error.code = json.code || '';
+        error.details = json;
+        throw error;
+      }
       return json;
     }
 
@@ -712,6 +743,44 @@
                   </div>
                 </div>
 
+                <div class="settings-group" id="legacyRechnungSettings">
+                  <h3>Altfälle bis 31.12.2025 (Rechnungen an VEMMiNA Qualitäts- Haushaltsprodukte GmbH)</h3>
+                  <div class="settings-hint">
+                    Provisionen mit einem Transaktionsdatum <strong>vor</strong> dem Stichtag werden automatisch als
+                    <strong>Rechnung</strong> gegen die untenstehende Alt-Gesellschaft ausgestellt (eigener Nummernkreis
+                    RE-JJJJ-NNNN, ZUGFeRD-TypeCode 380, ohne §-14-Gutschriftshinweise). Ab dem Stichtag gilt unverändert
+                    der Gutschriftsprozess. Es gibt keinen manuellen Schalter — das Provisionsdatum entscheidet.
+                  </div>
+                  <div class="toolbar">
+                    <label for="rechnungCutoffDate">Stichtag (ab hier Gutschrift):</label>
+                    <input id="rechnungCutoffDate" type="date" style="max-width:190px" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="legacyBuyerName">Name:</label>
+                    <input id="legacyBuyerName" type="text" placeholder="VEMMiNA Qualitäts- Haushaltsprodukte GmbH" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="legacyBuyerStreet">Straße:</label>
+                    <input id="legacyBuyerStreet" type="text" placeholder="Musterstraße 1" />
+                    <label for="legacyBuyerZip">PLZ:</label>
+                    <input id="legacyBuyerZip" type="text" style="max-width:140px" />
+                    <label for="legacyBuyerCity">Ort:</label>
+                    <input id="legacyBuyerCity" type="text" style="max-width:220px" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="legacyBuyerCountry">Land (ISO):</label>
+                    <input id="legacyBuyerCountry" type="text" placeholder="DE" style="max-width:120px" />
+                    <label for="legacyBuyerVatId">USt-IdNr:</label>
+                    <input id="legacyBuyerVatId" type="text" style="max-width:240px" />
+                    <label for="legacyBuyerTaxNumber">Steuernummer:</label>
+                    <input id="legacyBuyerTaxNumber" type="text" style="max-width:240px" />
+                  </div>
+                  <div class="toolbar">
+                    <label for="legacyNachweisFirmenname">Firmenname im Hinweistext:</label>
+                    <input id="legacyNachweisFirmenname" type="text" placeholder="VEMMiNA Qualitäts- Haushaltsprodukte GmbH" />
+                  </div>
+                </div>
+
                 <div class="settings-group">
                   <h3>GoAffPro Sync</h3>
                   <div class="toolbar">
@@ -769,7 +838,7 @@
                     <input id="leaderWeeklyMailScheduleTime" type="time" value="08:00" style="max-width:130px" />
                   </div>
                   <div class="toolbar">
-                    <label style="color:#991b1b;"><input id="leaderWeeklyMailProductionEnabled" type="checkbox" /> Produktivversand an echte Führungskräfte freigeben</label>
+                    <label class="text-error"><input id="leaderWeeklyMailProductionEnabled" type="checkbox" /> Produktivversand an echte Führungskräfte freigeben</label>
                   </div>
                   <div id="leaderWeeklyMailLastSentHint" class="settings-hint">Letzter automatischer Versand: -</div>
                   <div class="settings-hint">Solange der Produktivschalter aus ist, gehen alle Wochenmails ausschließlich an die Kontakt-E-Mail.</div>
@@ -784,7 +853,7 @@
           <div id="main-email-designer" class="section-panel">
             <div class="settings">
               <strong>E-Mail Designer</strong>
-              <div class="toolbar"><label for="emailTemplateTypeSelect">Vorlage:</label><select id="emailTemplateTypeSelect" style="min-width:280px"><option value="invoice">Gutschriftservice (Provisionsmail)</option><option value="validationReminder">Stammdaten-Erinnerung</option><option value="eInvoicePdf">E-Gutschrift PDF-Ansicht</option><option value="leaderWeeklyReport">Führungskräfte-Neukundenreport</option></select></div>
+              <div class="toolbar"><label for="emailTemplateTypeSelect">Vorlage:</label><select id="emailTemplateTypeSelect" style="min-width:280px"><option value="invoice">Gutschriftservice (Provisionsmail)</option><option value="validationReminder">Stammdaten-Erinnerung</option><option value="eInvoicePdf">E-Gutschrift PDF-Ansicht</option><option value="leaderWeeklyReport">Führungskräfte-Neukundenreport</option><option value="eInvoicePdfRechnung">Rechnung PDF-Ansicht (Altfälle)</option><option value="invoiceRechnung">Rechnungsmail (Altfälle)</option></select></div>
               <div class="email-designer-layout">
                 <div>
                   <div class="toolbar email-editor-toolbar">
@@ -1645,7 +1714,7 @@
       if (inventoryGrid) {
         inventoryGrid.innerHTML = inventory.map(r => {
           const pct = Math.max(4, Math.round((Number(r.total || 0) / maxTotal) * 100));
-          const warn = r.warning ? `<div class="settings-hint" style="color:#92400e">${escapeHtml(String(r.warning)).slice(0, 160)}</div>` : '';
+          const warn = r.warning ? `<div class="settings-hint text-warn">${escapeHtml(String(r.warning)).slice(0, 160)}</div>` : '';
           const invalidInfo = Number(r.invalidEmpty || 0) > 0 ? `, ${escapeHtml(String(r.invalidEmpty || 0))} ungültig` : '';
           return `<div class="sync-progress-item"><strong>${escapeHtml(r.displayName || r.entityType || '')}</strong><div>${escapeHtml(String(r.total || 0))} Datensätze${invalidInfo}</div><div class="sync-bar"><span style="width:${pct}%"></span></div>${warn}</div>`;
         }).join('');
@@ -2504,7 +2573,7 @@
       const root = document.getElementById('mailLogModalRoot');
       if (!root) return;
       const rows = mailLogByPayment.get(String(paymentId || '')) || [];
-      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Versandhistorie Payment ${escapeHtml(paymentId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Betreff</th><th>Anhänge</th></tr></thead><tbody>${rows.map(r => { const pdfLink = r.pdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.pdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.pdfFile || 'PDF')}</a>` : escapeHtml(r.pdfFile || '-'); const jsonLink = r.jsonPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.jsonPath)}" target="_blank" rel="noopener">${escapeHtml(r.jsonFile || 'JSON')}</a>` : escapeHtml(r.jsonFile || '-'); const zugferdLink = r.zugferdPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.zugferdPath)}" target="_blank" rel="noopener">${escapeHtml(r.zugferdFile || 'ZUGFeRD')}</a>` : escapeHtml(r.zugferdFile || '-'); const einvPdfLink = r.eInvoiceViewPdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.eInvoiceViewPdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.eInvoiceViewPdfFile || 'E-Gutschrift-PDF')}</a>` : escapeHtml(r.eInvoiceViewPdfFile || '-'); return `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${escapeHtml(r.subject || '')}</td><td>${pdfLink} | ${jsonLink} | ${zugferdLink} | ${einvPdfLink}</td></tr>`; }).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
+      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Versandhistorie Payment ${escapeHtml(paymentId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Beleg</th><th>Betreff</th><th>Anhänge</th></tr></thead><tbody>${rows.map(r => { const pdfLink = r.pdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.pdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.pdfFile || 'PDF')}</a>` : escapeHtml(r.pdfFile || '-'); const jsonLink = r.jsonPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.jsonPath)}" target="_blank" rel="noopener">${escapeHtml(r.jsonFile || 'JSON')}</a>` : escapeHtml(r.jsonFile || '-'); const zugferdLink = r.zugferdPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.zugferdPath)}" target="_blank" rel="noopener">${escapeHtml(r.zugferdFile || 'ZUGFeRD')}</a>` : escapeHtml(r.zugferdFile || '-'); const einvPdfLink = r.eInvoiceViewPdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.eInvoiceViewPdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.eInvoiceViewPdfFile || 'E-Gutschrift-PDF')}</a>` : escapeHtml(r.eInvoiceViewPdfFile || '-'); const documentCell = r.documentNumber ? `${r.documentKind === 'rechnung' ? 'Rechnung' : 'Gutschrift'} ${escapeHtml(r.documentNumber)}${r.documentKindOverridden === 'true' ? ' <span class="text-warn" title="Dokumentart wurde bei gemischtem Zahllauf manuell gewählt.">⚠</span>' : ''}` : '-'; return `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${documentCell}</td><td>${escapeHtml(r.subject || '')}</td><td>${pdfLink} | ${jsonLink} | ${zugferdLink} | ${einvPdfLink}</td></tr>`; }).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
       const close = () => { root.innerHTML = ''; };
       document.getElementById('closeMailLogModalBtn')?.addEventListener('click', close);
       root.querySelector('.mail-log-modal')?.addEventListener('click', (evt) => { if (evt.target.classList.contains('mail-log-modal')) close(); });
@@ -2781,6 +2850,15 @@
         if (document.getElementById('eInvoiceBankAccountHolder')) document.getElementById('eInvoiceBankAccountHolder').value = data.eInvoiceBankAccountHolder || '';
         if (document.getElementById('eInvoicePaymentTerms')) document.getElementById('eInvoicePaymentTerms').value = data.eInvoicePaymentTerms || '';
         if (document.getElementById('nachweisFirmenname')) document.getElementById('nachweisFirmenname').value = data.nachweisFirmenname || '';
+        if (document.getElementById('rechnungCutoffDate')) document.getElementById('rechnungCutoffDate').value = data.rechnungCutoffDate || '2026-01-01';
+        if (document.getElementById('legacyBuyerName')) document.getElementById('legacyBuyerName').value = data.legacyBuyerName || '';
+        if (document.getElementById('legacyBuyerStreet')) document.getElementById('legacyBuyerStreet').value = data.legacyBuyerStreet || '';
+        if (document.getElementById('legacyBuyerZip')) document.getElementById('legacyBuyerZip').value = data.legacyBuyerZip || '';
+        if (document.getElementById('legacyBuyerCity')) document.getElementById('legacyBuyerCity').value = data.legacyBuyerCity || '';
+        if (document.getElementById('legacyBuyerCountry')) document.getElementById('legacyBuyerCountry').value = data.legacyBuyerCountry || '';
+        if (document.getElementById('legacyBuyerVatId')) document.getElementById('legacyBuyerVatId').value = data.legacyBuyerVatId || '';
+        if (document.getElementById('legacyBuyerTaxNumber')) document.getElementById('legacyBuyerTaxNumber').value = data.legacyBuyerTaxNumber || '';
+        if (document.getElementById('legacyNachweisFirmenname')) document.getElementById('legacyNachweisFirmenname').value = data.legacyNachweisFirmenname || '';
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         const mode = data.emailRecipientMode || 'contact';
@@ -2789,6 +2867,8 @@
         defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || '';
         defaultValidationReminderTemplateHtml = data.validationReminderTemplateHtmlDefault || '';
         defaultEInvoicePdfTemplateHtml = data.eInvoicePdfTemplateHtmlDefault || '';
+        defaultEInvoicePdfRechnungTemplateHtml = data.eInvoicePdfTemplateHtmlRechnungDefault || '';
+        defaultEmailRechnungTemplateHtml = data.emailTemplateHtmlRechnungDefault || '';
         defaultLeaderWeeklyReportTemplateHtml = data.leaderWeeklyReportTemplateHtmlDefault || '';
         if (leaderSchedulerInput) leaderSchedulerInput.checked = data.leaderWeeklyMailSchedulerEnabled === true;
         if (leaderProductionInput) leaderProductionInput.checked = data.leaderWeeklyMailProductionEnabled === true;
@@ -2814,6 +2894,8 @@
           editorEl.dataset.emailTemplateHtml = sanitizeTemplate(data.emailTemplateHtml, defaultEmailTemplateHtml);
           editorEl.dataset.validationReminderTemplateHtml = sanitizeTemplate(data.validationReminderTemplateHtml, defaultValidationReminderTemplateHtml);
           editorEl.dataset.eInvoicePdfTemplateHtml = sanitizeTemplate(data.eInvoicePdfTemplateHtml, defaultEInvoicePdfTemplateHtml);
+          editorEl.dataset.eInvoicePdfTemplateHtmlRechnung = sanitizeTemplate(data.eInvoicePdfTemplateHtmlRechnung, defaultEInvoicePdfRechnungTemplateHtml);
+          editorEl.dataset.emailTemplateHtmlRechnung = sanitizeTemplate(data.emailTemplateHtmlRechnung, defaultEmailRechnungTemplateHtml);
           editorEl.dataset.leaderWeeklyReportTemplateHtml = sanitizeTemplate(data.leaderWeeklyReportTemplateHtml, defaultLeaderWeeklyReportTemplateHtml);
         }
         setCurrentEmailTemplateHtml((editorEl && editorEl.dataset[getActiveTemplateKey()]) || defaultEmailTemplateHtml || '');
@@ -2877,6 +2959,8 @@
           emailTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtml || getCurrentEmailTemplateHtml(),
           validationReminderTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '',
           eInvoicePdfTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.eInvoicePdfTemplateHtml || '',
+          eInvoicePdfTemplateHtmlRechnung: document.getElementById('emailTemplateEditor')?.dataset.eInvoicePdfTemplateHtmlRechnung || '',
+          emailTemplateHtmlRechnung: document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtmlRechnung || '',
           leaderWeeklyReportTemplateHtml: document.getElementById('emailTemplateEditor')?.dataset.leaderWeeklyReportTemplateHtml || '',
           leaderWeeklyMailSchedulerEnabled: !!leaderSchedulerInput?.checked,
           leaderWeeklyMailProductionEnabled: !!leaderProductionInput?.checked,
@@ -2907,7 +2991,16 @@
           eInvoiceBankBic: document.getElementById('eInvoiceBankBic')?.value || '',
           eInvoiceBankAccountHolder: document.getElementById('eInvoiceBankAccountHolder')?.value || '',
           eInvoicePaymentTerms: document.getElementById('eInvoicePaymentTerms')?.value || '',
-          nachweisFirmenname: document.getElementById('nachweisFirmenname')?.value || ''
+          nachweisFirmenname: document.getElementById('nachweisFirmenname')?.value || '',
+          rechnungCutoffDate: document.getElementById('rechnungCutoffDate')?.value || '2026-01-01',
+          legacyBuyerName: document.getElementById('legacyBuyerName')?.value || '',
+          legacyBuyerStreet: document.getElementById('legacyBuyerStreet')?.value || '',
+          legacyBuyerZip: document.getElementById('legacyBuyerZip')?.value || '',
+          legacyBuyerCity: document.getElementById('legacyBuyerCity')?.value || '',
+          legacyBuyerCountry: document.getElementById('legacyBuyerCountry')?.value || '',
+          legacyBuyerVatId: document.getElementById('legacyBuyerVatId')?.value || '',
+          legacyBuyerTaxNumber: document.getElementById('legacyBuyerTaxNumber')?.value || '',
+          legacyNachweisFirmenname: document.getElementById('legacyNachweisFirmenname')?.value || ''
         });
         if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
@@ -2929,6 +3022,15 @@
         if (document.getElementById('eInvoiceBankAccountHolder')) document.getElementById('eInvoiceBankAccountHolder').value = data.eInvoiceBankAccountHolder || '';
         if (document.getElementById('eInvoicePaymentTerms')) document.getElementById('eInvoicePaymentTerms').value = data.eInvoicePaymentTerms || '';
         if (document.getElementById('nachweisFirmenname')) document.getElementById('nachweisFirmenname').value = data.nachweisFirmenname || '';
+        if (document.getElementById('rechnungCutoffDate')) document.getElementById('rechnungCutoffDate').value = data.rechnungCutoffDate || '2026-01-01';
+        if (document.getElementById('legacyBuyerName')) document.getElementById('legacyBuyerName').value = data.legacyBuyerName || '';
+        if (document.getElementById('legacyBuyerStreet')) document.getElementById('legacyBuyerStreet').value = data.legacyBuyerStreet || '';
+        if (document.getElementById('legacyBuyerZip')) document.getElementById('legacyBuyerZip').value = data.legacyBuyerZip || '';
+        if (document.getElementById('legacyBuyerCity')) document.getElementById('legacyBuyerCity').value = data.legacyBuyerCity || '';
+        if (document.getElementById('legacyBuyerCountry')) document.getElementById('legacyBuyerCountry').value = data.legacyBuyerCountry || '';
+        if (document.getElementById('legacyBuyerVatId')) document.getElementById('legacyBuyerVatId').value = data.legacyBuyerVatId || '';
+        if (document.getElementById('legacyBuyerTaxNumber')) document.getElementById('legacyBuyerTaxNumber').value = data.legacyBuyerTaxNumber || '';
+        if (document.getElementById('legacyNachweisFirmenname')) document.getElementById('legacyNachweisFirmenname').value = data.legacyNachweisFirmenname || '';
         if (smtpPasswordInput) smtpPasswordInput.value = '';
         if (sendEmailsEnabledInput) sendEmailsEnabledInput.checked = data.sendEmailsEnabled !== false;
         const mode = data.emailRecipientMode || 'contact';
@@ -2937,6 +3039,8 @@
         defaultEmailTemplateHtml = data.emailTemplateHtmlDefault || defaultEmailTemplateHtml;
         defaultValidationReminderTemplateHtml = data.validationReminderTemplateHtmlDefault || defaultValidationReminderTemplateHtml;
         defaultEInvoicePdfTemplateHtml = data.eInvoicePdfTemplateHtmlDefault || defaultEInvoicePdfTemplateHtml;
+        defaultEInvoicePdfRechnungTemplateHtml = data.eInvoicePdfTemplateHtmlRechnungDefault || defaultEInvoicePdfRechnungTemplateHtml;
+        defaultEmailRechnungTemplateHtml = data.emailTemplateHtmlRechnungDefault || defaultEmailRechnungTemplateHtml;
         defaultLeaderWeeklyReportTemplateHtml = data.leaderWeeklyReportTemplateHtmlDefault || defaultLeaderWeeklyReportTemplateHtml;
         if (leaderSchedulerInput) leaderSchedulerInput.checked = data.leaderWeeklyMailSchedulerEnabled === true;
         if (leaderProductionInput) leaderProductionInput.checked = data.leaderWeeklyMailProductionEnabled === true;
@@ -2962,6 +3066,8 @@
           editorEl2.dataset.emailTemplateHtml = sanitizeTemplate2(data.emailTemplateHtml, defaultEmailTemplateHtml);
           editorEl2.dataset.validationReminderTemplateHtml = sanitizeTemplate2(data.validationReminderTemplateHtml, defaultValidationReminderTemplateHtml);
           editorEl2.dataset.eInvoicePdfTemplateHtml = sanitizeTemplate2(data.eInvoicePdfTemplateHtml, defaultEInvoicePdfTemplateHtml);
+          editorEl2.dataset.eInvoicePdfTemplateHtmlRechnung = sanitizeTemplate2(data.eInvoicePdfTemplateHtmlRechnung, defaultEInvoicePdfRechnungTemplateHtml);
+          editorEl2.dataset.emailTemplateHtmlRechnung = sanitizeTemplate2(data.emailTemplateHtmlRechnung, defaultEmailRechnungTemplateHtml);
           editorEl2.dataset.leaderWeeklyReportTemplateHtml = sanitizeTemplate2(data.leaderWeeklyReportTemplateHtml, defaultLeaderWeeklyReportTemplateHtml);
         }
         setCurrentEmailTemplateHtml((editorEl2 && editorEl2.dataset[getActiveTemplateKey()]) || defaultEmailTemplateHtml || '');
@@ -3093,7 +3199,20 @@
       if (activeEmailTemplateType === 'validationReminder') return 'validationReminderTemplateHtml';
       if (activeEmailTemplateType === 'eInvoicePdf') return 'eInvoicePdfTemplateHtml';
       if (activeEmailTemplateType === 'leaderWeeklyReport') return 'leaderWeeklyReportTemplateHtml';
+      if (activeEmailTemplateType === 'eInvoicePdfRechnung') return 'eInvoicePdfTemplateHtmlRechnung';
+      if (activeEmailTemplateType === 'invoiceRechnung') return 'emailTemplateHtmlRechnung';
       return 'emailTemplateHtml';
+    }
+
+    const TEMPLATE_TYPE_IDS = ['invoice', 'validationReminder', 'eInvoicePdf', 'leaderWeeklyReport', 'eInvoicePdfRechnung', 'invoiceRechnung'];
+
+    function getDefaultForActiveTemplate() {
+      if (activeEmailTemplateType === 'validationReminder') return defaultValidationReminderTemplateHtml || '';
+      if (activeEmailTemplateType === 'eInvoicePdf') return defaultEInvoicePdfTemplateHtml || '';
+      if (activeEmailTemplateType === 'leaderWeeklyReport') return defaultLeaderWeeklyReportTemplateHtml || '';
+      if (activeEmailTemplateType === 'eInvoicePdfRechnung') return defaultEInvoicePdfRechnungTemplateHtml || '';
+      if (activeEmailTemplateType === 'invoiceRechnung') return defaultEmailRechnungTemplateHtml || '';
+      return defaultEmailTemplateHtml || '';
     }
 
     function collectMissingValidationFields(row) {
@@ -3151,6 +3270,8 @@
         emailTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtml || '').trim(),
         validationReminderTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.validationReminderTemplateHtml || '').trim(),
         eInvoicePdfTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.eInvoicePdfTemplateHtml || '').trim(),
+        eInvoicePdfTemplateHtmlRechnung: (document.getElementById('emailTemplateEditor')?.dataset.eInvoicePdfTemplateHtmlRechnung || '').trim(),
+        emailTemplateHtmlRechnung: (document.getElementById('emailTemplateEditor')?.dataset.emailTemplateHtmlRechnung || '').trim(),
         leaderWeeklyReportTemplateHtml: (document.getElementById('emailTemplateEditor')?.dataset.leaderWeeklyReportTemplateHtml || '').trim(),
         leaderWeeklyMailSchedulerEnabled: !!document.getElementById('leaderWeeklyMailSchedulerEnabled')?.checked,
         leaderWeeklyMailProductionEnabled: !!document.getElementById('leaderWeeklyMailProductionEnabled')?.checked,
@@ -3180,7 +3301,17 @@
         eInvoiceBankIban: (document.getElementById('eInvoiceBankIban')?.value || '').trim(),
         eInvoiceBankBic: (document.getElementById('eInvoiceBankBic')?.value || '').trim(),
         eInvoiceBankAccountHolder: (document.getElementById('eInvoiceBankAccountHolder')?.value || '').trim(),
-        eInvoicePaymentTerms: (document.getElementById('eInvoicePaymentTerms')?.value || '').trim()
+        eInvoicePaymentTerms: (document.getElementById('eInvoicePaymentTerms')?.value || '').trim(),
+        nachweisFirmenname: (document.getElementById('nachweisFirmenname')?.value || '').trim(),
+        rechnungCutoffDate: (document.getElementById('rechnungCutoffDate')?.value || '2026-01-01').trim(),
+        legacyBuyerName: (document.getElementById('legacyBuyerName')?.value || '').trim(),
+        legacyBuyerStreet: (document.getElementById('legacyBuyerStreet')?.value || '').trim(),
+        legacyBuyerZip: (document.getElementById('legacyBuyerZip')?.value || '').trim(),
+        legacyBuyerCity: (document.getElementById('legacyBuyerCity')?.value || '').trim(),
+        legacyBuyerCountry: (document.getElementById('legacyBuyerCountry')?.value || '').trim(),
+        legacyBuyerVatId: (document.getElementById('legacyBuyerVatId')?.value || '').trim(),
+        legacyBuyerTaxNumber: (document.getElementById('legacyBuyerTaxNumber')?.value || '').trim(),
+        legacyNachweisFirmenname: (document.getElementById('legacyNachweisFirmenname')?.value || '').trim()
       };
     }
 
@@ -3204,7 +3335,7 @@
     }
 
     function wireSettingsDirtyTracking() {
-      const ids = ['lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms','leaderWeeklyMailSchedulerEnabled','leaderWeeklyMailProductionEnabled','leaderWeeklyMailScheduleDay','leaderWeeklyMailScheduleTime','goaffproSyncEnabled','goaffproSyncHourlyEnabled','goaffproSyncDeepEnabled','goaffproSyncAssetDownloadEnabled','goaffproSyncMaxCallsPerHour','goaffproSyncDeltaLookbackDays','goaffproSyncMinFreeBytes','goaffproSyncDataPath','goaffproSyncSlidingWindowEnabled','goaffproSyncMinCallSpacingMs','goaffproSyncDeltaDownloadsEnabled','goaffproSyncDownloadSkipExistingEnabled'];
+      const ids = ['lastImportedSelect','goaffproAPIKey','contactEmail','smtpHost','smtpPort','smtpUsername','smtpPassword','emailBcc','sendEmailsEnabled','emailRecipientContact','emailRecipientAdvisor','eInvoiceEnabled','includeEInvoiceArtifacts','eInvoiceBuyerName','eInvoiceBuyerStreet','eInvoiceBuyerZip','eInvoiceBuyerCity','eInvoiceBuyerCountry','eInvoiceBuyerVatId','eInvoiceBuyerTaxNumber','eInvoiceBankIban','eInvoiceBankBic','eInvoiceBankAccountHolder','eInvoicePaymentTerms','leaderWeeklyMailSchedulerEnabled','leaderWeeklyMailProductionEnabled','leaderWeeklyMailScheduleDay','leaderWeeklyMailScheduleTime','goaffproSyncEnabled','goaffproSyncHourlyEnabled','goaffproSyncDeepEnabled','goaffproSyncAssetDownloadEnabled','goaffproSyncMaxCallsPerHour','goaffproSyncDeltaLookbackDays','goaffproSyncMinFreeBytes','goaffproSyncDataPath','goaffproSyncSlidingWindowEnabled','goaffproSyncMinCallSpacingMs','goaffproSyncDeltaDownloadsEnabled','goaffproSyncDownloadSkipExistingEnabled','nachweisFirmenname','rechnungCutoffDate','legacyBuyerName','legacyBuyerStreet','legacyBuyerZip','legacyBuyerCity','legacyBuyerCountry','legacyBuyerVatId','legacyBuyerTaxNumber','legacyNachweisFirmenname'];
       ids.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -3283,13 +3414,7 @@
       if (source) source.addEventListener('input', () => { persistCurrentTemplate(); updateSaveButtonState(); renderEmailTemplatePreview(); });
 
       if (resetBtn) resetBtn.addEventListener('click', () => {
-        const html = activeEmailTemplateType === 'validationReminder'
-          ? (defaultValidationReminderTemplateHtml || '')
-          : (activeEmailTemplateType === 'eInvoicePdf'
-            ? (defaultEInvoicePdfTemplateHtml || '')
-            : (activeEmailTemplateType === 'leaderWeeklyReport'
-              ? (defaultLeaderWeeklyReportTemplateHtml || '')
-              : (defaultEmailTemplateHtml || '')));
+        const html = getDefaultForActiveTemplate();
         setCurrentEmailTemplateHtml(html);
         if (editor) editor.dataset[getActiveTemplateKey()] = html;
         updateSaveButtonState();
@@ -3297,11 +3422,7 @@
       });
 
       if (templateTypeSelect) templateTypeSelect.addEventListener('change', () => {
-        activeEmailTemplateType = templateTypeSelect.value === 'validationReminder'
-          ? 'validationReminder'
-          : (templateTypeSelect.value === 'eInvoicePdf'
-            ? 'eInvoicePdf'
-            : (templateTypeSelect.value === 'leaderWeeklyReport' ? 'leaderWeeklyReport' : 'invoice'));
+        activeEmailTemplateType = TEMPLATE_TYPE_IDS.includes(templateTypeSelect.value) ? templateTypeSelect.value : 'invoice';
         setCurrentEmailTemplateHtml((editor && editor.dataset[getActiveTemplateKey()]) || '');
         renderEmailTemplatePreview();
         updateSaveButtonState();
@@ -3332,64 +3453,155 @@
 
       const createdFiles = [];
       const failed = [];
+      const mixed = [];
+      const counts = { gutschrift: 0, rechnung: 0 };
 
       for (let i = 0; i < paymentIds.length; i++) {
         const paymentId = paymentIds[i];
-        status.textContent = `Erzeuge Gutschrift-PDF ${i + 1}/${paymentIds.length} für Payment-ID ${paymentId} ...`;
+        status.textContent = `Erzeuge Beleg ${i + 1}/${paymentIds.length} für Payment-ID ${paymentId} ...`;
         try {
-          const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
-            paymentId,
-            includeEInvoiceArtifacts: !!document.getElementById('includeEInvoiceArtifacts')?.checked
-          });
+          const data = await postInvoiceDetailsExport(paymentId);
+          if (data.documentKind && counts[data.documentKind] !== undefined) counts[data.documentKind]++;
           if (data.file) createdFiles.push(data.file);
           if (data.jsonFile) createdFiles.push(data.jsonFile);
           if (data.zugferdFile) createdFiles.push(data.zugferdFile);
           if (data.eInvoiceViewPdfFile) createdFiles.push(data.eInvoiceViewPdfFile);
         } catch (error) {
-          failed.push({ paymentId, message: error.message });
+          if (error.code === 'MIXED_PERIOD') mixed.push({ paymentId, details: error.details || {} });
+          else failed.push({ paymentId, message: error.message });
         }
       }
 
-      if (filesBox) {
-        const okHtml = createdFiles.length > 0
-          ? `<strong>Exportierte Dateien (PDF, JSON, ZUGFeRD):</strong><br>${createdFiles.map(f => `<code>${f}</code>`).join('<br>')}`
-          : '<strong>Keine Gutschrift-PDF erstellt.</strong>';
-        const failHtml = failed.length > 0
-          ? `<br><br><strong>Fehler:</strong><br>${failed.map(f => `<code>${f.paymentId}</code>: ${f.message}`).join('<br>')}`
-          : '';
-        filesBox.innerHTML = `${okHtml}${failHtml}`;
-      }
+      renderInvoiceExportResult(filesBox, createdFiles, failed, mixed);
 
+      const summary = describeCreatedDocuments(counts, createdFiles.length);
+      const mixedSuffix = mixed.length > 0 ? `, ${mixed.length} gemischte(r) Zahllauf/Zahlläufe offen` : '';
       if (failed.length === 0) {
-        status.textContent = `${createdFiles.length} Gutschrift-PDF(s) erstellt.`;
+        status.textContent = `${summary}${mixedSuffix}.`;
       } else if (createdFiles.length === 0) {
-        status.textContent = `Keine Gutschrift-PDF erstellt. Fehler bei ${failed.length} Payment-ID(s).`;
+        status.textContent = `Keine Belege erstellt. Fehler bei ${failed.length} Payment-ID(s)${mixedSuffix}.`;
       } else {
-        status.textContent = `${createdFiles.length} Gutschrift-PDF(s) erstellt, ${failed.length} Fehler.`;
+        status.textContent = `${summary}, ${failed.length} Fehler${mixedSuffix}.`;
       }
     }
 
-    async function loadInvoiceDetailsPdf(paymentId) {
+    function describeCreatedDocuments(counts, fileCount) {
+      const parts = [];
+      if (counts.gutschrift > 0) parts.push(`${counts.gutschrift} Gutschrift(en)`);
+      if (counts.rechnung > 0) parts.push(`${counts.rechnung} Rechnung(en)`);
+      if (parts.length === 0) return fileCount > 0 ? `${fileCount} Datei(en) erstellt` : 'Keine Belege erstellt';
+      return `${parts.join(' und ')} erstellt`;
+    }
+
+    function renderInvoiceExportResult(filesBox, createdFiles, failed, mixed) {
+      if (!filesBox) return;
+      const okHtml = createdFiles.length > 0
+        ? `<strong>Exportierte Dateien (PDF, JSON, ZUGFeRD):</strong><br>${createdFiles.map(f => `<code>${escapeHtml(String(f))}</code>`).join('<br>')}`
+        : '<strong>Keine Belege erstellt.</strong>';
+      const failHtml = failed.length > 0
+        ? `<br><br><strong>Fehler:</strong><br>${failed.map(f => `<code>${escapeHtml(String(f.paymentId))}</code>: ${escapeHtml(String(f.message))}`).join('<br>')}`
+        : '';
+      const mixedHtml = mixed.length > 0
+        ? `<br><br><strong class="text-warn">⚠ Gemischte Zahlläufe (kein Beleg erzeugt, keine Belegnummer vergeben): ${mixed.length}</strong><br>`
+          + mixed.map(m => {
+              const d = m.details || {};
+              return `<code>${escapeHtml(String(m.paymentId))}</code> · ${escapeHtml(String(d.periodLabel || '-'))}`
+                + ` · vor Stichtag: ${d.beforeCutoffCount ?? 0} / ${formatEuroAmount(d.beforeCutoffAmount)}`
+                + ` · ab Stichtag: ${d.fromCutoffCount ?? 0} / ${formatEuroAmount(d.fromCutoffAmount)}`
+                + ` <button type="button" class="secondary mixed-decide-btn" data-payment-id="${escapeHtml(String(m.paymentId))}">Entscheiden</button>`;
+            }).join('<br>')
+        : '';
+      filesBox.innerHTML = `${okHtml}${failHtml}${mixedHtml}`;
+      filesBox.querySelectorAll('.mixed-decide-btn').forEach(btn => {
+        const paymentId = btn.dataset.paymentId;
+        const entry = mixed.find(m => String(m.paymentId) === String(paymentId));
+        btn.addEventListener('click', async () => {
+          const choice = await askMixedPeriodDecision(entry ? entry.details : { paymentId });
+          if (choice) await loadInvoiceDetailsPdf(paymentId, choice);
+        });
+      });
+    }
+
+    function formatEuroAmount(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return '-';
+      return n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
+    }
+
+    async function postInvoiceDetailsExport(paymentId, documentKind) {
+      const payload = {
+        paymentId,
+        includeEInvoiceArtifacts: !!document.getElementById('includeEInvoiceArtifacts')?.checked
+      };
+      // documentKind wird serverseitig NUR bei gemischten Zahlläufen ausgewertet.
+      if (documentKind) payload.documentKind = documentKind;
+      return apiPost('/api/provisionen-goaffpro/invoice-details-pdf', payload);
+    }
+
+    /** Dreiwertige Entscheidung bei gemischtem Zahllauf: Gutschrift / Rechnung / Abbruch. */
+    function askMixedPeriodDecision(details) {
+      return new Promise(resolve => {
+        const root = document.getElementById('mailLogModalRoot');
+        if (!root) { resolve(null); return; }
+        const d = details || {};
+        root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card">
+          <h3 style="margin:0 0 8px 0;">Gemischter Zahllauf – bitte entscheiden</h3>
+          <p class="status">Payment-ID <strong>${escapeHtml(String(d.paymentId || '-'))}</strong>, Zeitraum ${escapeHtml(String(d.periodLabel || '-'))}.
+            Der Zahllauf enthält Provisionen vor <strong>und</strong> ab dem Stichtag ${escapeHtml(String(d.cutoffDate || '2026-01-01'))}.
+            Es wurde noch <strong>kein Beleg</strong> erzeugt und <strong>keine Belegnummer</strong> vergeben.</p>
+          <table><thead><tr><th>Bereich</th><th>Transaktionen</th><th>Summe</th></tr></thead><tbody>
+            <tr><td>vor Stichtag (Altfall → Rechnung)</td><td>${d.beforeCutoffCount ?? 0}</td><td>${formatEuroAmount(d.beforeCutoffAmount)}</td></tr>
+            <tr><td>ab Stichtag (→ Gutschrift)</td><td>${d.fromCutoffCount ?? 0}</td><td>${formatEuroAmount(d.fromCutoffAmount)}</td></tr>
+          </tbody></table>
+          <div class="toolbar" style="margin-top:12px;">
+            <button id="mixedChooseGutschrift" type="button">Als Gutschrift erstellen</button>
+            <button id="mixedChooseRechnung" type="button" class="secondary">Als Rechnung erstellen (Altfall)</button>
+            <button id="mixedCancel" type="button" class="secondary">Abbrechen</button>
+          </div>
+          <div class="settings-hint">Die Entscheidung wird im Versandprotokoll vermerkt.</div>
+        </div></div>`;
+        const close = value => { root.innerHTML = ''; resolve(value); };
+        document.getElementById('mixedChooseGutschrift')?.addEventListener('click', () => close('gutschrift'));
+        document.getElementById('mixedChooseRechnung')?.addEventListener('click', () => close('rechnung'));
+        document.getElementById('mixedCancel')?.addEventListener('click', () => close(null));
+      });
+    }
+
+    async function loadInvoiceDetailsPdf(paymentId, documentKind) {
       const status = document.getElementById('pollStatus');
       try {
-        if (shouldSendEmails() && getEmailRecipientMode() === 'advisor') {
+        if (!documentKind && shouldSendEmails() && getEmailRecipientMode() === 'advisor') {
           const confirmed = window.confirm('Die E-Mail wird an die Beraterinnen-Adresse gesendet. Möchtest du fortfahren?');
           if (!confirmed) {
             status.textContent = 'Aktion abgebrochen.';
             return;
           }
         }
-        const data = await apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
-          paymentId,
-          includeEInvoiceArtifacts: !!document.getElementById('includeEInvoiceArtifacts')?.checked
-        });
+        let data;
+        try {
+          data = await postInvoiceDetailsExport(paymentId, documentKind);
+        } catch (error) {
+          if (error.code !== 'MIXED_PERIOD') throw error;
+          const choice = await askMixedPeriodDecision(error.details || { paymentId });
+          if (!choice) {
+            status.textContent = 'Abgebrochen – es wurde kein Beleg erzeugt und keine Belegnummer vergeben.';
+            return;
+          }
+          data = await postInvoiceDetailsExport(paymentId, choice);
+        }
         await loadMailLog();
         renderTable();
+        const label = `${data.documentKindLabel || 'Beleg'} ${data.documentNumber || ''}`.trim();
+        const hints = [];
+        if (data.documentKind === 'rechnung') hints.push('Altfall vor Stichtag');
+        if (data.documentKindSource === 'paymentCreatedAt') hints.push('Dokumentart aus dem Zahllauf-Datum abgeleitet');
+        if (data.documentKindOverridden) hints.push('Dokumentart manuell gewählt');
+        const hintText = hints.length ? ` (${hints.join('; ')})` : '';
         status.textContent = data.opened
-          ? `Gutschrift erstellt und geöffnet: ${data.file}`
-          : `Gutschrift erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.zugferdFile ? ' | ' + data.zugferdFile : ''}${data.eInvoiceViewPdfFile ? ' | ' + data.eInvoiceViewPdfFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}`;
+          ? `${label} erstellt und geöffnet: ${data.file}${hintText}`
+          : `${label} erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.zugferdFile ? ' | ' + data.zugferdFile : ''}${data.eInvoiceViewPdfFile ? ' | ' + data.eInvoiceViewPdfFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}${hintText}`;
       } catch (error) {
-        status.textContent = `Fehler bei Gutschrift-Erstellung: ${error.message}`;
+        status.textContent = `Fehler bei der Belegerstellung: ${error.message}`;
       }
     }
 
@@ -3569,9 +3781,9 @@
       rewardStatusBody.innerHTML = rewardStatuses.map(r => `<tr><td>${r.status || ''}</td><td>${countHoverHtml(r.count || 0, `Reward-Status ${r.status || ''}: ${r.count || 0}`)}</td><td>${formatEuroAmount(r.amount || 0)}</td></tr>`).join('');
 
       const chart = data.chartData || {};
-      drawBarChart('analyticsAmountChart', chart.labels || [], chart.amountSeries || [], '#2563eb');
-      drawBarChart('analyticsTxChart', chart.labels || [], chart.txSeries || [], '#3b82f6');
-      drawBarChart('analyticsCountryChart', countries.map(r => r.country || 'Unbekannt'), countries.map(r => Number(r.payments || 0)), '#3b82f6');
+      drawBarChart('analyticsAmountChart', chart.labels || [], chart.amountSeries || [], '#6fa3c4');
+      drawBarChart('analyticsTxChart', chart.labels || [], chart.txSeries || [], '#108474');
+      drawBarChart('analyticsCountryChart', countries.map(r => r.country || 'Unbekannt'), countries.map(r => Number(r.payments || 0)), '#d499a2');
       syncAdvisor360SelectFromAnalytics(advisors);
       updateEmptyTablesVisibility(document);
     }
