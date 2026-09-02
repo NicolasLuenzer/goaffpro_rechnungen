@@ -488,7 +488,7 @@ public class GoAffProSyncService {
         }
         initDatabase(db);
         try (Connection connection = connect(db)) {
-            markInvalidEmptyEntities(connection);
+            markInvalidEmptyEntitiesQuietly(connection);
             if (!running.get()) repairOrphanRuns(connection);
             Map<String, Object> last = lastRun(connection, null);
             Map<String, Object> lastSuccess = lastRun(connection, "success");
@@ -523,7 +523,7 @@ public class GoAffProSyncService {
         }
         initDatabase(db);
         try (Connection connection = connect(db)) {
-            markInvalidEmptyEntities(connection);
+            markInvalidEmptyEntitiesQuietly(connection);
             payload.put("rows", inventoryRows(connection));
             payload.put("endpointRows", endpointRows(connection));
             return payload;
@@ -582,8 +582,9 @@ public class GoAffProSyncService {
             if (!Files.exists(db)) return false;
             initDatabase(db);
             try (Connection connection = connect(db)) {
-                markInvalidEmptyEntities(connection);
-                try (PreparedStatement ps = connection.prepareStatement("SELECT COUNT(*) FROM sync_entities WHERE entity_type=? AND state='active'")) {
+                markInvalidEmptyEntitiesQuietly(connection);
+                try (PreparedStatement ps = connection.prepareStatement(
+                        "SELECT COUNT(*) FROM sync_entities WHERE entity_type=? AND state='active' AND TRIM(raw_json) <> '{}'")) {
                     ps.setString(1, entityType);
                     try (ResultSet rs = ps.executeQuery()) {
                         return rs.next() && rs.getLong(1) > 0;
@@ -614,9 +615,11 @@ public class GoAffProSyncService {
         initDatabase(db);
         List<JsonNode> rows = new ArrayList<>();
         try (Connection connection = connect(db)) {
-            markInvalidEmptyEntities(connection);
+            markInvalidEmptyEntitiesQuietly(connection);
             try (PreparedStatement ps = connection.prepareStatement(
-                    "SELECT raw_json FROM sync_entities WHERE entity_type=? AND state='active' ORDER BY external_id")) {
+                    // TRIM-Filter zusätzlich zur Markierung: so liefert die Abfrage auch dann keine
+                    // leeren Objekte, wenn die Bereinigung wegen eines laufenden Syncs übersprungen wurde.
+                    "SELECT raw_json FROM sync_entities WHERE entity_type=? AND state='active' AND TRIM(raw_json) <> '{}' ORDER BY external_id")) {
                 ps.setString(1, entityType);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
@@ -1565,7 +1568,32 @@ public class GoAffProSyncService {
     }
 
     private static Connection connect(Path db) throws Exception {
-        return DriverManager.getConnection("jdbc:sqlite:" + db.toAbsolutePath());
+        Connection connection = DriverManager.getConnection("jdbc:sqlite:" + db.toAbsolutePath());
+        try (Statement st = connection.createStatement()) {
+            // WAL: Leser (Statusabfragen der Oberfläche) blockieren nicht mehr gegen den
+            // schreibenden Sync-Thread. Ist in der Datei gespeichert, daher ab dem zweiten
+            // Verbindungsaufbau ein No-Op.
+            st.execute("PRAGMA journal_mode=WAL");
+            // Ohne busy_timeout wirft SQLite bei Konkurrenz sofort SQLITE_BUSY, statt kurz zu warten.
+            st.execute("PRAGMA busy_timeout=10000");
+        } catch (Exception e) {
+            System.err.println("GoAffPro Sync: SQLite-PRAGMAs konnten nicht gesetzt werden: " + describeThrowable(e));
+        }
+        return connection;
+    }
+
+    /**
+     * Datenhygiene (leere Objekte markieren) darf niemals einen Lesezugriff scheitern lassen.
+     * Während eines Laufs wird sie übersprungen: dann schreibt ohnehin der Sync-Thread, und die
+     * Oberfläche pollt den Status im Sekundentakt - das provozierte bisher SQLITE_BUSY.
+     */
+    private void markInvalidEmptyEntitiesQuietly(Connection connection) {
+        if (running.get()) return;
+        try {
+            markInvalidEmptyEntities(connection);
+        } catch (Exception e) {
+            System.err.println("GoAffPro Sync: Bereinigung leerer Objekte übersprungen: " + describeThrowable(e));
+        }
     }
 
     private static long insertRun(Connection connection, String mode) throws Exception {

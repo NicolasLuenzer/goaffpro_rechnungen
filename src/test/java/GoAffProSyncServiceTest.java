@@ -530,6 +530,48 @@ class GoAffProSyncServiceTest {
     }
 
     @Test
+    void statusabfrageScheitertNichtWaehrendGeschriebenWird(@TempDir Path tempDir) throws Exception {
+        // Reproduziert den SQLITE_BUSY-Fehler: die Oberflaeche pollt den Status, waehrend der
+        // Sync-Thread schreibt. Ohne WAL + busy_timeout warf das sofort "database is locked".
+        Properties config = new Properties();
+        config.setProperty("goaffproSyncDataPath", tempDir.toString());
+        GoAffProSyncService service = new GoAffProSyncService();
+        Path db = GoAffProSyncService.resolveDbPath(config);
+        initDatabase(db);
+
+        try (Connection writer = DriverManager.getConnection("jdbc:sqlite:" + db.toAbsolutePath())) {
+            try (java.sql.Statement st = writer.createStatement()) {
+                st.execute("PRAGMA journal_mode=WAL");
+                st.execute("PRAGMA busy_timeout=10000");
+            }
+            writer.setAutoCommit(false);
+            upsert(writer, "affiliates", "a1", MAPPER.readTree("{\"id\":\"a1\",\"name\":\"Test\"}"));
+            // Schreibtransaktion bleibt absichtlich offen, waehrend der Status gelesen wird
+            var status = service.status(config);
+            assertNotNull(status.get("state"), "Statusabfrage muss auch bei offener Schreibtransaktion liefern");
+            assertNotNull(status.get("inventory"));
+            writer.commit();
+        }
+    }
+
+    @Test
+    void leereObjekteErscheinenNichtInDenEntitaeten(@TempDir Path tempDir) throws Exception {
+        // Der TRIM-Filter macht die Abfrage unabhaengig davon, ob die Bereinigung gelaufen ist.
+        Properties config = new Properties();
+        config.setProperty("goaffproSyncDataPath", tempDir.toString());
+        Path db = GoAffProSyncService.resolveDbPath(config);
+        initDatabase(db);
+        try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + db.toAbsolutePath())) {
+            upsert(connection, "affiliates", "leer", MAPPER.readTree("{}"));
+            upsert(connection, "affiliates", "gut", MAPPER.readTree("{\"id\":\"gut\",\"name\":\"Valid\"}"));
+        }
+        GoAffProSyncService service = new GoAffProSyncService();
+        var entities = service.entities(config, "affiliates");
+        assertEquals(1, entities.size(), "Leere Objekte duerfen nicht ausgeliefert werden");
+        assertEquals("gut", entities.get(0).get("id").asText());
+    }
+
+    @Test
     void describeThrowableBleibtAuchOhneMeldungAussagekraeftig() {
         assertEquals("IOException: Platte voll", GoAffProSyncService.describeThrowable(new java.io.IOException("Platte voll")));
         // getMessage() ist häufig null - dann sagt der Klassenname mehr als ein leerer Text
