@@ -131,6 +131,17 @@ class BackupServiceTest {
         return new Properties();
     }
 
+    private static byte[] bytesFromZip(Path zip, String entryName) throws Exception {
+        try (ZipInputStream zis = new ZipInputStream(Files.newInputStream(zip), StandardCharsets.UTF_8)) {
+            ZipEntry e;
+            while ((e = zis.getNextEntry()) != null) {
+                if (e.getName().equals(entryName)) return zis.readAllBytes();
+                zis.closeEntry();
+            }
+        }
+        return new byte[0];
+    }
+
     // ── Round-Trip ──────────────────────────────────────────────────────────────
 
     @Test
@@ -515,5 +526,37 @@ class BackupServiceTest {
         assertTrue(Files.exists(tmp.resolve("export_20260104_000000.zip")));
         assertTrue(Files.exists(tmp.resolve("export_20260103_000000.zip")));
         assertFalse(Files.exists(tmp.resolve("export_20260101_000000.zip")));
+    }
+
+    // ── Reproduzierbare Serialisierung ──────────────────────────────────────────
+
+    @Test
+    void propertiesSerialisierungIstUeberDieZeitStabil() throws Exception {
+        // Properties.store() schreibt eine Zeitstempel-Zeile. Der Inhalt wird zweimal
+        // serialisiert (Pruefsumme im Manifest und ZIP-Eintrag); faellt dazwischen ein
+        // Sekundenwechsel, passte die Pruefsumme frueher nicht mehr zum Eintrag.
+        Properties p = new Properties();
+        p.setProperty("gutschriftCounter", "394");
+        p.setProperty("smtpHost", "mail.example.org");
+
+        byte[] ersteFassung = BackupService.propertiesToBytes(p, "GoAffPro config");
+        Thread.sleep(1100);
+        byte[] zweiteFassung = BackupService.propertiesToBytes(p, "GoAffPro config");
+
+        assertArrayEquals(ersteFassung, zweiteFassung,
+                "Zwei Serialisierungen desselben Inhalts muessen Byte fuer Byte gleich sein");
+    }
+
+    @Test
+    void archivEintragEnthaeltKeinenZeitstempel(@TempDir Path tmp) throws Exception {
+        BackupService.BackupLocations quelle = fixture(tmp.resolve("quelle"));
+        Path zip = BackupService.createArchive(quelle, false, tmp.resolve("sicherung.zip"), null);
+
+        String inhalt = new String(bytesFromZip(zip, "config/config.properties"),
+                StandardCharsets.ISO_8859_1);
+        List<String> kommentare = inhalt.lines().filter(z -> z.startsWith("#")).toList();
+
+        assertEquals(List.of("#GoAffPro config"), kommentare,
+                "Im Archiv darf nur der feste Kommentar stehen, keine Zeitstempel-Zeile");
     }
 }

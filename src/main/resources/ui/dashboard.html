@@ -271,6 +271,7 @@
 
     /* ── Validation Table – kompaktes Layout ── */
     .validation-table-wrap { overflow-x: auto; }
+    .table-scroll { overflow-x: auto; max-width: 100%; }
     #validationMasterdataTable { table-layout: fixed; font-size: var(--fs-sm); }
     #validationMasterdataTable th,
     #validationMasterdataTable td { padding: 5px 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -392,6 +393,9 @@
       .toolbar select,
       .toolbar button,
       .toolbar label { width: 100%; box-sizing: border-box; text-align: left; }
+      /* Kontrollkaestchen behalten ihre Groesse und bleiben neben dem Text */
+      .toolbar input[type="checkbox"],
+      .toolbar input[type="radio"] { width: auto; }
 
       /* Settings grid: single column */
       .settings-grid { grid-template-columns: 1fr; }
@@ -449,7 +453,7 @@
   <div id="sidebarOverlay" class="sidebar-overlay"></div>
   <div id="mainLayout" style="display:flex;align-items:flex-start;gap:0;">
     <nav id="sideNav" class="side-nav"></nav>
-    <div id="mainContent" style="flex:1;min-width:0;padding-left:16px;">
+    <div id="mainContent" style="flex:1;min-width:0;max-width:100%;padding-left:16px;">
       <div id="areaTabs" class="area-tabs" style="display:none;"></div>
 <div id="vPanel" class="area-panel active"><div id="tabs" class="tabs" style="display:none;"></div><div id="panels"></div></div>
     </div>
@@ -1077,16 +1081,16 @@
             <span id="syncDiagnosticsEstimate" class="status">Noch keine Diagnose geladen.</span>
           </div>
           <div id="syncDiagnosticsStatus" class="status"></div>
-          <table><thead><tr><th>Endpoint</th><th>Empfehlung</th><th>OK-Responses</th><th>Max. Items</th><th>Leere Items</th><th>Warnungen</th></tr></thead><tbody id="syncDiagnosticsSummaryBody"></tbody></table>
-          <table><thead><tr><th>Endpoint</th><th>Variante</th><th>HTTP</th><th>ms</th><th>Bytes</th><th>Array</th><th>Items</th><th>Leer</th><th>Wiederholt</th><th>Fields</th><th>IDs/Hashes</th><th>Warnung</th></tr></thead><tbody id="syncDiagnosticsResultBody"></tbody></table>
+          <div class="table-scroll"><table><thead><tr><th>Endpoint</th><th>Empfehlung</th><th>OK-Responses</th><th>Max. Items</th><th>Leere Items</th><th>Warnungen</th></tr></thead><tbody id="syncDiagnosticsSummaryBody"></tbody></table></div>
+          <div class="table-scroll"><table><thead><tr><th>Endpoint</th><th>Variante</th><th>HTTP</th><th>ms</th><th>Bytes</th><th>Array</th><th>Items</th><th>Leer</th><th>Wiederholt</th><th>Fields</th><th>IDs/Hashes</th><th>Warnung</th></tr></thead><tbody id="syncDiagnosticsResultBody"></tbody></table></div>
         </div>
         <div class="toolbar"><strong>Dateninventar</strong></div>
         <div id="syncInventoryGrid" class="sync-progress-grid"></div>
-        <table><thead><tr><th>Datenbereich</th><th>Datensätze</th><th>Remote fehlt</th><th>Ungültig</th><th>Dateien</th><th>Dateigröße</th><th>Zuletzt gesehen</th><th>Status</th></tr></thead><tbody id="syncInventoryBody"></tbody></table>
+        <div class="table-scroll"><table><thead><tr><th>Datenbereich</th><th>Datensätze</th><th>Remote fehlt</th><th>Ungültig</th><th>Dateien</th><th>Dateigröße</th><th>Zuletzt gesehen</th><th>Status</th></tr></thead><tbody id="syncInventoryBody"></tbody></table></div>
         <div class="toolbar"><strong>Endpoint-Details</strong></div>
-        <table><thead><tr><th>Endpoint</th><th>Entität</th><th>Gelesen</th><th>Neu</th><th>Geändert</th><th>Unverändert</th><th>Downloads</th><th>API-Calls</th><th>Vollständig</th><th>Warnung</th></tr></thead><tbody id="syncEndpointBody"></tbody></table>
+        <div class="table-scroll"><table><thead><tr><th>Endpoint</th><th>Entität</th><th>Gelesen</th><th>Neu</th><th>Geändert</th><th>Unverändert</th><th>Downloads</th><th>API-Calls</th><th>Vollständig</th><th>Warnung</th></tr></thead><tbody id="syncEndpointBody"></tbody></table></div>
         <div class="toolbar"><strong>Letzte Sync-Läufe</strong></div>
-        <table><thead><tr><th>ID</th><th>Modus</th><th>Status</th><th>Start</th><th>Ende</th><th>API-Calls</th><th>Gesehen</th><th>Neu</th><th>Geändert</th><th>Warnungen</th><th>Fehler</th></tr></thead><tbody id="syncRunsBody"></tbody></table>
+        <div class="table-scroll"><table><thead><tr><th>ID</th><th>Modus</th><th>Status</th><th>Start</th><th>Ende</th><th>API-Calls</th><th>Gesehen</th><th>Neu</th><th>Geändert</th><th>Warnungen</th><th>Fehler</th></tr></thead><tbody id="syncRunsBody"></tbody></table></div>
 
         <div class="toolbar"><strong>Datensicherung &amp; Umzug</strong></div>
         <div class="settings-group" style="background:#fff;margin-bottom:16px;">

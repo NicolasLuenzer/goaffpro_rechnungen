@@ -636,11 +636,24 @@ public final class BackupService {
         return p;
     }
 
-    private static byte[] propertiesToBytes(Properties p, String comment) throws IOException {
+    static byte[] propertiesToBytes(Properties p, String comment) throws IOException {
+        byte[] raw;
         try (var out = new java.io.ByteArrayOutputStream()) {
             p.store(out, comment);
-            return out.toByteArray();
+            raw = out.toByteArray();
         }
+        // Properties.store() setzt eine Zeitstempel-Zeile an den Anfang. Der Inhalt wird zweimal
+        // serialisiert - einmal fuer die Pruefsumme im Manifest, einmal fuer den ZIP-Eintrag.
+        // Faellt dazwischen ein Sekundenwechsel, unterscheiden sich die Bytes und der Import
+        // lehnt das gerade erzeugte Archiv als beschaedigt ab. Deshalb alle Kommentarzeilen
+        // entfernen und die Zeilenenden vereinheitlichen: gleiche Eingabe, gleiche Bytes.
+        StringBuilder sb = new StringBuilder();
+        if (notBlank(comment)) sb.append('#').append(comment).append('\n');
+        for (String line : new String(raw, StandardCharsets.ISO_8859_1).split("\r?\n", -1)) {
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            sb.append(line).append('\n');
+        }
+        return sb.toString().getBytes(StandardCharsets.ISO_8859_1);
     }
 
     private static Properties copyOf(Properties in) {
