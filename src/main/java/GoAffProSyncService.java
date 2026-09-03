@@ -526,6 +526,7 @@ public class GoAffProSyncService {
             payload.put("fileBytes", directorySize(resolveDataDir(config).resolve("goaffpro_files")));
             payload.put("inventory", List.of());
             payload.put("warnings", List.of("Noch kein lokaler GoAffPro Syncbestand vorhanden."));
+            payload.put("notes", List.of());
             return payload;
         }
         initDatabase(db);
@@ -547,6 +548,7 @@ public class GoAffProSyncService {
             payload.put("inventory", inventoryRows(connection));
             payload.put("recentRuns", runRows(connection, 8));
             payload.put("warnings", syncWarnings(connection));
+            payload.put("notes", syncNotes(connection));
             Map<String, Object> stateRun = running.get() && currentRun != null ? currentRun : last;
             payload.put("state", computeState(config, stateRun, lastSuccess));
             return payload;
@@ -788,10 +790,15 @@ public class GoAffProSyncService {
         EndpointResult result = new EndpointResult(endpoint.key, endpoint.entityType, endpoint.displayName, basePath);
         if (endpoint.paginationMode == PaginationMode.SKIP_WITH_WARNING) {
             result.complete = false;
-            result.warning(endpoint.skipWarning.isBlank()
+            String text = endpoint.skipWarning.isBlank()
                     ? "Endpoint wird im normalen Sync bewusst übersprungen."
-                    : endpoint.skipWarning);
-            run.lastWarning = lastOf(result.warnings);
+                    : endpoint.skipWarning;
+            if (endpoint.skipIsNote) {
+                result.note(text);
+            } else {
+                result.warning(text);
+                run.lastWarning = lastOf(result.warnings);
+            }
             updateEndpointStats(connection, result);
             return result;
         }
@@ -894,13 +901,13 @@ public class GoAffProSyncService {
         }
 
         if (endpoint.fetchGroupMembers && complete) {
-            result.add(syncGroupMembers(connection, apiKey, budget));
+            result.add(syncGroupMembers(connection, apiKey, budget, apiBase));
         }
         if (endpoint.fetchAffiliateRelated && complete && ("initial".equals(mode) || "deep".equals(mode))) {
-            result.add(syncAffiliateRelated(connection, apiKey, config, budget));
+            result.add(syncAffiliateRelated(connection, apiKey, config, budget, apiBase));
         }
         if (endpoint.fetchAssetFolderContents && complete) {
-            result.add(syncAssetFolderContents(connection, apiKey, budget));
+            result.add(syncAssetFolderContents(connection, apiKey, budget, apiBase));
         }
 
         if (complete && ("initial".equals(mode) || "deep".equals(mode))) {
@@ -911,14 +918,14 @@ public class GoAffProSyncService {
         return result;
     }
 
-    private EndpointResult syncGroupMembers(Connection connection, String apiKey, RateBudget budget) throws Exception {
+    private EndpointResult syncGroupMembers(Connection connection, String apiKey, RateBudget budget, String apiBase) throws Exception {
         EndpointResult result = new EndpointResult("groups_members", "group_members", "Gruppenmitglieder", "/v1/admin/groups/{id}/members");
         List<JsonNode> groups = entitiesFromConnection(connection, "groups");
         for (JsonNode group : groups) {
             String groupId = extractStableId(group, "groups");
             if (groupId.isBlank()) continue;
             try {
-                JsonNode root = requestJson("/v1/admin/groups/" + encodePath(groupId) + "/members", apiKey, budget, result);
+                JsonNode root = requestJson("/v1/admin/groups/" + encodePath(groupId) + "/members", apiKey, budget, result, apiBase);
                 storeSnapshot(connection, new EndpointSpec("groups_members", "Gruppenmitglieder", "group_members", "/v1/admin/groups/" + groupId + "/members", "members", false, false), 1, root);
                 List<JsonNode> members = extractItems(root, new EndpointSpec("groups_members", "Gruppenmitglieder", "group_members", "", "members", false, false));
                 if (members.isEmpty() && root.isArray()) members = jsonArray(root);
@@ -939,14 +946,16 @@ public class GoAffProSyncService {
         return result;
     }
 
-    private EndpointResult syncAffiliateRelated(Connection connection, String apiKey, Properties config, RateBudget budget) throws Exception {
+    private EndpointResult syncAffiliateRelated(Connection connection, String apiKey, Properties config, RateBudget budget, String apiBase) throws Exception {
         EndpointResult result = new EndpointResult("affiliate_related", "affiliate_related", "Affiliate Detaildaten", "/v1/admin/affiliates/{id}/...");
         List<JsonNode> affiliates = entitiesFromConnection(connection, "affiliates");
         int limit = Math.max(1, intSetting(config, "goaffproSyncAffiliateDetailLimit", 0));
         int count = 0;
         for (JsonNode affiliate : affiliates) {
             if (limit > 0 && count >= limit) {
-                result.warning("Affiliate Detail-Sync nach " + limit + " Affiliates gestoppt (Schutzlimit).");
+                // Bewusste Drosselung, kein Fehler: die Detaildaten kosten 5 Calls je Beraterin
+                // und werden derzeit nirgends ausgewertet. Deshalb Hinweis statt Warnung.
+                result.note("Affiliate Detail-Sync nach " + limit + " Affiliates gestoppt (Schutzlimit).");
                 break;
             }
             String affiliateId = extractStableId(affiliate, "affiliates");
@@ -955,7 +964,7 @@ public class GoAffProSyncService {
             for (String sub : List.of("commissions", "coupons", "referral_codes", "tags")) {
                 String path = "/v1/admin/affiliates/" + encodePath(affiliateId) + "/" + sub;
                 try {
-                    JsonNode root = requestJson(path, apiKey, budget, result);
+                    JsonNode root = requestJson(path, apiKey, budget, result, apiBase);
                     storeSnapshot(connection, new EndpointSpec("affiliate_" + sub, "Affiliate " + sub, "affiliate_" + sub, path, sub, false, false), 1, root);
                     List<JsonNode> items = extractItems(root, new EndpointSpec("affiliate_" + sub, "Affiliate " + sub, "affiliate_" + sub, path, sub, false, false));
                     if (items.isEmpty()) {
@@ -980,7 +989,7 @@ public class GoAffProSyncService {
             }
             try {
                 String path = "/v1/admin/mlm/parents/" + encodePath(affiliateId);
-                JsonNode root = requestJson(path, apiKey, budget, result);
+                JsonNode root = requestJson(path, apiKey, budget, result, apiBase);
                 ObjectNode wrapped = MAPPER.createObjectNode();
                 wrapped.put("affiliate_id", affiliateId);
                 wrapped.set("parents", root);
@@ -993,7 +1002,7 @@ public class GoAffProSyncService {
         return result;
     }
 
-    private EndpointResult syncAssetFolderContents(Connection connection, String apiKey, RateBudget budget) throws Exception {
+    private EndpointResult syncAssetFolderContents(Connection connection, String apiKey, RateBudget budget, String apiBase) throws Exception {
         EndpointResult result = new EndpointResult("assets_folder_contents", "asset_contents", "Asset-Ordnerinhalte", "/v1/admin/assets/contents/{folderId}");
         List<JsonNode> folders = entitiesFromConnection(connection, "asset_folders");
         for (JsonNode folder : folders) {
@@ -1001,7 +1010,7 @@ public class GoAffProSyncService {
             if (folderId.isBlank()) continue;
             String path = "/v1/admin/assets/contents/" + encodePath(folderId);
             try {
-                JsonNode root = requestJson(path, apiKey, budget, result);
+                JsonNode root = requestJson(path, apiKey, budget, result, apiBase);
                 storeSnapshot(connection, new EndpointSpec("assets_folder_contents", "Asset-Ordnerinhalte", "asset_contents", path, "items", false, false), 1, root);
                 List<JsonNode> items = extractItems(root, new EndpointSpec("assets_folder_contents", "Asset-Ordnerinhalte", "asset_contents", path, "items", false, false));
                 int index = 0;
@@ -1049,10 +1058,9 @@ public class GoAffProSyncService {
         return result;
     }
 
-    private JsonNode requestJson(String path, String apiKey, RateBudget budget, EndpointResult result) throws Exception {
-        return requestJson(path, apiKey, budget, result, API_BASE);
-    }
-
+    // Bewusst ohne Kurzform mit fest verdrahteter Produktions-URL: die Unter-Syncs hatten sie
+    // benutzt und dabei goaffproSyncApiBase umgangen - in Tests gingen die Aufrufe dadurch an
+    // die echte GoAffPro-API. Die Basis wird deshalb immer durchgereicht.
     private JsonNode requestJson(String path, String apiKey, RateBudget budget, EndpointResult result, String apiBase) throws Exception {
         HttpResponse response = request("GET", path, apiKey, null, budget, result, 4, apiBase);
         if (response.code < 200 || response.code >= 300) {
@@ -1154,7 +1162,7 @@ public class GoAffProSyncService {
         specs.add(new EndpointSpec("commission_collections", "Commission Collections", "commission_collections", "/v1/admin/commissions/collections?limit=500", "collections", true, false));
         specs.add(new EndpointSpec("commission_products", "Commission Products", "commission_products", "/v1/admin/commissions/products?limit=250", "products", true, false, 250));
         specs.add(new EndpointSpec("creatives", "Creatives", "creatives", "/v1/admin/creatives?limit=500", "creatives", true, false)
-                .skip("Endpoint ist deprecated; soweit verfügbar werden Assets über /admin/assets synchronisiert."));
+                .skipNote("Endpoint ist deprecated; soweit verfügbar werden Assets über /admin/assets synchronisiert."));
         specs.add(new EndpointSpec("files", "Affiliate Files", "files", withFields("/v1/admin/files?limit=500", FILE_FIELDS), "files", true, true));
         specs.add(new EndpointSpec("groups", "Groups", "groups", "/v1/admin/groups?limit=500", "groups", true, false)
                 .skip("Endpoint liefert in der Diagnose HTTP 504; für erneute Prüfung Diagnosemodus nutzen."));
@@ -1476,7 +1484,7 @@ public class GoAffProSyncService {
             ps.setString(3, result.displayName);
             ps.setString(4, result.apiPath);
             ps.setString(5, now);
-            ps.setString(6, result.warnings.isEmpty() && result.complete ? "success" : "warning");
+            ps.setString(6, endpointStatus(result));
             ps.setString(7, "");
             ps.setInt(8, result.seen);
             ps.setInt(9, result.inserted);
@@ -1486,9 +1494,22 @@ public class GoAffProSyncService {
             ps.setLong(13, result.fileBytes);
             ps.setInt(14, result.apiCalls);
             ps.setBoolean(15, result.complete);
-            ps.setString(16, String.join("\n", result.warnings));
+            List<String> messages = new ArrayList<>(result.warnings);
+            messages.addAll(result.notes);
+            ps.setString(16, String.join("\n", messages));
             ps.executeUpdate();
         }
+    }
+
+    /**
+     * Dreiwertig, damit "Warnung" wieder Aufmerksamkeit bedeutet. Die Reihenfolge ist wichtig:
+     * ein uebersprungener Endpoint ist zugleich unvollstaendig, darf aber ueber complete=false
+     * nicht wieder als Warnung landen, wenn er nur einen Hinweis traegt.
+     */
+    private static String endpointStatus(EndpointResult result) {
+        if (!result.warnings.isEmpty()) return "warning";
+        if (!result.notes.isEmpty()) return "note";
+        return result.complete ? "success" : "warning";
     }
 
     private static void initDatabase(Path db) throws Exception {
@@ -1943,6 +1964,7 @@ public class GoAffProSyncService {
                     warning = warning.isBlank() ? invalidWarning : warning + "\n" + invalidWarning;
                 }
                 row.put("warning", warning);
+                row.put("note", Objects.toString(endpoint.getOrDefault("note", ""), ""));
                 rows.add(row);
             }
         }
@@ -1974,7 +1996,12 @@ public class GoAffProSyncService {
                 row.put("fileBytes", rs.getLong("file_bytes"));
                 row.put("apiCalls", rs.getInt("api_calls"));
                 row.put("complete", rs.getBoolean("complete"));
-                row.put("warning", rs.getString("warning"));
+                // Die Spalte traegt den Text, last_status die Einstufung - so bleibt das Schema
+                // unveraendert. Fuer Altbestaende ohne 'note' greift das ab dem naechsten Lauf.
+                String message = Objects.toString(rs.getString("warning"), "");
+                boolean isNote = "note".equals(rs.getString("last_status"));
+                row.put("warning", isNote ? "" : message);
+                row.put("note", isNote ? message : "");
                 rows.add(row);
             }
         }
@@ -1985,7 +2012,7 @@ public class GoAffProSyncService {
         List<String> warnings = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement("""
                 SELECT display_name, warning FROM sync_endpoint_stats
-                WHERE warning IS NOT NULL AND warning <> ''
+                WHERE warning IS NOT NULL AND warning <> '' AND last_status <> 'note'
                 ORDER BY display_name
                 """);
              ResultSet rs = ps.executeQuery()) {
@@ -1994,6 +2021,27 @@ public class GoAffProSyncService {
             }
         }
         return warnings;
+    }
+
+    /**
+     * Hinweise zu bewussten Drosselungen. Nach Text gruppiert, weil der Affiliate-Detail-Sync
+     * seine Statistik zweimal schreibt - einmal unter eigenem Schluessel, einmal ueber den in
+     * die Affiliates gemergten Lauf. Sonst stuende derselbe Satz doppelt in der Oberflaeche.
+     */
+    private static List<String> syncNotes(Connection connection) throws Exception {
+        List<String> notes = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement("""
+                SELECT MIN(display_name) AS display_name, warning FROM sync_endpoint_stats
+                WHERE warning IS NOT NULL AND warning <> '' AND last_status = 'note'
+                GROUP BY warning
+                ORDER BY 1
+                """);
+             ResultSet rs = ps.executeQuery()) {
+            while (rs.next()) {
+                notes.add(rs.getString("display_name") + ": " + rs.getString("warning"));
+            }
+        }
+        return notes;
     }
 
     private static List<JsonNode> entitiesFromConnection(Connection connection, String entityType) throws Exception {
@@ -2618,6 +2666,8 @@ public class GoAffProSyncService {
         int estimatedTotalCalls = -1;
         final List<Map<String, Object>> plannedEndpoints = new ArrayList<>();
         final List<String> warnings = new ArrayList<>();
+        // Hinweise zaehlen bewusst nicht in den Laufstatus: nur echte Stoerungen faerben ihn gelb.
+        final List<String> notes = new ArrayList<>();
         final List<Map<String, Object>> endpointRows = new ArrayList<>();
 
         SyncRunResult(String mode) {
@@ -2634,6 +2684,7 @@ public class GoAffProSyncService {
             downloadsSkipped += result.skippedExisting;
             fileBytes += result.fileBytes;
             warnings.addAll(result.warnings);
+            notes.addAll(result.notes);
             if (!result.warnings.isEmpty()) lastWarning = lastOf(result.warnings);
             endpointRows.add(result.toMap());
             Map<String, Object> planned = plannedEndpointRow(result.endpointKey);
@@ -2710,6 +2761,11 @@ public class GoAffProSyncService {
             }
         }
 
+        /** Wie warning(), aber ohne den Lauf gelb zu faerben - und ohne lastWarning zu setzen. */
+        void note(String note) {
+            if (note != null && !note.isBlank()) notes.add(note);
+        }
+
         void setCurrentEndpoint(EndpointSpec endpoint, int page, String path, EndpointResult result) {
             currentEndpoint = endpoint.displayName;
             currentEndpointKey = endpoint.key;
@@ -2781,6 +2837,8 @@ public class GoAffProSyncService {
             row.put("fileBytes", fileBytes);
             row.put("warningCount", warnings.size());
             row.put("warnings", warnings);
+            row.put("noteCount", notes.size());
+            row.put("notes", notes);
             row.put("endpointRows", endpointRows);
             row.put("currentEndpoint", currentEndpoint);
             row.put("currentEndpointKey", currentEndpointKey);
@@ -2866,6 +2924,8 @@ public class GoAffProSyncService {
         int skippedExisting;
         long fileBytes;
         final List<String> warnings = new ArrayList<>();
+        // Bewusste Drosselungen und Zustandsbeschreibungen - kein Grund fuer einen Warnstatus.
+        final List<String> notes = new ArrayList<>();
 
         EndpointResult(String endpointKey, String entityType, String displayName, String apiPath) {
             this.endpointKey = endpointKey;
@@ -2893,11 +2953,17 @@ public class GoAffProSyncService {
             skippedExisting += other.skippedExisting;
             fileBytes += other.fileBytes;
             warnings.addAll(other.warnings);
+            notes.addAll(other.notes);
             complete = complete && other.complete;
         }
 
         void warning(String warning) {
             if (warning != null && !warning.isBlank()) warnings.add(warning);
+        }
+
+        /** Sichtbar, aber ohne Warnstatus - fuer bewusste Drosselungen und bekannte Zustaende. */
+        void note(String note) {
+            if (note != null && !note.isBlank()) notes.add(note);
         }
 
         Map<String, Object> toMap() {
@@ -2916,6 +2982,7 @@ public class GoAffProSyncService {
             row.put("skippedExisting", skippedExisting);
             row.put("fileBytes", fileBytes);
             row.put("warnings", warnings);
+            row.put("notes", notes);
             return row;
         }
     }
@@ -2955,6 +3022,9 @@ public class GoAffProSyncService {
         final int limit;
         PaginationMode paginationMode = PaginationMode.PAGE_AND_OFFSET;
         String skipWarning = "";
+        // Unterscheidet die beiden Faelle, die denselben Codepfad teilen: ein deprecated
+        // Endpoint ist eine Zustandsbeschreibung, ein HTTP 504 dagegen eine echte Stoerung.
+        boolean skipIsNote;
         boolean storeRootAsSingleton;
         boolean fetchGroupMembers;
         boolean fetchAffiliateRelated;
@@ -2991,6 +3061,14 @@ public class GoAffProSyncService {
         EndpointSpec skip(String warning) {
             this.paginationMode = PaginationMode.SKIP_WITH_WARNING;
             this.skipWarning = Objects.toString(warning, "");
+            return this;
+        }
+
+        /** Wie skip(), aber als Hinweis: der Endpoint faellt bewusst aus, nichts ist kaputt. */
+        EndpointSpec skipNote(String note) {
+            this.paginationMode = PaginationMode.SKIP_WITH_WARNING;
+            this.skipWarning = Objects.toString(note, "");
+            this.skipIsNote = true;
             return this;
         }
 

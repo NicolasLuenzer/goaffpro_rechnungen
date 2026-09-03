@@ -127,7 +127,8 @@ public class WebUiServer {
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
     private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
     private static final List<String> DEFAULT_COMMISSION_HISTORY = List.of("2103705", "2167905", "2190357", "2230376", "2336836", "2421355", "2497986", "2565325");
-    private static final String APP_VERSION = resolveVersionWithTimestampAndSequence();
+    private static final BuildInfo BUILD_INFO = detectBuildInfo();
+    private static final String APP_VERSION = BUILD_INFO.version();
     private static final Object CONFIG_LOCK = new Object();
 
     // ── Datensicherung: Hintergrund-Job (Muster wie GoAffProSyncService.startAsync) ──
@@ -4906,8 +4907,12 @@ public class WebUiServer {
                 sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
                 return;
             }
-            Map<String, String> payload = new HashMap<>();
+            Map<String, Object> payload = new LinkedHashMap<>();
             payload.put("version", APP_VERSION);
+            payload.put("commit", BUILD_INFO.commit());
+            payload.put("branch", BUILD_INFO.branch());
+            payload.put("source", BUILD_INFO.source());
+            payload.put("sequenceKnown", BUILD_INFO.sequenceKnown());
             sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
         }
     }
@@ -4924,9 +4929,7 @@ public class WebUiServer {
                 return;
             }
 
-            List<Map<String, String>> versions = readRecentVersions();
-            Map<String, Object> payload = new HashMap<>();
-            payload.put("versions", versions);
+            Map<String, Object> payload = readRecentVersions();
             sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
         }
     }
@@ -7959,34 +7962,59 @@ private static String toGermanDate(String input) {
         return value == null || value.isBlank() ? fallback : value;
     }
 
-    private static List<Map<String, String>> readRecentVersions() {
+    /**
+     * Liefert den Versionsverlauf samt Auskunft, ob er ueberhaupt ermittelbar war. Der laufende
+     * Stand steht immer an erster Stelle - auch im Container, wo kein git verfuegbar ist. Frueher
+     * gab diese Methode dort eine leere Liste zurueck und die Oberflaeche zeigte wortlos nichts an.
+     */
+    private static Map<String, Object> readRecentVersions() {
         List<Map<String, String>> items = new ArrayList<>();
-        try {
-            Process process = new ProcessBuilder("git", "log", "-n", "12", "--pretty=format:%h|%ct|%s")
-                    .directory(Paths.get(".").toFile())
-                    .redirectErrorStream(true)
-                    .start();
-            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-            int code = process.waitFor();
-            if (code == 0) {
-                for (String line : output.split("\\R")) {
-                    if (line.isBlank()) continue;
-                    String[] parts = line.split("\\|", 3);
-                    if (parts.length < 3) continue;
-                    long epoch = Long.parseLong(parts[1].trim());
-                    String ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-                            .withZone(ZoneId.systemDefault())
-                            .format(Instant.ofEpochSecond(epoch));
-                    Map<String, String> row = new HashMap<>();
-                    row.put("version", parts[0].trim());
-                    row.put("timestamp", ts);
-                    row.put("summary", toGermanSummary(parts[2].trim()));
-                    items.add(row);
-                }
-            }
-        } catch (Exception ignored) {
+        Set<String> seen = new LinkedHashSet<>();
+
+        if (!BUILD_INFO.commit().isBlank()) {
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("version", BUILD_INFO.commit());
+            row.put("timestamp", readableBuildTimestamp(BUILD_INFO.version()));
+            row.put("summary", toGermanSummary(BUILD_INFO.summary()));
+            items.add(row);
+            seen.add(BUILD_INFO.commit());
         }
-        return items;
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        String log = gitOutput("log", "-n", "12", "--pretty=format:%h|%ct|%s");
+        if (log == null) {
+            payload.put("versions", items);
+            payload.put("available", false);
+            payload.put("reason", items.isEmpty()
+                    ? "Der Versionsverlauf braucht ein Git-Repository und ist hier nicht verfügbar; im Container ist das der Normalfall."
+                    : "Nur der laufende Stand ist bekannt. Der vollständige Verlauf braucht ein Git-Repository und ist im Container nicht verfügbar.");
+            return payload;
+        }
+
+        for (String line : log.split("\\R")) {
+            if (line.isBlank()) continue;
+            String[] parts = line.split("\\|", 3);
+            if (parts.length < 3) continue;
+            String hash = parts[0].trim();
+            if (!seen.add(hash)) continue;
+            String ts;
+            try {
+                ts = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
+                        .withZone(ZoneId.systemDefault())
+                        .format(Instant.ofEpochSecond(Long.parseLong(parts[1].trim())));
+            } catch (Exception ignored) {
+                continue;
+            }
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("version", hash);
+            row.put("timestamp", ts);
+            row.put("summary", toGermanSummary(parts[2].trim()));
+            items.add(row);
+        }
+
+        payload.put("versions", items);
+        payload.put("available", true);
+        return payload;
     }
 
     private static String toGermanSummary(String commitSubject) {
@@ -8030,34 +8058,111 @@ private static String toGermanDate(String input) {
         return "Änderung: " + normalized;
     }
 
-    private static String resolveVersionWithTimestampAndSequence() {
-        try {
-            Process tsProcess = new ProcessBuilder("git", "show", "-s", "--format=%ct", "HEAD")
-                    .directory(Paths.get(".").toFile())
-                    .redirectErrorStream(true)
-                    .start();
-            String tsOutput = new String(tsProcess.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-            int tsCode = tsProcess.waitFor();
+    /**
+     * Woher die Versionskennung stammt: "build" = beim Bauen eingebacken (im Container der
+     * Normalfall), "git" = zur Laufzeit aus dem Repository gelesen (lokale Entwicklung),
+     * "unknown" = nicht ermittelbar. {@code sequenceKnown} ist falsch, wenn keine belastbare
+     * Build-Nummer vorliegt; die Oberflaeche weicht dann auf den Commit-Hash aus.
+     */
+    private record BuildInfo(String version, String commit, String branch, String summary,
+                             String source, boolean sequenceKnown) {
+    }
 
-            Process countProcess = new ProcessBuilder("git", "rev-list", "--count", "HEAD")
-                    .directory(Paths.get(".").toFile())
-                    .redirectErrorStream(true)
-                    .start();
-            String countOutput = new String(countProcess.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
-            int countCode = countProcess.waitFor();
+    /**
+     * Eingebackene Kennung zuerst, dann git zur Laufzeit, sonst ehrliches Unwissen.
+     * Frueher wurde stattdessen das aktuelle Datum mit der Sequenz 000000 erfunden - das ergab
+     * im Container dauerhaft die irrefuehrende Anzeige "Build 0 - heutiges Datum".
+     */
+    private static BuildInfo detectBuildInfo() {
+        BuildInfo baked = buildInfoFromResource();
+        if (baked != null) return baked;
+        BuildInfo fromGit = buildInfoFromGit();
+        if (fromGit != null) return fromGit;
+        return new BuildInfo("", "", "", "", "unknown", false);
+    }
 
-            if (tsCode == 0 && countCode == 0 && !tsOutput.isBlank() && !countOutput.isBlank()) {
-                long epoch = Long.parseLong(tsOutput);
-                String timestamp = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
-                        .withZone(ZoneId.systemDefault())
-                        .format(Instant.ofEpochSecond(epoch));
-                String seq = String.format("%06d", Integer.parseInt(countOutput));
-                return timestamp + "-" + seq;
-            }
+    /** Liest die vom Maven-Build erzeugte version.properties vom Klassenpfad. */
+    private static BuildInfo buildInfoFromResource() {
+        try (InputStream in = WebUiServer.class.getResourceAsStream("/version.properties")) {
+            if (in == null) return null;
+            Properties p = new Properties();
+            p.load(in);
+            // Das Plugin liefert git.commit.time bereits im Zielformat yyyyMMddHHmmss.
+            String time = p.getProperty("git.commit.time", "").trim();
+            if (time.length() != 14 || !time.chars().allMatch(Character::isDigit)) return null;
+            int sequence = plausibleSequence(p.getProperty("git.total.commit.count", "").trim());
+            return new BuildInfo(time + "-" + String.format("%06d", sequence),
+                    p.getProperty("git.commit.id.abbrev", "").trim(),
+                    p.getProperty("git.branch", "").trim(),
+                    p.getProperty("git.commit.message.short", "").trim(),
+                    "build", sequence > 0);
         } catch (Exception ignored) {
+            return null;
         }
-        String fallbackTs = DateTimeFormatter.ofPattern("yyyyMMddHHmmss").format(LocalDateTime.now());
-        return fallbackTs + "-000000";
+    }
+
+    /** Fallback fuer die lokale Entwicklung, wo die Anwendung aus dem Repository heraus laeuft. */
+    private static BuildInfo buildInfoFromGit() {
+        String tsOutput = gitOutput("show", "-s", "--format=%ct", "HEAD");
+        String countOutput = gitOutput("rev-list", "--count", "HEAD");
+        if (tsOutput == null || countOutput == null) return null;
+        try {
+            String timestamp = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
+                    .withZone(ZoneId.systemDefault())
+                    .format(Instant.ofEpochSecond(Long.parseLong(tsOutput)));
+            int sequence = plausibleSequence(countOutput);
+            return new BuildInfo(timestamp + "-" + String.format("%06d", sequence),
+                    orEmpty(gitOutput("rev-parse", "--short", "HEAD")),
+                    orEmpty(gitOutput("rev-parse", "--abbrev-ref", "HEAD")),
+                    orEmpty(gitOutput("show", "-s", "--format=%s", "HEAD")),
+                    "git", sequence > 0);
+        } catch (NumberFormatException ignored) {
+            return null;
+        }
+    }
+
+    /**
+     * Ein flacher Klon (Portainer holt Git-Stacks mit depth=1) meldet als Commit-Anzahl immer 1.
+     * Eine daraus gebildete Build-Nummer waere gelogen, deshalb gilt sie hier als unbekannt.
+     */
+    private static int plausibleSequence(String rawCount) {
+        if (rawCount == null || !rawCount.matches("\\d+")) return 0;
+        try {
+            int count = Integer.parseInt(rawCount);
+            return count > 1 ? count : 0;
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    /** Fuehrt ein git-Kommando aus; null, wenn git fehlt, scheitert oder nichts ausgibt. */
+    private static String gitOutput(String... args) {
+        try {
+            List<String> command = new ArrayList<>();
+            command.add("git");
+            command.addAll(List.of(args));
+            Process process = new ProcessBuilder(command)
+                    .directory(Paths.get(".").toFile())
+                    .redirectErrorStream(true)
+                    .start();
+            String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).trim();
+            return process.waitFor() == 0 && !output.isBlank() ? output : null;
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String orEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
+    /** Macht aus yyyyMMddHHmmss-NNNNNN die im Verlauf uebliche Schreibweise. */
+    private static String readableBuildTimestamp(String version) {
+        if (version == null || version.length() < 14) return "";
+        String d = version.substring(0, 14);
+        if (!d.chars().allMatch(Character::isDigit)) return "";
+        return d.substring(0, 4) + "-" + d.substring(4, 6) + "-" + d.substring(6, 8) + " "
+                + d.substring(8, 10) + ":" + d.substring(10, 12) + ":" + d.substring(12, 14);
     }
 
     private static String escapeJson(String value) {

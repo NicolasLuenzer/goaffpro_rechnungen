@@ -322,7 +322,8 @@ class GoAffProSyncServiceTest {
                 assertEndpointWarning(connection, "traffic", "Nur erste Seite synchronisiert");
                 assertEndpointWarning(connection, "groups", "HTTP 504");
                 assertEndpointWarning(connection, "store_logs", "HTTP 504");
-                assertEndpointWarning(connection, "creatives", "deprecated");
+                // Deprecated ist eine Zustandsbeschreibung, kein Stoerungsfall.
+                assertEndpointNote(connection, "creatives", "deprecated");
             }
         } finally {
             server.stop(0);
@@ -410,6 +411,15 @@ class GoAffProSyncServiceTest {
             assertTrue(((Number) affiliates.get("expectedTotal")).intValue() >= 2);
             var creatives = planned.stream().filter(r -> "creatives".equals(r.get("endpointKey"))).findFirst().orElseThrow();
             assertEquals("skipped", creatives.get("state"));
+
+            // Das Affiliate-Detail-Schutzlimit greift hier (zwei Affiliates, Modus initial) und
+            // gehört als bewusste Drosselung in die Hinweise, nicht in die Warnungen.
+            List<String> warnungen = (List<String>) statusMap.get("warnings");
+            List<String> hinweise = (List<String>) statusMap.get("notes");
+            assertTrue(hinweise.stream().anyMatch(h -> h.contains("Schutzlimit")),
+                    "Drosselung gehört in die Hinweise: " + hinweise);
+            assertFalse(warnungen.stream().anyMatch(w -> w.contains("Schutzlimit")),
+                    "Drosselung darf keine Warnung sein: " + warnungen);
 
             var status = service.status(config);
             var budget = (java.util.Map<String, Object>) status.get("budget");
@@ -627,13 +637,101 @@ class GoAffProSyncServiceTest {
         }
     }
 
+    // ── Hinweis oder Warnung ────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void drosselungWirdHinweisEchteStoerungBleibtWarnung(@TempDir Path tempDir) throws Exception {
+        HttpServer server = fakeServer(exchange -> {
+            if (exchange.getRequestURI().getPath().equals("/v1/admin/affiliates")) {
+                return new FakeResponse(200, "{\"total\":2,\"affiliates\":[{\"id\":\"a1\"},{\"id\":\"a2\"}]}");
+            }
+            return new FakeResponse(200, "[]");
+        });
+        try {
+            Properties config = new Properties();
+            config.setProperty("goaffproSyncDataPath", tempDir.toString());
+            config.setProperty("goaffproSyncApiBase", fakeBase(server));
+            config.setProperty("goaffproSyncMaxCallsPerHour", "3600000");
+
+            GoAffProSyncService service = new GoAffProSyncService();
+            GoAffProSyncService.SyncRunResult run = service.runSync(config, "test-key", "initial");
+            assertTrue(((List<String>) run.toStatusMap().get("notes")).stream().anyMatch(h -> h.contains("Schutzlimit")),
+                    "Drosselung fehlt schon im Laufergebnis: " + run.toStatusMap().get("notes"));
+
+            var status = service.status(config);
+            List<String> warnungen = (List<String>) status.get("warnings");
+            List<String> hinweise = (List<String>) status.get("notes");
+
+            assertTrue(hinweise.stream().anyMatch(h -> h.contains("Schutzlimit")),
+                    "Drosselung gehört in die Hinweise. Hinweise=" + hinweise + " Warnungen=" + warnungen);
+            assertTrue(hinweise.stream().anyMatch(h -> h.contains("deprecated")),
+                    "Deprecated-Endpoint gehört in die Hinweise: " + hinweise);
+            assertFalse(warnungen.stream().anyMatch(w -> w.contains("Schutzlimit")),
+                    "Drosselung darf keine Warnung sein: " + warnungen);
+            // Der Affiliate-Detail-Sync schreibt seine Statistik zweimal (eigener Schlüssel und
+            // gemergter Affiliates-Lauf) - in der Oberfläche darf der Satz nur einmal stehen.
+            assertEquals(1, hinweise.stream().filter(h -> h.contains("Schutzlimit")).count(),
+                    "Hinweis steht doppelt: " + hinweise);
+            assertTrue(warnungen.stream().anyMatch(w -> w.contains("HTTP 504")),
+                    "Echte Störungen müssen Warnung bleiben: " + warnungen);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void statusTrenntHinweiseUndWarnungenBeimLesen(@TempDir Path tempDir) throws Exception {
+        Properties config = new Properties();
+        config.setProperty("goaffproSyncDataPath", tempDir.toString());
+        GoAffProSyncService service = new GoAffProSyncService();
+        // status() kehrt ohne vorhandene Datei früh zurück; die leere Datei genügt SQLite
+        // als Datenbank, danach legt initDatabase() das Schema an.
+        java.nio.file.Files.createFile(tempDir.resolve("goaffpro_sync.sqlite"));
+        service.status(config);
+
+        String sql = "INSERT INTO sync_endpoint_stats (endpoint_key, entity_type, display_name, api_path, last_status, warning) VALUES (?,?,?,?,?,?)";
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + tempDir.resolve("goaffpro_sync.sqlite"));
+             PreparedStatement ps = c.prepareStatement(sql)) {
+            for (String[] row : new String[][]{
+                    {"a", "a", "Alpha", "/a", "note", "Bewusst gedrosselt."},
+                    {"b", "b", "Beta", "/b", "warning", "Echt kaputt."}}) {
+                for (int i = 0; i < row.length; i++) ps.setString(i + 1, row[i]);
+                ps.executeUpdate();
+            }
+        }
+
+        var status = service.status(config);
+        assertEquals(List.of("Beta: Echt kaputt."), status.get("warnings"));
+        assertEquals(List.of("Alpha: Bewusst gedrosselt."), status.get("notes"));
+    }
+
+    // ── Hilfsmethoden ───────────────────────────────────────────────────────────
+
     private static void assertEndpointWarning(Connection connection, String endpointKey, String expectedPart) throws Exception {
-        try (PreparedStatement ps = connection.prepareStatement("SELECT complete, warning FROM sync_endpoint_stats WHERE endpoint_key=?")) {
+        assertEndpointMessage(connection, endpointKey, expectedPart, "warning");
+    }
+
+    private static void assertEndpointNote(Connection connection, String endpointKey, String expectedPart) throws Exception {
+        assertEndpointMessage(connection, endpointKey, expectedPart, "note");
+    }
+
+    /**
+     * Prueft neben dem Text ausdruecklich die Einstufung in last_status. Ohne diese Prüfung
+     * liefe der Test fuer einen zum Hinweis herabgestuften Endpoint still weiter durch.
+     */
+    private static void assertEndpointMessage(Connection connection, String endpointKey,
+                                              String expectedPart, String expectedStatus) throws Exception {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT complete, warning, last_status FROM sync_endpoint_stats WHERE endpoint_key=?")) {
             ps.setString(1, endpointKey);
             try (ResultSet rs = ps.executeQuery()) {
                 assertTrue(rs.next(), "missing endpoint stats for " + endpointKey);
                 assertFalse(rs.getBoolean("complete"), endpointKey + " should be marked incomplete");
                 assertTrue(rs.getString("warning").contains(expectedPart), rs.getString("warning"));
+                assertEquals(expectedStatus, rs.getString("last_status"),
+                        endpointKey + " ist als " + rs.getString("last_status") + " eingestuft");
             }
         }
     }

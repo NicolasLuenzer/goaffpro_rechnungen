@@ -8,3 +8,7 @@ docker-data/
 config/
 src/main/java/config.properties
 .vscode/
+# Lokale Bestandsdaten gehoeren nicht in den Build-Kontext: data/ enthaelt die Datenbank,
+# heruntergeladene Dateien und die Sicherungsarchive mit Bankverbindungen.
+data/
+exports/

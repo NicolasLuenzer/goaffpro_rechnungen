@@ -318,3 +318,29 @@ docker-compose up -d
 ```
 Der Wert ist die zuletzt **tatsaechlich vergebene** Nummer (bei `GS-2026-0394` also
 `394`); die naechste Gutschrift erhaelt dann `GS-2026-0395`.
+
+**Build ohne Internetzugang schlaegt fehl:**
+Die Versionskennung wird beim Bauen ueber ein Maven-Plugin eingebacken. Beim allerersten
+Build muss es einmal aus dem Netz geladen werden; danach liegt es im lokalen Repository und
+`mvn -o` funktioniert wieder. Ist kein Netz verfuegbar:
+```bash
+mvn -o package -DskipTests -Dmaven.gitcommitid.skip=true
+```
+Dann entsteht keine Versionsdatei und die Anwendung ermittelt die Version zur Laufzeit aus
+dem Git-Repository — im Container gelingt das nicht, dort steht dann „Version unbekannt".
+
+**Versionsanzeige lautet „Version unbekannt" statt einer Build-Nummer:**
+Das Jar wurde ohne `.git` gebaut. Pruefen, ob `COPY .git/ .git/` im `Dockerfile` steht und ob
+das Verzeichnis im Build-Kontext liegt.
+
+**Versionsanzeige zeigt Datum und Commit-Hash statt einer Build-Nummer:**
+Die Commit-Anzahl war nicht ermittelbar — typisch fuer einen flachen Klon (`depth=1`), wie ihn
+Portainer fuer Git-Stacks anlegt. Der angezeigte Hash identifiziert den Stand eindeutig; eine
+Build-Nummer waere in diesem Fall erfunden und wird deshalb bewusst weggelassen.
+
+**Syncstatus: Unterschied zwischen Warnung und Hinweis:**
+Rot markierte **Warnungen** sind echte Stoerungen — ein Endpoint antwortet nicht (HTTP 504)
+oder liefert nachweislich unvollstaendige Daten. Blau markierte **Hinweise** sind bewusste
+Entscheidungen der Anwendung, etwa das Schutzlimit beim Affiliate-Detail-Sync oder ein von
+GoAffPro abgekuendigter Endpoint. Nur Warnungen faerben den Gesamtstatus; ein Lauf mit
+ausschliesslich Hinweisen gilt als erfolgreich.

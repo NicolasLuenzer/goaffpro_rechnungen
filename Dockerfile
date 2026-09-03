@@ -4,6 +4,10 @@ WORKDIR /build
 COPY pom.xml .
 RUN mvn dependency:go-offline -B
 COPY src/ src/
+# .git wird nur zur Bauzeit gebraucht: das Maven-Plugin liest daraus die Versionskennung und
+# backt sie ins Jar. Bewusst erst hier, damit der Dependency-Layer darueber bei jedem Commit
+# gueltig bleibt. Im Runtime-Image landet .git nicht.
+COPY .git/ .git/
 RUN mvn package -DskipTests -B
 
 # Stage 2: Runtime

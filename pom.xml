@@ -69,6 +69,46 @@
                     </environmentVariables>
                 </configuration>
             </plugin>
+            <!-- Versionskennung zur Bauzeit einbacken. Im Runtime-Container liegt weder .git
+                 noch ein git-Binary; ohne diese Datei erfindet die Anwendung sonst eine
+                 Build-Nummer ("Build 0"). Das Plugin liest .git ueber JGit und braucht dafuer
+                 selbst kein git-Binary - dieselbe Loesung wirkt also lokal wie im Docker-Build.
+                 Notausgang ohne Netz: mvn -o package -Dmaven.gitcommitid.skip=true -->
+            <plugin>
+                <groupId>io.github.git-commit-id</groupId>
+                <artifactId>git-commit-id-maven-plugin</artifactId>
+                <version>9.2.0</version>
+                <executions>
+                    <execution>
+                        <id>versionskennung</id>
+                        <!-- Muss vor package laufen, sonst landet die Datei nicht im Shade-Jar. -->
+                        <phase>generate-resources</phase>
+                        <goals>
+                            <goal>revision</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!-- Ein Build ohne .git (z. B. aus einem Quell-Archiv) soll nicht scheitern;
+                         die Anwendung faellt dann auf ihre Laufzeit-Erkennung zurueck. -->
+                    <failOnNoGitDirectory>false</failOnNoGitDirectory>
+                    <failOnUnableToExtractRepoInfo>false</failOnUnableToExtractRepoInfo>
+                    <generateGitPropertiesFile>true</generateGitPropertiesFile>
+                    <generateGitPropertiesFilename>${project.build.outputDirectory}/version.properties</generateGitPropertiesFilename>
+                    <format>properties</format>
+                    <dateFormat>yyyyMMddHHmmss</dateFormat>
+                    <dateFormatTimeZone>Europe/Berlin</dateFormatTimeZone>
+                    <!-- Bewusst ohne git.dirty: im Docker-Build liegen nur pom.xml und src/,
+                         der Dirty-Scan saehe dort den halben Baum als geloescht an. -->
+                    <includeOnlyProperties>
+                        <includeOnlyProperty>^git\.commit\.id\.abbrev$</includeOnlyProperty>
+                        <includeOnlyProperty>^git\.commit\.time$</includeOnlyProperty>
+                        <includeOnlyProperty>^git\.total\.commit\.count$</includeOnlyProperty>
+                        <includeOnlyProperty>^git\.commit\.message\.short$</includeOnlyProperty>
+                        <includeOnlyProperty>^git\.branch$</includeOnlyProperty>
+                    </includeOnlyProperties>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>

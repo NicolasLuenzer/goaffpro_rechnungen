@@ -143,6 +143,8 @@
     .warning-banner { margin: 10px 0; padding: 12px 16px; border: 1.5px solid var(--clr-error-border); border-left-width: 4px; background: var(--clr-error-bg); color: var(--clr-error); border-radius: var(--radius-sm); font-weight: 600; }
     .recipient-advisor-label { color: var(--clr-text); font-weight: 700; }
     .text-error { color: var(--clr-error); }
+    /* Hinweis statt Warnung: bewusste Drosselungen sind keine Stoerung. */
+    .info-banner { margin: 10px 0; padding: 12px 16px; border: 1.5px solid var(--clr-info-border); border-left-width: 4px; background: var(--clr-info-bg); color: var(--clr-info); border-radius: var(--radius-sm); font-weight: 600; }
     .text-warn { color: var(--clr-warn); }
     tr.row-warning td { background: #fdf4f4 !important; }
 
@@ -285,6 +287,7 @@
     .risk-badge { display:inline-block; min-width:76px; text-align:center; padding:4px 10px; border-radius:999px; font-size:var(--fs-sm); font-weight:700; border:1px solid transparent; }
     .risk-ok { background:var(--clr-success-bg); color:var(--clr-success); border-color:var(--clr-success-border); }
     .risk-hint { background:var(--clr-warn-bg); color:var(--clr-warn); border-color:var(--clr-warn-border); }
+    .risk-note { background:var(--clr-info-bg); color:var(--clr-info); border-color:var(--clr-info-border); }
     .risk-review { background:var(--clr-error-bg); color:var(--clr-error); border-color:var(--clr-error-border); }
     .party-detail-box { margin-top:14px; border:1px solid var(--clr-border); border-radius:var(--radius-md); background:var(--clr-surface-tint); padding:14px; }
     .party-detail-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(260px,1fr)); gap:12px; margin:10px 0; }
@@ -550,11 +553,17 @@
 
     async function fetchExecutables() { return apiGet('/api/executables'); }
 
-    function formatVersion(raw) {
-      const m = /^(\d{4})(\d{2})(\d{2})\d{6}-(\d+)$/.exec(raw);
-      if (!m) return raw;
+    // Ohne belastbare Build-Nummer wird der Commit-Hash gezeigt und sonst offen gesagt, dass
+    // die Version unbekannt ist. Eine erfundene "Build 0" ist schlechter als keine Angabe.
+    function formatVersionLabel(data) {
+      const m = /^(\d{4})(\d{2})(\d{2})\d{6}-(\d+)$/.exec(String((data && data.version) || ''));
+      if (!m) return 'Version unbekannt';
       const [, y, mo, d, seq] = m;
-      return `Build ${parseInt(seq, 10)} · ${d}.${mo}.${y}`;
+      const datum = `${d}.${mo}.${y}`;
+      const nummer = parseInt(seq, 10);
+      if (nummer > 0) return `Build ${nummer} · ${datum}`;
+      const commit = String((data && data.commit) || '').trim();
+      return commit ? `${datum} · ${commit}` : 'Version unbekannt';
     }
 
     async function loadVersion() {
@@ -562,9 +571,16 @@
       if (!box) return;
       try {
         const data = await apiGet('/api/version');
-        box.textContent = formatVersion(data.version || '') || 'dev';
+        box.textContent = formatVersionLabel(data);
+        const teile = [];
+        if (data.commit) teile.push(`Commit ${data.commit}`);
+        if (data.branch) teile.push(`Branch ${data.branch}`);
+        if (data.source === 'build') teile.push('beim Bauen eingebacken');
+        else if (data.source === 'git') teile.push('aus dem Repository gelesen');
+        else teile.push('nicht ermittelbar');
+        box.title = teile.join(' · ');
       } catch (_) {
-        box.textContent = 'dev';
+        box.textContent = 'Version unbekannt';
       }
     }
 
@@ -576,9 +592,14 @@
       try {
         const data = await apiGet('/api/version/history');
         const versions = Array.isArray(data.versions) ? data.versions : [];
-        list.innerHTML = versions.map(v =>
-          `<li><strong>${v.version || 'n/a'}</strong> <em>(${v.timestamp || ''})</em><br>${v.summary || ''}</li>`
-        ).join('');
+        const zeilen = versions.map(v =>
+          `<li><strong>${escapeHtml(v.version || 'n/a')}</strong> <em>(${escapeHtml(v.timestamp || '')})</em><br>${escapeHtml(v.summary || '')}</li>`
+        );
+        // Ohne Git-Repository bleibt die Liste sonst wortlos leer.
+        if (data.available === false && data.reason) {
+          zeilen.push(`<li class="settings-hint">${escapeHtml(data.reason)}</li>`);
+        }
+        list.innerHTML = zeilen.length ? zeilen.join('') : '<li>Keine Versionsangaben verfügbar.</li>';
       } catch (e) {
         list.innerHTML = '<li>Versionshistorie konnte nicht geladen werden.</li>';
       }
@@ -1060,6 +1081,7 @@
         <p id="syncStatusText" class="status">Noch kein Syncstatus geladen.</p>
         <div id="syncErrorBanner" class="warning-banner" style="display:none"></div>
         <div id="syncWarnings" class="warning-banner" style="display:none"></div>
+        <div id="syncNotes" class="info-banner" style="display:none"></div>
         <div id="syncStatusCard" class="sync-status-card"></div>
         <div id="syncProgressCard" class="sync-status-card" style="display:none"></div>
         <div id="syncKpiGrid" class="kpi-grid"></div>
@@ -1088,7 +1110,7 @@
         <div id="syncInventoryGrid" class="sync-progress-grid"></div>
         <div class="table-scroll"><table><thead><tr><th>Datenbereich</th><th>Datensätze</th><th>Remote fehlt</th><th>Ungültig</th><th>Dateien</th><th>Dateigröße</th><th>Zuletzt gesehen</th><th>Status</th></tr></thead><tbody id="syncInventoryBody"></tbody></table></div>
         <div class="toolbar"><strong>Endpoint-Details</strong></div>
-        <div class="table-scroll"><table><thead><tr><th>Endpoint</th><th>Entität</th><th>Gelesen</th><th>Neu</th><th>Geändert</th><th>Unverändert</th><th>Downloads</th><th>API-Calls</th><th>Vollständig</th><th>Warnung</th></tr></thead><tbody id="syncEndpointBody"></tbody></table></div>
+        <div class="table-scroll"><table><thead><tr><th>Endpoint</th><th>Entität</th><th>Gelesen</th><th>Neu</th><th>Geändert</th><th>Unverändert</th><th>Downloads</th><th>API-Calls</th><th>Vollständig</th><th>Warnung / Hinweis</th></tr></thead><tbody id="syncEndpointBody"></tbody></table></div>
         <div class="toolbar"><strong>Letzte Sync-Läufe</strong></div>
         <div class="table-scroll"><table><thead><tr><th>ID</th><th>Modus</th><th>Status</th><th>Start</th><th>Ende</th><th>API-Calls</th><th>Gesehen</th><th>Neu</th><th>Geändert</th><th>Warnungen</th><th>Fehler</th></tr></thead><tbody id="syncRunsBody"></tbody></table></div>
 
@@ -1695,6 +1717,15 @@
       return `${n.toLocaleString('de-DE', { maximumFractionDigits: idx === 0 ? 0 : 1 })} ${units[idx]}`;
     }
 
+    // Dreiwertig: echte Störung, bewusster Hinweis, sonst in Ordnung. Ein unvollständiger
+    // Endpoint ohne Meldung bleibt eine Warnung.
+    function syncStatusBadge(row) {
+      if (row.warning) return '<span class="risk-badge risk-hint">Warnung</span>';
+      if (row.note) return '<span class="risk-badge risk-note">Hinweis</span>';
+      if (row.complete === false) return '<span class="risk-badge risk-hint">Warnung</span>';
+      return '<span class="risk-badge risk-ok">OK</span>';
+    }
+
     function formatSyncTimestamp(value) {
       if (!value) return '-';
       const d = new Date(value);
@@ -1715,6 +1746,7 @@
       const card = document.getElementById('syncStatusCard');
       const kpis = document.getElementById('syncKpiGrid');
       const warnings = document.getElementById('syncWarnings');
+      const notes = document.getElementById('syncNotes');
       const inventoryGrid = document.getElementById('syncInventoryGrid');
       const inventoryBody = document.getElementById('syncInventoryBody');
       const endpointBody = document.getElementById('syncEndpointBody');
@@ -1738,6 +1770,12 @@
       if (warnings) {
         warnings.style.display = warningRows.length ? '' : 'none';
         warnings.innerHTML = warningRows.map(w => escapeHtml(String(w))).join('<br>');
+      }
+      if (notes) {
+        // Bewusste Drosselungen: sichtbar, aber blau statt rot.
+        const noteRows = Array.isArray(data.notes) ? data.notes : [];
+        notes.style.display = noteRows.length ? '' : 'none';
+        notes.innerHTML = noteRows.map(n => escapeHtml(String(n))).join('<br>');
       }
       card.innerHTML = `
         <div class="sync-status-head">
@@ -1763,8 +1801,10 @@
         inventoryGrid.innerHTML = inventory.map(r => {
           const pct = Math.max(4, Math.round((Number(r.total || 0) / maxTotal) * 100));
           const warn = r.warning ? `<div class="settings-hint text-warn">${escapeHtml(String(r.warning)).slice(0, 160)}</div>` : '';
+          // Hinweise ohne text-warn: sie sollen nicht wie Fehler aussehen.
+          const hint = r.note ? `<div class="settings-hint">${escapeHtml(String(r.note)).slice(0, 160)}</div>` : '';
           const invalidInfo = Number(r.invalidEmpty || 0) > 0 ? `, ${escapeHtml(String(r.invalidEmpty || 0))} ungültig` : '';
-          return `<div class="sync-progress-item"><strong>${escapeHtml(r.displayName || r.entityType || '')}</strong><div>${escapeHtml(String(r.total || 0))} Datensätze${invalidInfo}</div><div class="sync-bar"><span style="width:${pct}%"></span></div>${warn}</div>`;
+          return `<div class="sync-progress-item"><strong>${escapeHtml(r.displayName || r.entityType || '')}</strong><div>${escapeHtml(String(r.total || 0))} Datensätze${invalidInfo}</div><div class="sync-bar"><span style="width:${pct}%"></span></div>${warn}${hint}</div>`;
         }).join('');
       }
 
@@ -1777,7 +1817,7 @@
           <td>${escapeHtml(String(r.files || 0))}</td>
           <td>${formatBytes(r.fileBytes || 0)}</td>
           <td>${formatSyncTimestamp(r.lastSeenAt)}</td>
-          <td>${r.complete === false ? '<span class="risk-badge risk-hint">Warnung</span>' : '<span class="risk-badge risk-ok">OK</span>'}</td>
+          <td>${syncStatusBadge(r)}</td>
         </tr>
       `).join('');
       endpointBody.innerHTML = endpoints.map(r => `
@@ -1791,7 +1831,7 @@
           <td>${escapeHtml(String(r.downloaded || 0))}</td>
           <td>${escapeHtml(String(r.apiCalls || 0))}</td>
           <td>${r.complete === false ? 'Nein' : 'Ja'}</td>
-          <td>${escapeHtml(r.warning || '')}</td>
+          <td>${r.warning ? `<span class="text-warn">${escapeHtml(r.warning)}</span>` : ''}${r.note ? `<div class="settings-hint">${escapeHtml(r.note)}</div>` : ''}</td>
         </tr>
       `).join('');
       runsBody.innerHTML = recentRuns.map(r => `
