@@ -4247,8 +4247,9 @@ public class WebUiServer {
                 }
                 if (sendEmailsEnabled) {
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
-                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty(kind.mailTemplateKey), ""), resolveSmtpConfig(config), gutschriftNr, kind);
-                    String subject = documentMailSubject(kind, gutschriftNr, periodLabel);
+                    String buyerCompanyNameForMail = buyerProperty(config, kind, "Name", kind.defaultBuyerName);
+                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty(kind.mailTemplateKey), ""), resolveSmtpConfig(config), gutschriftNr, kind, buyerCompanyNameForMail);
+                    String subject = documentMailSubject(kind, gutschriftNr, periodLabel, affiliateNameForMail);
                     appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, kind, gutschriftNr, kindOverridden);
                 }
 
@@ -5599,10 +5600,11 @@ public class WebUiServer {
 
     private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig, String documentNumber) throws Exception {
         sendInvoiceMailWithAttachment(toEmail, bccEmail, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, includeEInvoiceAttachments,
-                affiliateName, periodLabel, payment, affiliate, configuredEmailTemplateHtml, smtpConfig, documentNumber, DocumentKind.GUTSCHRIFT);
+                affiliateName, periodLabel, payment, affiliate, configuredEmailTemplateHtml, smtpConfig, documentNumber,
+                DocumentKind.GUTSCHRIFT, DocumentKind.GUTSCHRIFT.defaultBuyerName);
     }
 
-    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig, String gutschriftNr, DocumentKind kind) throws Exception {
+    private static void sendInvoiceMailWithAttachment(String toEmail, String bccEmail, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoicePdfPath, boolean includeEInvoiceAttachments, String affiliateName, String periodLabel, JsonNode payment, JsonNode affiliate, String configuredEmailTemplateHtml, SmtpConfig smtpConfig, String gutschriftNr, DocumentKind kind, String buyerCompanyName) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -5620,11 +5622,11 @@ public class WebUiServer {
         }
 
         String displayName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
-        String subject = documentMailSubject(kind, gutschriftNr, periodLabel);
+        String subject = documentMailSubject(kind, gutschriftNr, periodLabel, displayName);
         message.setSubject(subject, StandardCharsets.UTF_8.name());
 
-        String plainTextBody = buildInvoiceMailBody(payment, affiliate, periodLabel, gutschriftNr, kind);
-        String htmlBody = buildInvoiceMailHtml(payment, affiliate, periodLabel, configuredEmailTemplateHtml, gutschriftNr, kind);
+        String plainTextBody = buildInvoiceMailBody(payment, affiliate, periodLabel, gutschriftNr, kind, buyerCompanyName);
+        String htmlBody = buildInvoiceMailHtml(payment, affiliate, periodLabel, configuredEmailTemplateHtml, gutschriftNr, kind, buyerCompanyName);
 
         MimeBodyPart contentPart = new MimeBodyPart();
         MimeMultipart alternative = new MimeMultipart("alternative");
@@ -5687,12 +5689,21 @@ public class WebUiServer {
 
 
     private static String buildInvoiceMailBody(JsonNode payment, JsonNode affiliate, String periodLabel, String documentNumber) {
-        return buildInvoiceMailBody(payment, affiliate, periodLabel, documentNumber, DocumentKind.GUTSCHRIFT);
+        return buildInvoiceMailBody(payment, affiliate, periodLabel, documentNumber, DocumentKind.GUTSCHRIFT,
+                DocumentKind.GUTSCHRIFT.defaultBuyerName);
     }
 
     private static String buildInvoiceMailBody(JsonNode payment, JsonNode affiliate, String periodLabel, String gutschriftNr, DocumentKind kind) {
+        return buildInvoiceMailBody(payment, affiliate, periodLabel, gutschriftNr, kind, kind.defaultBuyerName);
+    }
+
+    private static String buildInvoiceMailBody(JsonNode payment, JsonNode affiliate, String periodLabel, String gutschriftNr,
+                                               DocumentKind kind, String buyerCompanyName) {
         String affiliateName = affiliate != null ? asText(affiliate, "name") : "";
         String salutationName = (affiliateName == null || affiliateName.isBlank()) ? "liebe Beraterin" : ("liebe " + affiliateName.trim());
+        String advisorName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
+        String invoiceRecipient = (buyerCompanyName == null || buyerCompanyName.isBlank())
+                ? kind.defaultBuyerName : buyerCompanyName.trim();
         String paymentId = payment != null ? asText(payment, "id") : "";
         String payout = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
         String method = payment != null ? asText(payment, "payment_method") : "";
@@ -5704,13 +5715,15 @@ public class WebUiServer {
 
         if (kind == DocumentKind.RECHNUNG) {
             return """
-                Hallo %s,
+                Guten Tag,
 
                 der Provisionslauf für %s wurde abgeschlossen.
 
-                Im Anhang finden Sie Ihre Rechnung %s (PDF) über die Vermittlungsprovision sowie die Provisionsübersicht mit den vermittelten Aufträgen.
+                Im Anhang erhalten Sie die Provisionsrechnung %s von %s an %s sowie die Provisionsübersicht mit den vermittelten Aufträgen.
 
                 Kurze Übersicht:
+                - Rechnungsstellerin: %s
+                - Rechnungsempfängerin: %s
                 - Rechnungsnummer: %s
                 - Zeitraum: %s
                 - Auszahlungsbetrag: %s
@@ -5720,9 +5733,9 @@ public class WebUiServer {
 
                 Bitte prüfen Sie die Unterlagen. Falls Ihnen Abweichungen auffallen, melden Sie sich bitte zeitnah bei uns.
 
-                Viele Grüße
-                Ihr VEMMiNA Team
-                """.formatted(salutationName, periodLabel, gutschriftNr, gutschriftNr, periodLabel, payout, method, created, txCount);
+                Diese Nachricht wurde automatisch erstellt.
+                """.formatted(periodLabel, gutschriftNr, advisorName, invoiceRecipient, advisorName,
+                    invoiceRecipient, gutschriftNr, periodLabel, payout, method, created, txCount);
         }
 
         return """
@@ -5748,12 +5761,22 @@ public class WebUiServer {
     }
 
     private static String buildInvoiceMailHtml(JsonNode payment, JsonNode affiliate, String periodLabel, String configuredTemplateHtml, String documentNumber) {
-        return buildInvoiceMailHtml(payment, affiliate, periodLabel, configuredTemplateHtml, documentNumber, DocumentKind.GUTSCHRIFT);
+        return buildInvoiceMailHtml(payment, affiliate, periodLabel, configuredTemplateHtml, documentNumber,
+                DocumentKind.GUTSCHRIFT, DocumentKind.GUTSCHRIFT.defaultBuyerName);
     }
 
     private static String buildInvoiceMailHtml(JsonNode payment, JsonNode affiliate, String periodLabel, String configuredTemplateHtml, String gutschriftNr, DocumentKind kind) {
+        return buildInvoiceMailHtml(payment, affiliate, periodLabel, configuredTemplateHtml, gutschriftNr,
+                kind, kind.defaultBuyerName);
+    }
+
+    private static String buildInvoiceMailHtml(JsonNode payment, JsonNode affiliate, String periodLabel,
+                                               String configuredTemplateHtml, String gutschriftNr,
+                                               DocumentKind kind, String buyerCompanyName) {
         String affiliateName = affiliate != null ? asText(affiliate, "name") : "";
         String salutationName = (affiliateName == null || affiliateName.isBlank()) ? "Beraterin" : affiliateName.trim();
+        String invoiceRecipient = (buyerCompanyName == null || buyerCompanyName.isBlank())
+                ? kind.defaultBuyerName : buyerCompanyName.trim();
         String paymentId = payment != null ? asText(payment, "id") : "-";
         String payout = euroStatic(parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0"));
         String method = payment != null ? asText(payment, "payment_method") : "-";
@@ -5769,6 +5792,8 @@ public class WebUiServer {
 
         return template
                 .replace("{{salutationName}}", escapeHtmlEmail(salutationName))
+                .replace("{{advisorName}}", escapeHtmlEmail(salutationName))
+                .replace("{{buyerCompanyName}}", escapeHtmlEmail(invoiceRecipient))
                 .replace("{{periodLabel}}", escapeHtmlEmail(periodLabel))
                 .replace("{{documentNumber}}", escapeHtmlEmail(gutschriftNr))
                 .replace("{{gutschriftNr}}", escapeHtmlEmail(gutschriftNr))
@@ -5826,7 +5851,7 @@ public class WebUiServer {
                 """;
     }
 
-    // LEGACY-RECHNUNG: Mailvorlage für Altfälle. Layoutgleich, aber Rechnungs-Wortlaut ohne § 14.
+    // LEGACY-RECHNUNG: Neutrale Begleitmail an die Rechnungsempfängerin der Altfälle.
     private static String getDefaultRechnungMailHtmlTemplate() {
         return """
                 <!doctype html>
@@ -5838,17 +5863,19 @@ public class WebUiServer {
                         <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="680" style="max-width:680px;width:100%;background:#ffffff;border-radius:16px;overflow:hidden;border:1px solid #dbe3ef;box-shadow:0 10px 24px rgba(15,23,42,0.08);">
                           <tr>
                             <td style="padding:26px 28px;background:linear-gradient(135deg,#6FA3C4 0%,#5c8fb1 100%);color:#ffffff;">
-                              <p style="margin:0;font-size:13px;letter-spacing:1.2px;text-transform:uppercase;opacity:0.88;">VEMMiNA</p>
-                              <h1 style="margin:8px 0 6px 0;font-size:34px;line-height:1.2;">Ihre Provisionsrechnung</h1>
+                              <p style="margin:0;font-size:13px;letter-spacing:1.2px;text-transform:uppercase;opacity:0.88;">Automatische Abrechnungsnachricht</p>
+                              <h1 style="margin:8px 0 6px 0;font-size:34px;line-height:1.2;">Provisionsrechnung {{documentNumber}}</h1>
                               <p style="margin:0;font-size:16px;line-height:1.5;opacity:0.95;">Der Provisionslauf für {{periodLabel}} wurde abgeschlossen.</p>
                             </td>
                           </tr>
                           <tr>
                             <td style="padding:28px;">
-                              <p style="margin:0 0 14px 0;font-size:24px;line-height:1.35;color:#1e293b;">Hallo {{salutationName}},</p>
-                              <p style="margin:0 0 18px 0;font-size:16px;line-height:1.7;color:#334155;">im Anhang finden Sie Ihre Rechnung über die Vermittlungsprovision sowie die Provisionsübersicht mit den vermittelten Aufträgen. Bitte prüfen Sie die Unterlagen.</p>
+                              <p style="margin:0 0 14px 0;font-size:24px;line-height:1.35;color:#1e293b;">Guten Tag,</p>
+                              <p style="margin:0 0 18px 0;font-size:16px;line-height:1.7;color:#334155;">im Anhang erhalten Sie die Provisionsrechnung {{documentNumber}} von {{advisorName}} an {{buyerCompanyName}} sowie die Provisionsübersicht mit den vermittelten Aufträgen.</p>
 
                               <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="border-collapse:separate;border-spacing:0;background:#f8fafc;border:1px solid #e2e8f0;border-radius:12px;overflow:hidden;">
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Rechnungsstellerin</strong><br/>{{advisorName}}</td></tr>
+                                <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Rechnungsempfängerin</strong><br/>{{buyerCompanyName}}</td></tr>
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Rechnungsnummer</strong><br/>{{documentNumber}}</td></tr>
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Zeitraum</strong><br/>{{periodLabel}}</td></tr>
                                 <tr><td style="padding:12px 14px;font-size:15px;color:#1f2937;border-bottom:1px solid #e2e8f0;"><strong>Auszahlungsbetrag</strong><br/><span style="font-size:20px;font-weight:700;color:#108474;">{{payout}}</span></td></tr>
@@ -5862,7 +5889,7 @@ public class WebUiServer {
                           </tr>
                           <tr>
                             <td style="padding:20px 28px;background:#f8fafc;border-top:1px solid #e2e8f0;">
-                              <p style="margin:0;font-size:14px;color:#64748b;">Viele Grüße<br/><strong style="color:#0f172a;">Ihr VEMMiNA Team</strong></p>
+                              <p style="margin:0;font-size:14px;color:#64748b;">Diese Nachricht wurde automatisch erstellt.</p>
                             </td>
                           </tr>
                         </table>
@@ -6569,8 +6596,8 @@ public class WebUiServer {
                 .replace("{{currency}}", escapeHtmlEmail(currency));
     }
 
-    // LEGACY-RECHNUNG: Vorlage für Altfälle. Layoutgleich zur Gutschrift, aber Rechnungs-Wortlaut,
-    // ohne § 14 / Widerspruchshinweis, mit getrenntem Rechnungs- und Auszahlungsdatum.
+    // LEGACY-RECHNUNG: Rechnung der Beraterin an die Altgesellschaft, ohne § 14 /
+    // Widerspruchshinweis und mit getrenntem Rechnungs- und Auszahlungsdatum.
     private static String getDefaultRechnungPdfViewHtmlTemplate() {
         return """
                 <!doctype html>
@@ -6586,39 +6613,41 @@ public class WebUiServer {
                   </style>
                 </head>
                 <body>
-                  <table style="width:100%;margin-bottom:42px;">
+                  <table style="width:100%;margin-bottom:28px;">
                     <tr>
-                      <td style="vertical-align:top;width:48%;">
-                        <img src="{{vemminaLogoDataUri}}" alt="VEMMiNA" style="width:150px;height:auto;" />
+                      <td style="vertical-align:top;width:58%;font-size:10px;">
+                        <div style="font-size:18px;font-weight:700;margin-bottom:4px;">{{advisorName}}</div>
+                        <div style="font-weight:700;margin-bottom:6px;">Rechnungsstellerin (Leistungserbringerin)</div>
+                        <div>{{advisorAddress}}</div>
+                        <div style="margin-top:7px;" class="muted">E-Mail: {{advisorEmail}}</div>
+                        <div class="muted">Telefon: {{advisorPhone}}</div>
+                        <div class="muted">Steuernummer: {{advisorTaxNumber}}</div>
                       </td>
-                      <td style="vertical-align:top;text-align:right;width:52%;font-size:10px;">
-                        <div style="font-weight:700;">{{buyerCompanyName}}</div>
-                        <div>{{buyerAddress}}</div>
-                        <div style="margin-top:8px;font-weight:700;">Rechnungsempf&auml;ngerin (Leistungsempf&auml;ngerin)</div>
-                        <div>USt-IdNr: {{buyerVatId}}</div>
-                        <div>Steuernummer: {{buyerTaxNumber}}</div>
+                      <td style="vertical-align:top;text-align:right;width:42%;font-size:10px;">
+                        <div style="font-size:24px;margin-bottom:15px;">Rechnung</div>
+                        <table style="width:100%;font-size:10px;">
+                          <tr><td class="muted" style="padding:0 0 5px 0;text-align:left;">Rechnungsnummer</td><td style="text-align:right;padding:0 0 5px 0;">{{documentNumber}}</td></tr>
+                          <tr><td class="muted" style="padding:0;text-align:left;">Rechnungsdatum</td><td style="text-align:right;padding:0;">{{issueDate}}</td></tr>
+                        </table>
                       </td>
                     </tr>
                   </table>
 
                   <div class="muted" style="font-size:8px;border-bottom:1px solid #cfd5dd;padding-bottom:4px;width:64%;margin-bottom:10px;">
-                    {{buyerCompanyName}}, {{buyerAddress}}
+                    {{advisorName}}, {{advisorAddress}}
                   </div>
 
-                  <table style="width:100%;margin-bottom:42px;">
+                  <table style="width:100%;margin-bottom:38px;">
                     <tr>
                       <td style="vertical-align:top;width:58%;font-size:10px;">
-                        <div style="font-weight:700;">{{advisorName}}</div>
-                        <div>{{advisorAddress}}</div>
-                        <div style="margin-top:8px;" class="muted">Rechnungsstellerin (Leistungserbringerin)</div>
-                        <div class="muted">E-Mail: {{advisorEmail}}</div>
-                        <div class="muted">Telefon: {{advisorPhone}}</div>
-                        <div class="muted">Steuernummer: {{advisorTaxNumber}}</div>
+                        <div style="font-weight:700;margin-bottom:6px;">Rechnungsempf&auml;ngerin (Leistungsempf&auml;ngerin)</div>
+                        <div style="font-weight:700;">{{buyerCompanyName}}</div>
+                        <div>{{buyerAddress}}</div>
+                        <div style="margin-top:7px;" class="muted">USt-IdNr: {{buyerVatId}}</div>
+                        <div class="muted">Steuernummer: {{buyerTaxNumber}}</div>
                       </td>
                       <td style="vertical-align:top;width:42%;">
                         <table style="width:100%;font-size:10px;">
-                          <tr><td class="muted" style="padding:0 0 5px 0;">Rechnungsnummer</td><td style="text-align:right;padding:0 0 5px 0;">{{documentNumber}}</td></tr>
-                          <tr><td class="muted" style="padding:0 0 5px 0;">Rechnungsdatum</td><td style="text-align:right;padding:0 0 5px 0;">{{issueDate}}</td></tr>
                           <tr><td class="muted" style="padding:0 0 5px 0;">Auszahlungsdatum</td><td style="text-align:right;padding:0 0 5px 0;">{{created}}</td></tr>
                           <tr><td class="muted" style="padding:0 0 5px 0;">Zahllauf-ID</td><td style="text-align:right;padding:0 0 5px 0;">{{paymentId}}</td></tr>
                           <tr><td class="muted" style="padding:0 0 5px 0;">Leistungszeitraum</td><td style="text-align:right;padding:0 0 5px 0;">{{periodLabel}}</td></tr>
@@ -6627,7 +6656,7 @@ public class WebUiServer {
                     </tr>
                   </table>
 
-                  <div style="font-size:18px;margin-bottom:30px;">Rechnung</div>
+                  <div style="font-size:18px;margin-bottom:22px;">Vermittlungsprovision</div>
 
                   <table style="width:100%;font-size:10px;margin-bottom:34px;">
                     <thead>
@@ -6666,14 +6695,13 @@ public class WebUiServer {
                   </div>
 
                   <div style="margin-top:42px;border-top:1px solid #d6dbe2;padding-top:10px;text-align:center;font-size:9px;line-height:1.45;" class="muted">
-                    <div>{{buyerCompanyName}}</div>
-                    <div>{{buyerAddress}}</div>
-                    <div>USt-IdNr: {{buyerVatId}}</div>
-                    <div>Steuernummer: {{buyerTaxNumber}}</div>
+                    <div style="font-weight:700;color:#111827;">{{advisorName}} - Rechnungsstellerin</div>
+                    <div>{{advisorAddress}}</div>
+                    <div>E-Mail: {{advisorEmail}} | Telefon: {{advisorPhone}} | Steuernummer: {{advisorTaxNumber}}</div>
                   </div>
                 </body>
                 </html>
-                """.replace("{{vemminaLogoDataUri}}", VEMMINA_LOGO_DATA_URI);
+                """;
     }
 
     private static String getDefaultEInvoicePdfViewHtmlTemplate() {
@@ -7190,9 +7218,36 @@ public class WebUiServer {
     }
 
     private static String documentMailSubject(DocumentKind kind, String documentNumber, String periodLabel) {
+        return documentMailSubject(kind, documentNumber, periodLabel, "Beraterin");
+    }
+
+    private static String documentMailSubject(DocumentKind kind, String documentNumber, String periodLabel, String advisorName) {
+        String displayName = advisorName == null || advisorName.isBlank() ? "Beraterin" : advisorName.trim();
         return kind == DocumentKind.RECHNUNG
-                ? "Ihre VEMMiNA-Provisionsrechnung " + documentNumber + " – " + periodLabel
+                ? "Provisionsrechnung " + documentNumber + " von " + displayName
                 : "Ihre VEMMiNA-Provisionsgutschrift " + documentNumber + " – " + periodLabel;
+    }
+
+    private static final String PREVIOUS_RECHNUNG_PDF_TEMPLATE_SHA256 =
+            "f3a1dfba4807b5fc50459cb6d6ab474d9a5e7750a273866db1e7f01e1000e1f6";
+    private static final String PREVIOUS_RECHNUNG_MAIL_TEMPLATE_SHA256 =
+            "da71bfb46910b418cf80d3bf2fc14212060bfad946f51404c9e76f15ae1d491c";
+
+    private static void migratePreviousRechnungTemplates(Properties config) {
+        migratePreviousRechnungTemplate(config, "eInvoicePdfTemplateHtmlRechnung",
+                PREVIOUS_RECHNUNG_PDF_TEMPLATE_SHA256, getDefaultRechnungPdfViewHtmlTemplate());
+        migratePreviousRechnungTemplate(config, "emailTemplateHtmlRechnung",
+                PREVIOUS_RECHNUNG_MAIL_TEMPLATE_SHA256, getDefaultRechnungMailHtmlTemplate());
+    }
+
+    private static void migratePreviousRechnungTemplate(Properties config, String key,
+                                                         String previousFingerprint, String newDefault) {
+        String configured = Objects.toString(config.getProperty(key), "");
+        if (configured.isBlank()) return;
+        String normalized = configured.replace("\r\n", "\n").replace('\r', '\n').stripTrailing();
+        if (previousFingerprint.equals(sha256Hex(normalized))) {
+            config.setProperty(key, newDefault);
+        }
     }
 
     private static final String DEFAULT_RECHNUNG_CUTOFF_DATE = "2026-01-01";
@@ -7570,6 +7625,7 @@ public class WebUiServer {
         config.setProperty(REMINDER_LOG_KEY, Objects.toString(uiSettings.getProperty(REMINDER_LOG_KEY), Objects.toString(config.getProperty(REMINDER_LOG_KEY), "")));
         config.setProperty(LEADER_WEEKLY_MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(LEADER_WEEKLY_MAIL_LOG_KEY), Objects.toString(config.getProperty(LEADER_WEEKLY_MAIL_LOG_KEY), "")));
 
+        migratePreviousRechnungTemplates(config);
         ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
     }
 

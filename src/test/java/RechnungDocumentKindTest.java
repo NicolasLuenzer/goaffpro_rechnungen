@@ -1,5 +1,10 @@
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDResources;
+import org.apache.pdfbox.text.PDFTextStripper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -76,6 +81,73 @@ class RechnungDocumentKindTest {
         return (String) m.invoke(null);
     }
 
+    private static String invokeBuildMailBody(JsonNode payment, JsonNode affiliate, String periodLabel,
+                                              String documentNumber, String kindName, String buyerCompanyName) throws Exception {
+        Class<?> kindClass = Class.forName("WebUiServer$DocumentKind");
+        Method m = WebUiServer.class.getDeclaredMethod("buildInvoiceMailBody",
+                JsonNode.class, JsonNode.class, String.class, String.class, kindClass, String.class);
+        m.setAccessible(true);
+        return (String) m.invoke(null, payment, affiliate, periodLabel, documentNumber,
+                documentKind(kindName), buyerCompanyName);
+    }
+
+    private static String invokeBuildMailHtml(JsonNode payment, JsonNode affiliate, String periodLabel,
+                                              String template, String documentNumber, String kindName,
+                                              String buyerCompanyName) throws Exception {
+        Class<?> kindClass = Class.forName("WebUiServer$DocumentKind");
+        Method m = WebUiServer.class.getDeclaredMethod("buildInvoiceMailHtml",
+                JsonNode.class, JsonNode.class, String.class, String.class, String.class, kindClass, String.class);
+        m.setAccessible(true);
+        return (String) m.invoke(null, payment, affiliate, periodLabel, template, documentNumber,
+                documentKind(kindName), buyerCompanyName);
+    }
+
+    private static String invokeMailSubject(String kindName, String documentNumber,
+                                            String periodLabel, String advisorName) throws Exception {
+        Class<?> kindClass = Class.forName("WebUiServer$DocumentKind");
+        Method m = WebUiServer.class.getDeclaredMethod("documentMailSubject",
+                kindClass, String.class, String.class, String.class);
+        m.setAccessible(true);
+        return (String) m.invoke(null, documentKind(kindName), documentNumber, periodLabel, advisorName);
+    }
+
+    private static void invokeMigrateTemplate(Properties config, String key,
+                                              String previousFingerprint, String newDefault) throws Exception {
+        Method m = WebUiServer.class.getDeclaredMethod("migratePreviousRechnungTemplate",
+                Properties.class, String.class, String.class, String.class);
+        m.setAccessible(true);
+        m.invoke(null, config, key, previousFingerprint, newDefault);
+    }
+
+    private static String invokeSha256(String value) throws Exception {
+        Method m = WebUiServer.class.getDeclaredMethod("sha256Hex", String.class);
+        m.setAccessible(true);
+        return (String) m.invoke(null, value);
+    }
+
+    private static void invokeCreateEInvoicePdf(Path pdf, JsonNode payment, JsonNode affiliate,
+                                                Properties config, String documentNumber,
+                                                String periodLabel, boolean isKlein, String kindName) throws Exception {
+        Class<?> kindClass = Class.forName("WebUiServer$DocumentKind");
+        Method m = WebUiServer.class.getDeclaredMethod("createEInvoicePdfWithEmbeddedXml",
+                Path.class, Path.class, JsonNode.class, JsonNode.class, Properties.class,
+                String.class, String.class, boolean.class, kindClass);
+        m.setAccessible(true);
+        m.invoke(null, pdf, null, payment, affiliate, config, documentNumber, periodLabel,
+                isKlein, documentKind(kindName));
+    }
+
+    private static boolean hasImageXObject(PDDocument document) throws Exception {
+        for (PDPage page : document.getPages()) {
+            PDResources resources = page.getResources();
+            if (resources == null) continue;
+            for (COSName name : resources.getXObjectNames()) {
+                if (resources.isImageXObject(name)) return true;
+            }
+        }
+        return false;
+    }
+
     // ── Testdaten ──
 
     private static JsonNode paymentWithTransactionDates(String... isoDates) throws Exception {
@@ -93,6 +165,12 @@ class RechnungDocumentKindTest {
         Properties config = new Properties();
         config.setProperty("eInvoiceBuyerName", "S+R Linear Technology GmbH");
         config.setProperty("legacyBuyerName", "VEMMiNA Qualitäts- Haushaltsprodukte GmbH");
+        config.setProperty("legacyBuyerStreet", "Altmarkt 10");
+        config.setProperty("legacyBuyerZip", "12345");
+        config.setProperty("legacyBuyerCity", "Musterstadt");
+        config.setProperty("legacyBuyerCountry", "DE");
+        config.setProperty("legacyBuyerVatId", "DE123456789");
+        config.setProperty("legacyBuyerTaxNumber", "12/345/67890");
         return config;
     }
 
@@ -243,6 +321,11 @@ class RechnungDocumentKindTest {
         assertTrue(template.contains("Rechnungsnummer"));
         assertTrue(template.contains("Rechnungsdatum"));
         assertTrue(template.contains("Auszahlungsdatum"));
+        assertTrue(template.indexOf("{{advisorName}}") < template.indexOf("{{buyerCompanyName}}"),
+                "Die Beraterin muss vor VEMMiNA als Rechnungsstellerin erscheinen");
+        assertTrue(template.contains("{{advisorName}} - Rechnungsstellerin"));
+        assertFalse(template.contains("vemminaLogoDataUri"), "Die Rechnung der Beraterin darf kein VEMMiNA-Logo tragen");
+        assertFalse(template.contains("<img"), "Die Standardvorlage benötigt kein fremdes Absenderlogo");
     }
 
     @Test
@@ -257,8 +340,46 @@ class RechnungDocumentKindTest {
     void rechnungMailVorlageTraegtRechnungsWortlaut() throws Exception {
         String template = invokeStaticString("getDefaultRechnungMailHtmlTemplate");
         assertTrue(template.contains("Rechnungsnummer"));
+        assertTrue(template.contains("von {{advisorName}} an {{buyerCompanyName}}"));
+        assertTrue(template.contains("Guten Tag,"));
+        assertTrue(template.contains("Diese Nachricht wurde automatisch erstellt."));
+        assertFalse(template.contains("Ihre Rechnung"));
+        assertFalse(template.contains("Ihr VEMMiNA Team"));
         assertFalse(template.contains("Gutschrift"));
         assertFalse(template.contains("§ 14"));
+    }
+
+    @Test
+    void rechnungMailRendertNeutralAnVemminaInHtmlUndText() throws Exception {
+        JsonNode payment = MAPPER.readTree("{\"id\":\"p1\",\"amount\":\"100.00\",\"currency\":\"EUR\",\"payment_method\":\"Banküberweisung\",\"created_at\":\"2026-02-01T10:00:00Z\",\"transactions\":[{}]}");
+        JsonNode affiliate = MAPPER.readTree("{\"name\":\"Erika Muster\"}");
+        String buyer = "VEMMiNA Qualitäts- Haushaltsprodukte GmbH";
+        String template = invokeStaticString("getDefaultRechnungMailHtmlTemplate");
+
+        String html = invokeBuildMailHtml(payment, affiliate, "01.06.2025 bis 30.06.2025",
+                template, "RE-2026-0001", "RECHNUNG", buyer);
+        String text = invokeBuildMailBody(payment, affiliate, "01.06.2025 bis 30.06.2025",
+                "RE-2026-0001", "RECHNUNG", buyer);
+
+        for (String rendered : new String[]{html, text}) {
+            assertTrue(rendered.contains("Provisionsrechnung RE-2026-0001"));
+            assertTrue(rendered.contains("Erika Muster"));
+            assertTrue(rendered.contains(buyer));
+            assertTrue(rendered.contains("Rechnungsstellerin"));
+            assertTrue(rendered.contains("Rechnungsempfängerin"));
+            assertTrue(rendered.contains("Diese Nachricht wurde automatisch erstellt."));
+            assertFalse(rendered.contains("{{"));
+            assertFalse(rendered.contains("Ihre Rechnung"));
+            assertFalse(rendered.contains("Ihr VEMMiNA Team"));
+        }
+    }
+
+    @Test
+    void rechnungBetreffNenntBeraterinUndGutschriftBetreffBleibtUnveraendert() throws Exception {
+        assertEquals("Provisionsrechnung RE-2026-0001 von Erika Muster",
+                invokeMailSubject("RECHNUNG", "RE-2026-0001", "01.06.2025 bis 30.06.2025", "Erika Muster"));
+        assertEquals("Ihre VEMMiNA-Provisionsgutschrift GS-2026-0001 – 01.01.2026 bis 31.01.2026",
+                invokeMailSubject("GUTSCHRIFT", "GS-2026-0001", "01.01.2026 bis 31.01.2026", "Erika Muster"));
     }
 
     @Test
@@ -270,6 +391,72 @@ class RechnungDocumentKindTest {
         assertFalse(rendered.contains("{{"), "Es dürfen keine unaufgelösten Platzhalter übrig bleiben: " + firstPlaceholder(rendered));
         assertTrue(rendered.contains("RE-2026-0001"));
         assertTrue(rendered.contains("VEMMiNA Qualit"));
+    }
+
+    @Test
+    void rechnungPdfRendertBeraterinAlsAbsenderinOhneVemminaLogo(@TempDir Path tempDir) throws Exception {
+        JsonNode affiliate = MAPPER.readTree("""
+                {
+                  "name":"Erika Muster",
+                  "email":"erika@example.com",
+                  "phone":"+49 170 1234567",
+                  "address_1":"Beraterweg 1",
+                  "zip":"54321",
+                  "city":"Beraterstadt",
+                  "country":"DE",
+                  "tax_identification_number":"98/765/43210",
+                  "payment_details":{"iban":"DE00123456780000000000","bic":"GENODEF1XXX","account_holder":"Erika Muster"}
+                }
+                """);
+        Path pdf = tempDir.resolve("altfall-rechnung.pdf");
+        invokeCreateEInvoicePdf(pdf, paymentWithTransactionDates("2025-06-01T10:00:00Z"), affiliate,
+                baseConfig(), "RE-2026-0001", "01.06.2025 bis 30.06.2025", true, "RECHNUNG");
+
+        try (PDDocument document = PDDocument.load(pdf.toFile())) {
+            String text = new PDFTextStripper().getText(document);
+            assertEquals(1, document.getNumberOfPages());
+            assertTrue(text.indexOf("Erika Muster") < text.indexOf("VEMMiNA Qualitäts- Haushaltsprodukte GmbH"),
+                    "Die Rechnungsstellerin muss vor der Rechnungsempfängerin erscheinen");
+            assertTrue(text.contains("Rechnungsstellerin (Leistungserbringerin)"));
+            assertTrue(text.contains("Rechnungsempfängerin (Leistungsempfängerin)"));
+            assertTrue(text.contains("Bankverbindung der Rechnungsstellerin"));
+            assertFalse(text.contains("{{"));
+            assertFalse(hasImageXObject(document), "Die Rechnung der Beraterin darf kein VEMMiNA-Logo enthalten");
+        }
+    }
+
+    @Test
+    void alteStandardvorlageWirdMitUndOhneAbschliessendesZeilenendeMigriert() throws Exception {
+        String previousDefault = "<html>alter Standard</html>";
+        String normalizedFingerprint = invokeSha256(previousDefault);
+        Properties withoutTrailingNewline = new Properties();
+        withoutTrailingNewline.setProperty("template", previousDefault);
+        Properties withCrLfAndTrailingWhitespace = new Properties();
+        withCrLfAndTrailingWhitespace.setProperty("template", previousDefault + "\r\n  \r\n");
+
+        invokeMigrateTemplate(withoutTrailingNewline, "template", normalizedFingerprint,
+                "<html>neuer Standard</html>");
+        invokeMigrateTemplate(withCrLfAndTrailingWhitespace, "template", normalizedFingerprint,
+                "<html>neuer Standard</html>");
+
+        assertEquals("<html>neuer Standard</html>", withoutTrailingNewline.getProperty("template"));
+        assertEquals("<html>neuer Standard</html>", withCrLfAndTrailingWhitespace.getProperty("template"));
+    }
+
+    @Test
+    void individuelleOderLeereVorlageWirdNichtMigriert() throws Exception {
+        String previousDefault = "<html>alter Standard</html>";
+        String normalizedFingerprint = invokeSha256(previousDefault);
+        Properties custom = new Properties();
+        custom.setProperty("template", previousDefault + " angepasst");
+        Properties blank = new Properties();
+        blank.setProperty("template", "   ");
+
+        invokeMigrateTemplate(custom, "template", normalizedFingerprint, "<html>neuer Standard</html>");
+        invokeMigrateTemplate(blank, "template", normalizedFingerprint, "<html>neuer Standard</html>");
+
+        assertEquals(previousDefault + " angepasst", custom.getProperty("template"));
+        assertEquals("   ", blank.getProperty("template"));
     }
 
     private static String firstPlaceholder(String html) {
