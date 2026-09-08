@@ -8034,6 +8034,13 @@ private static String toGermanDate(String input) {
             row.put("summary", toGermanSummary(BUILD_INFO.summary()));
             items.add(row);
             seen.add(BUILD_INFO.commit());
+        } else if (!BUILD_INFO.version().isBlank()) {
+            Map<String, String> row = new LinkedHashMap<>();
+            row.put("version", BUILD_INFO.version());
+            row.put("timestamp", readableBuildTimestamp(BUILD_INFO.version()));
+            row.put("summary", BUILD_INFO.summary().isBlank()
+                    ? "Build ohne Git-Metadaten." : BUILD_INFO.summary());
+            items.add(row);
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -8115,17 +8122,18 @@ private static String toGermanDate(String input) {
     }
 
     /**
-     * Woher die Versionskennung stammt: "build" = beim Bauen eingebacken (im Container der
-     * Normalfall), "git" = zur Laufzeit aus dem Repository gelesen (lokale Entwicklung),
-     * "unknown" = nicht ermittelbar. {@code sequenceKnown} ist falsch, wenn keine belastbare
-     * Build-Nummer vorliegt; die Oberflaeche weicht dann auf den Commit-Hash aus.
+     * Woher die Versionskennung stammt: "build" = Git-Daten beim Bauen eingebacken,
+     * "build-time" = tatsächliche Bauzeit ohne Git-Metadaten, "git" = zur Laufzeit aus dem
+     * Repository gelesen und "unknown" = nicht ermittelbar. {@code sequenceKnown} ist falsch,
+     * wenn keine belastbare Build-Nummer vorliegt.
      */
     private record BuildInfo(String version, String commit, String branch, String summary,
                              String source, boolean sequenceKnown) {
     }
 
     /**
-     * Eingebackene Kennung zuerst, dann git zur Laufzeit, sonst ehrliches Unwissen.
+     * Eingebackene Git-Kennung zuerst, dann tatsächliche Bauzeit, danach git zur Laufzeit und
+     * zuletzt ehrliches Unwissen.
      * Frueher wurde stattdessen das aktuelle Datum mit der Sequenz 000000 erfunden - das ergab
      * im Container dauerhaft die irrefuehrende Anzeige "Build 0 - heutiges Datum".
      */
@@ -8137,21 +8145,50 @@ private static String toGermanDate(String input) {
         return new BuildInfo("", "", "", "", "unknown", false);
     }
 
-    /** Liest die vom Maven-Build erzeugte version.properties vom Klassenpfad. */
+    /** Liest die beim Maven-Build erzeugten Git- und Fallback-Ressourcen vom Klassenpfad. */
     private static BuildInfo buildInfoFromResource() {
-        try (InputStream in = WebUiServer.class.getResourceAsStream("/version.properties")) {
-            if (in == null) return null;
-            Properties p = new Properties();
-            p.load(in);
-            // Das Plugin liefert git.commit.time bereits im Zielformat yyyyMMddHHmmss.
-            String time = p.getProperty("git.commit.time", "").trim();
-            if (time.length() != 14 || !time.chars().allMatch(Character::isDigit)) return null;
-            int sequence = plausibleSequence(p.getProperty("git.total.commit.count", "").trim());
-            return new BuildInfo(time + "-" + String.format("%06d", sequence),
-                    p.getProperty("git.commit.id.abbrev", "").trim(),
-                    p.getProperty("git.branch", "").trim(),
-                    p.getProperty("git.commit.message.short", "").trim(),
-                    "build", sequence > 0);
+        return buildInfoFromResources(
+                loadBuildInfoProperties("/version.properties"),
+                loadBuildInfoProperties("/build.properties"));
+    }
+
+    private static Properties loadBuildInfoProperties(String resourcePath) {
+        Properties properties = new Properties();
+        try (InputStream in = WebUiServer.class.getResourceAsStream(resourcePath)) {
+            if (in != null) properties.load(in);
+        } catch (Exception ignored) {
+            // Eine fehlende oder defekte Metadaten-Ressource wird von der nächsten Quelle ersetzt.
+        }
+        return properties;
+    }
+
+    private static BuildInfo buildInfoFromResources(Properties gitProperties, Properties buildProperties) {
+        BuildInfo gitBuild = buildInfoFromGitProperties(gitProperties);
+        return gitBuild != null ? gitBuild : buildInfoFromBuildTimeProperties(buildProperties);
+    }
+
+    private static BuildInfo buildInfoFromGitProperties(Properties properties) {
+        if (properties == null) return null;
+        // Das Plugin liefert git.commit.time bereits im Zielformat yyyyMMddHHmmss.
+        String time = properties.getProperty("git.commit.time", "").trim();
+        if (time.length() != 14 || !time.chars().allMatch(Character::isDigit)) return null;
+        int sequence = plausibleSequence(properties.getProperty("git.total.commit.count", "").trim());
+        return new BuildInfo(time + "-" + String.format("%06d", sequence),
+                properties.getProperty("git.commit.id.abbrev", "").trim(),
+                properties.getProperty("git.branch", "").trim(),
+                properties.getProperty("git.commit.message.short", "").trim(),
+                "build", sequence > 0);
+    }
+
+    private static BuildInfo buildInfoFromBuildTimeProperties(Properties properties) {
+        if (properties == null) return null;
+        String rawBuildTime = properties.getProperty("build.time", "").trim();
+        try {
+            String berlinBuildTime = DateTimeFormatter.ofPattern("yyyyMMddHHmmss")
+                    .withZone(ZoneId.of("Europe/Berlin"))
+                    .format(Instant.parse(rawBuildTime));
+            return new BuildInfo(berlinBuildTime + "-000000", "", "",
+                    "Build ohne Git-Metadaten.", "build-time", false);
         } catch (Exception ignored) {
             return null;
         }

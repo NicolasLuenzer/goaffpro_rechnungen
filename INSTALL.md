@@ -326,12 +326,15 @@ Build muss es einmal aus dem Netz geladen werden; danach liegt es im lokalen Rep
 ```bash
 mvn -o package -DskipTests -Dmaven.gitcommitid.skip=true
 ```
-Dann entsteht keine Versionsdatei und die Anwendung ermittelt die Version zur Laufzeit aus
-dem Git-Repository — im Container gelingt das nicht, dort steht dann „Version unbekannt".
+Ohne Git-Metadaten verwendet die Anwendung den tatsächlichen Maven-Buildzeitpunkt.
 
 **Versionsanzeige lautet „Version unbekannt" statt einer Build-Nummer:**
-Das Jar wurde ohne `.git` gebaut. Pruefen, ob `COPY .git/ .git/` im `Dockerfile` steht und ob
-das Verzeichnis im Build-Kontext liegt.
+Weder Git-Metadaten noch eine gültige Build-Zeit wurden in das Jar eingebettet. Ein normaler
+Docker- oder Maven-Build erzeugt mindestens die Build-Zeit automatisch.
+
+**Versionsanzeige lautet „Build vom …" statt einer Build-Nummer:**
+Der Build-Kontext enthielt kein `.git` — das ist bei Portainer-Git-Stacks zulässig und wird
+bewusst unterstützt. Der angezeigte Zeitpunkt ist der tatsächliche Start des Maven-Builds.
 
 **Versionsanzeige zeigt Datum und Commit-Hash statt einer Build-Nummer:**
 Die Commit-Anzahl war nicht ermittelbar — typisch fuer einen flachen Klon (`depth=1`), wie ihn

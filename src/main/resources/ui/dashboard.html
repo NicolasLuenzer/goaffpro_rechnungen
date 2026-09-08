@@ -563,7 +563,8 @@
       const nummer = parseInt(seq, 10);
       if (nummer > 0) return `Build ${nummer} · ${datum}`;
       const commit = String((data && data.commit) || '').trim();
-      return commit ? `${datum} · ${commit}` : 'Version unbekannt';
+      if (commit) return `${datum} · ${commit}`;
+      return data && data.source === 'build-time' ? `Build vom ${datum}` : 'Version unbekannt';
     }
 
     async function loadVersion() {
@@ -576,6 +577,7 @@
         if (data.commit) teile.push(`Commit ${data.commit}`);
         if (data.branch) teile.push(`Branch ${data.branch}`);
         if (data.source === 'build') teile.push('beim Bauen eingebacken');
+        else if (data.source === 'build-time') teile.push('Build-Zeit ohne Git-Metadaten');
         else if (data.source === 'git') teile.push('aus dem Repository gelesen');
         else teile.push('nicht ermittelbar');
         box.title = teile.join(' · ');

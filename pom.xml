@@ -12,6 +12,7 @@
         <maven.compiler.source>22</maven.compiler.source>
         <maven.compiler.target>22</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.build.timestamp.format>yyyy-MM-dd'T'HH:mm:ss'Z'</maven.build.timestamp.format>
     </properties>
 
 
@@ -55,6 +56,22 @@
     </dependencies>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>false</filtering>
+                <excludes>
+                    <exclude>build.properties</exclude>
+                </excludes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory>
+                <filtering>true</filtering>
+                <includes>
+                    <include>build.properties</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -69,11 +86,8 @@
                     </environmentVariables>
                 </configuration>
             </plugin>
-            <!-- Versionskennung zur Bauzeit einbacken. Im Runtime-Container liegt weder .git
-                 noch ein git-Binary; ohne diese Datei erfindet die Anwendung sonst eine
-                 Build-Nummer ("Build 0"). Das Plugin liest .git ueber JGit und braucht dafuer
-                 selbst kein git-Binary - dieselbe Loesung wirkt also lokal wie im Docker-Build.
-                 Notausgang ohne Netz: mvn -o package -Dmaven.gitcommitid.skip=true -->
+            <!-- Git-Versionskennung einbacken, wenn .git im Build-Kontext vorhanden ist.
+                 Portainer kann ohne .git bauen; dann greift die gefilterte build.properties. -->
             <plugin>
                 <groupId>io.github.git-commit-id</groupId>
                 <artifactId>git-commit-id-maven-plugin</artifactId>
@@ -89,8 +103,8 @@
                     </execution>
                 </executions>
                 <configuration>
-                    <!-- Ein Build ohne .git (z. B. aus einem Quell-Archiv) soll nicht scheitern;
-                         die Anwendung faellt dann auf ihre Laufzeit-Erkennung zurueck. -->
+                    <!-- Ein Build ohne .git (z. B. aus Portainer oder einem Quellarchiv)
+                         soll nicht scheitern. -->
                     <failOnNoGitDirectory>false</failOnNoGitDirectory>
                     <failOnUnableToExtractRepoInfo>false</failOnUnableToExtractRepoInfo>
                     <generateGitPropertiesFile>true</generateGitPropertiesFile>
@@ -98,8 +112,8 @@
                     <format>properties</format>
                     <dateFormat>yyyyMMddHHmmss</dateFormat>
                     <dateFormatTimeZone>Europe/Berlin</dateFormatTimeZone>
-                    <!-- Bewusst ohne git.dirty: im Docker-Build liegen nur pom.xml und src/,
-                         der Dirty-Scan saehe dort den halben Baum als geloescht an. -->
+                    <!-- Bewusst ohne git.dirty: Der Build-Kontext ist durch .dockerignore
+                         bereinigt und entspricht nicht zwingend dem vollständigen Arbeitsbaum. -->
                     <includeOnlyProperties>
                         <includeOnlyProperty>^git\.commit\.id\.abbrev$</includeOnlyProperty>
                         <includeOnlyProperty>^git\.commit\.time$</includeOnlyProperty>
