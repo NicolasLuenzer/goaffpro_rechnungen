@@ -19,6 +19,7 @@ import org.apache.pdfbox.cos.COSName;
 import org.apache.pdfbox.pdmodel.PDEmbeddedFilesNameTreeNode;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
 import org.jsoup.nodes.Entities;
 
 import jakarta.activation.DataHandler;
@@ -6722,7 +6723,7 @@ public class WebUiServer {
                   <table style="width:100%;margin-bottom:42px;">
                     <tr>
                       <td style="vertical-align:top;width:48%;">
-                        <img src="{{vemminaLogoDataUri}}" alt="VEMMiNA" style="width:150px;height:auto;" />
+                        <img src="{{vemminaLogoDataUri}}" alt="VEMMiNA" data-vemmina-logo="true" style="width:150px;height:auto;" />
                       </td>
                       <td style="vertical-align:top;text-align:right;width:52%;font-size:10px;">
                         <div style="font-weight:700;">{{buyerCompanyName}}</div>
@@ -7209,7 +7210,10 @@ public class WebUiServer {
 
     private static String documentPdfTemplateHtml(Properties config, DocumentKind kind) {
         String value = Objects.toString(config.getProperty(kind.pdfTemplateKey), "").trim();
-        return value.isBlank() ? defaultPdfViewTemplate(kind) : value;
+        String template = value.isBlank() ? defaultPdfViewTemplate(kind) : value;
+        return kind == DocumentKind.GUTSCHRIFT
+                ? ensureVemminaLogoInEInvoiceTemplate(template)
+                : template;
     }
 
     private static String documentMailTemplateHtml(Properties config, DocumentKind kind) {
@@ -7247,6 +7251,45 @@ public class WebUiServer {
         String normalized = configured.replace("\r\n", "\n").replace('\r', '\n').stripTrailing();
         if (previousFingerprint.equals(sha256Hex(normalized))) {
             config.setProperty(key, newDefault);
+        }
+    }
+
+    private static String ensureVemminaLogoInEInvoiceTemplate(String template) {
+        if (template == null || template.isBlank() || template.contains(VEMMINA_LOGO_DATA_URI)) {
+            return template;
+        }
+
+        Document document = Jsoup.parse(template);
+        Element logo = null;
+        for (Element image : document.select("img")) {
+            if (image.hasAttr("data-vemmina-logo")
+                    || "VEMMiNA".equalsIgnoreCase(image.attr("alt").trim())) {
+                logo = image;
+                break;
+            }
+        }
+        if (logo == null) {
+            Element header = document.body().prependElement("div");
+            header.attr("data-vemmina-logo-header", "true");
+            header.attr("style", "margin-bottom:24px;");
+            logo = header.appendElement("img");
+            logo.attr("alt", "VEMMiNA");
+            logo.attr("style", "width:150px;height:auto;display:block;");
+        }
+        logo.attr("src", VEMMINA_LOGO_DATA_URI);
+        logo.attr("data-vemmina-logo", "true");
+        document.outputSettings(new Document.OutputSettings()
+                .charset(StandardCharsets.UTF_8)
+                .prettyPrint(false));
+        return document.outerHtml();
+    }
+
+    private static void ensureVemminaLogoInConfiguredGutschriftTemplate(Properties config) {
+        String configured = Objects.toString(config.getProperty("eInvoicePdfTemplateHtml"), "");
+        if (configured.isBlank()) return;
+        String withLogo = ensureVemminaLogoInEInvoiceTemplate(configured);
+        if (!configured.equals(withLogo)) {
+            config.setProperty("eInvoicePdfTemplateHtml", withLogo);
         }
     }
 
@@ -7626,6 +7669,7 @@ public class WebUiServer {
         config.setProperty(LEADER_WEEKLY_MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(LEADER_WEEKLY_MAIL_LOG_KEY), Objects.toString(config.getProperty(LEADER_WEEKLY_MAIL_LOG_KEY), "")));
 
         migratePreviousRechnungTemplates(config);
+        ensureVemminaLogoInConfiguredGutschriftTemplate(config);
         ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
     }
 

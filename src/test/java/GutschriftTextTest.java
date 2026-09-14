@@ -147,9 +147,30 @@ class GutschriftTextTest {
     void eInvoiceHtmlTemplate_embedsLocalLogoDataUri() throws Exception {
         String html = invokeStaticString("getDefaultEInvoicePdfViewHtmlTemplate");
         assertTrue(html.contains("alt=\"VEMMiNA\""), "Standardvorlage muss das VEMMiNA-Logo enthalten");
+        assertTrue(html.contains("data-vemmina-logo=\"true\""), "Logo muss eindeutig gekennzeichnet sein");
         assertTrue(html.contains("data:image/png;base64,"), "Logo muss lokal als Data-URI eingebettet sein");
         assertFalse(html.contains("src=\"http://"), "Logo darf keine externe HTTP-Ressource laden");
         assertFalse(html.contains("src=\"https://"), "Logo darf keine externe HTTPS-Ressource laden");
+    }
+
+    @Test
+    void gespeicherteEInvoiceVorlageErhaeltFehlendesVemminaLogoGenauEinmal() throws Exception {
+        String configured = "<html><body><h1>Eigene Gutschrift</h1></body></html>";
+
+        String withLogo = invokeStaticString(
+                "ensureVemminaLogoInEInvoiceTemplate",
+                new Class<?>[]{String.class},
+                configured);
+        String normalizedAgain = invokeStaticString(
+                "ensureVemminaLogoInEInvoiceTemplate",
+                new Class<?>[]{String.class},
+                withLogo);
+
+        assertTrue(withLogo.contains("data-vemmina-logo=\"true\""));
+        assertTrue(withLogo.contains("data:image/png;base64,"));
+        assertTrue(withLogo.indexOf("data-vemmina-logo") < withLogo.indexOf("Eigene Gutschrift"),
+                "Das Logo muss vor dem Vorlageninhalt stehen");
+        assertEquals(withLogo, normalizedAgain, "Mehrfaches Laden darf das Logo nicht duplizieren");
     }
 
     @Test
@@ -324,8 +345,8 @@ class GutschriftTextTest {
                     "Die gespeicherte Designer-Vorlage muss die erzeugte PDF steuern");
             assertTrue(text.contains("GS-2026-0002"));
             assertTrue(text.contains("146,91"));
-            assertFalse(hasImageXObject(document),
-                    "Custom-Vorlagen dürfen nicht still durch die neue Standardvorlage ersetzt werden");
+            assertTrue(hasImageXObject(document),
+                    "Auch gespeicherte Designer-Vorlagen müssen das VEMMiNA-Logo rendern");
 
             assertNotNull(document.getDocumentCatalog().getNames(),
                     "Die ZUGFeRD/XML-Anlage muss im PDF-Katalog vorhanden bleiben");
