@@ -6,6 +6,8 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
@@ -23,6 +25,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -66,6 +69,11 @@ public class GoAffProSyncService {
     private static final List<String> DEFAULT_DIAGNOSTIC_ENDPOINTS = List.of(
             "affiliates", "payments", "connections", "traffic", "groups", "creatives", "store_logs");
     private static final int DIAGNOSTIC_RAW_EXCERPT_LIMIT = 20 * 1024;
+    private static final int SYNC_LOG_MAX_AGE_DAYS = 30;
+    private static final int SYNC_LOG_MAX_ROWS = 5000;
+    private static final int SYNC_LOG_MAX_DETAIL_CHARS = 8000;
+    private static final DateTimeFormatter LOG_TIMESTAMP_FORMAT =
+            DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss").withZone(ZoneId.of("Europe/Berlin"));
     enum PaginationMode {
         PAGE_AND_OFFSET,
         OFFSET_ONLY,
@@ -86,9 +94,15 @@ public class GoAffProSyncService {
                 : t.getClass().getSimpleName() + ": " + message;
     }
 
-    private static void logSyncFailure(String context, Throwable t) {
+    /**
+     * Der Stacktrace ging bisher ausschliesslich nach stderr und war damit nur im Containerlog
+     * zu sehen - ueber die Oberflaeche also gar nicht. Jetzt landet er zusaetzlich im Protokoll.
+     */
+    private static void logSyncFailure(Properties config, String source, String context, Throwable t) {
         System.err.println("GoAffPro " + context + " abgebrochen: " + describeThrowable(t));
         if (t != null) t.printStackTrace();
+        appendLogQuietly(config, "error", source, 0L, null,
+                context + " abgebrochen: " + describeThrowable(t), stackTraceOf(t));
     }
 
     private static Map<String, Object> failedRunStatus(String mode, Throwable t) {
@@ -142,6 +156,9 @@ public class GoAffProSyncService {
     });
     private volatile Map<String, Object> currentRun = null;
     private volatile Map<String, Object> currentDiagnosticRun = null;
+    // Damit die Endpoint-Helfer ihre Meldungen dem laufenden Lauf zuordnen koennen, ohne dass
+    // die Lauf-ID durch vier Helfersignaturen gereicht werden muss.
+    private volatile long currentRunId = 0L;
     // Bleibt nach Laufende absichtlich gesetzt, damit das API-Budget-Gauge weiter die
     // Calls der letzten Stunde zeigt (die Zeitstempel altern von selbst heraus).
     private volatile RateBudget currentBudget = null;
@@ -179,7 +196,7 @@ public class GoAffProSyncService {
             try {
                 runSync(snapshot, apiKeySnapshot, normalizedMode);
             } catch (Throwable t) {
-                logSyncFailure("Sync (" + normalizedMode + ")", t);
+                logSyncFailure(snapshot, "sync", "Sync (" + normalizedMode + ")", t);
                 currentRun = failedRunStatus(normalizedMode, t);
             } finally {
                 running.set(false);
@@ -214,7 +231,7 @@ public class GoAffProSyncService {
             try {
                 runDiagnostics(snapshot, apiKeySnapshot, selectedEndpointKeys);
             } catch (Throwable t) {
-                logSyncFailure("Sync-Diagnose", t);
+                logSyncFailure(snapshot, "diagnostics", "Sync-Diagnose", t);
                 currentDiagnosticRun = failedRunStatus("diagnostics", t);
             } finally {
                 diagnosticsRunning.set(false);
@@ -250,6 +267,8 @@ public class GoAffProSyncService {
                 EndpointSpec endpoint = specsByKey.get(endpointKey);
                 if (endpoint == null) {
                     run.warning("Unbekannter Diagnose-Endpoint: " + endpointKey);
+                    appendLog(connection, "warning", "diagnostics", runId, endpointKey,
+                            "Unbekannter Diagnose-Endpoint: " + endpointKey, null);
                     continue;
                 }
                 run.currentEndpoint = endpoint.displayName;
@@ -266,6 +285,10 @@ public class GoAffProSyncService {
             run.status = run.warnings.isEmpty() ? "success" : "warning";
             run.finishedAt = Instant.now().toString();
             updateDiagnosticRun(connection, runId, run);
+            appendLog(connection, "info", "diagnostics", runId, null,
+                    "Diagnose beendet (" + run.status + "): " + selectedEndpointKeys.size() + " Endpunkte, "
+                            + run.apiCalls + " API-Calls.", null);
+            pruneSyncLog(connection);
             return run;
         } catch (Exception e) {
             run.status = "error";
@@ -273,6 +296,8 @@ public class GoAffProSyncService {
             run.finishedAt = Instant.now().toString();
             try (Connection connection = connect(db)) {
                 if (run.runId > 0) updateDiagnosticRun(connection, run.runId, run);
+                appendLog(connection, "error", "diagnostics", run.runId, null,
+                        "Diagnose abgebrochen: " + describeThrowable(e), stackTraceOf(e));
             } catch (Exception ignored) {
             }
             throw e;
@@ -346,6 +371,8 @@ public class GoAffProSyncService {
             markInvalidEmptyEntities(connection);
             long runId = insertRun(connection, normalizedMode);
             run.runId = runId;
+            currentRunId = runId;
+            appendLog(connection, "info", "sync", runId, null, "Lauf gestartet (" + normalizedMode + ").", null);
             RateBudget budget = newRateBudget(config);
             currentBudget = budget;
             run.budget = budget;
@@ -381,6 +408,10 @@ public class GoAffProSyncService {
             run.status = run.warnings.isEmpty() ? "success" : "warning";
             run.finishedAt = Instant.now().toString();
             updateRun(connection, runId, run);
+            appendLog(connection, "info", "sync", runId, null,
+                    "Lauf beendet (" + run.status + "): " + run.seen + " Datensätze, " + run.apiCalls
+                            + " API-Calls, " + run.warnings.size() + " Warnungen, " + run.notes.size() + " Hinweise.", null);
+            pruneSyncLog(connection);
             return run;
         } catch (Throwable t) {
             // Auch Error abfangen, damit der Lauf in der DB nicht auf "running" stehen bleibt.
@@ -390,6 +421,8 @@ public class GoAffProSyncService {
             run.finishedAt = Instant.now().toString();
             try (Connection connection = connect(db)) {
                 if (run.runId > 0) updateRun(connection, run.runId, run);
+                appendLog(connection, "error", "sync", run.runId, null,
+                        "Lauf abgebrochen: " + run.error, stackTraceOf(t));
             } catch (Exception writeFailure) {
                 System.err.println("GoAffPro Sync: Lauf-Status konnte nicht geschrieben werden: "
                         + describeThrowable(writeFailure));
@@ -398,6 +431,7 @@ public class GoAffProSyncService {
             if (t instanceof Error err) throw err;
             throw new IOException(describeThrowable(t), t);
         } finally {
+            currentRunId = 0L;
             currentRun = run.toStatusMap();
         }
     }
@@ -499,6 +533,11 @@ public class GoAffProSyncService {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("enabled", isSyncEnabled(config));
         payload.put("running", running.get());
+        // Eine laufende Diagnose blockiert jeden Sync-Start, war fuer die Sync-Oberflaeche aber
+        // unsichtbar. "busy" deckt beides ab und steuert dort die schnelle Aktualisierung.
+        payload.put("diagnosticsRunning", diagnosticsRunning.get());
+        payload.put("maintenance", isMaintenance());
+        payload.put("busy", isBusy());
         payload.put("dataDir", resolveDataDir(config).toString());
         payload.put("dbPath", db.toString());
         payload.put("fileDir", resolveDataDir(config).resolve("goaffpro_files").toString());
@@ -518,7 +557,9 @@ public class GoAffProSyncService {
         budgetInfo.put("nextCallInSeconds", budget == null ? 0L : budget.secondsUntilNextCall());
         payload.put("budget", budgetInfo);
         if (!Files.exists(db)) {
-            payload.put("state", isSyncEnabled(config) ? "Noch nicht synchronisiert" : "Pausiert");
+            String emptyStateKey = isSyncEnabled(config) ? "never" : "paused";
+            payload.put("stateKey", emptyStateKey);
+            payload.put("state", stateLabel(emptyStateKey));
             payload.put("lastSuccessAt", "");
             payload.put("entityCount", 0);
             payload.put("remoteMissingCount", 0);
@@ -527,6 +568,10 @@ public class GoAffProSyncService {
             payload.put("inventory", List.of());
             payload.put("warnings", List.of("Noch kein lokaler GoAffPro Syncbestand vorhanden."));
             payload.put("notes", List.of());
+            payload.put("errors", List.of());
+            payload.put("warningCount", 1);
+            payload.put("noteCount", 0);
+            payload.put("errorCount", 0);
             return payload;
         }
         initDatabase(db);
@@ -547,10 +592,19 @@ public class GoAffProSyncService {
             payload.put("fileBytes", directorySize(resolveDataDir(config).resolve("goaffpro_files")));
             payload.put("inventory", inventoryRows(connection));
             payload.put("recentRuns", runRows(connection, 8));
-            payload.put("warnings", syncWarnings(connection));
-            payload.put("notes", syncNotes(connection));
+            List<String> warnings = syncWarnings(connection);
+            List<String> notes = syncNotes(connection);
+            List<String> errors = syncErrors(connection, Objects.toString(lastSuccess.getOrDefault("finishedAt", ""), ""));
+            payload.put("warnings", warnings);
+            payload.put("notes", notes);
+            payload.put("errors", errors);
+            payload.put("warningCount", warnings.size());
+            payload.put("noteCount", notes.size());
+            payload.put("errorCount", errors.size());
             Map<String, Object> stateRun = running.get() && currentRun != null ? currentRun : last;
-            payload.put("state", computeState(config, stateRun, lastSuccess));
+            String stateKey = computeStateKey(config, running.get(), stateRun, lastSuccess);
+            payload.put("stateKey", stateKey);
+            payload.put("state", stateLabel(stateKey));
             return payload;
         }
     }
@@ -587,6 +641,137 @@ public class GoAffProSyncService {
             payload.put("rows", runRows(connection, Math.max(1, Math.min(limit, 100))));
             return payload;
         }
+    }
+
+    /**
+     * Fehlerprotokoll zum Lesen und zum Kopieren. Die Klartextfassung entsteht hier und nicht im
+     * Browser: so ist sie testbar, und was kopiert wird, ist genau das, was der Server kennt.
+     */
+    public Map<String, Object> log(Properties config, int limit, String severity) throws Exception {
+        int capped = Math.max(1, Math.min(SYNC_LOG_MAX_ROWS, limit <= 0 ? 200 : limit));
+        List<String> severities = logSeverities(severity);
+        String filterLabel = logFilterLabel(severities);
+        Path db = resolveDbPath(config);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("dbPath", db.toString());
+        payload.put("limit", capped);
+        payload.put("severity", severities.size() == 3 ? "all" : String.join("+", severities));
+        List<Map<String, Object>> rows = new ArrayList<>();
+        long total = 0L;
+        if (Files.exists(db)) {
+            initDatabase(db);
+            String placeholders = String.join(",", Collections.nCopies(severities.size(), "?"));
+            try (Connection connection = connect(db)) {
+                try (PreparedStatement ps = connection.prepareStatement(
+                        "SELECT COUNT(*) FROM sync_log WHERE severity IN (" + placeholders + ")")) {
+                    for (int i = 0; i < severities.size(); i++) ps.setString(i + 1, severities.get(i));
+                    try (ResultSet rs = ps.executeQuery()) {
+                        if (rs.next()) total = rs.getLong(1);
+                    }
+                }
+                try (PreparedStatement ps = connection.prepareStatement(
+                        "SELECT id, ts, severity, source, run_id, endpoint_key, message, detail FROM sync_log"
+                                + " WHERE severity IN (" + placeholders + ") ORDER BY id DESC LIMIT ?")) {
+                    int index = 1;
+                    for (String value : severities) ps.setString(index++, value);
+                    ps.setInt(index, capped);
+                    try (ResultSet rs = ps.executeQuery()) {
+                        while (rs.next()) {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            row.put("id", rs.getLong("id"));
+                            row.put("ts", Objects.toString(rs.getString("ts"), ""));
+                            row.put("tsLocal", formatLogTimestamp(rs.getString("ts")));
+                            row.put("severity", Objects.toString(rs.getString("severity"), ""));
+                            row.put("source", Objects.toString(rs.getString("source"), ""));
+                            row.put("runId", rs.getLong("run_id"));
+                            row.put("endpointKey", Objects.toString(rs.getString("endpoint_key"), ""));
+                            row.put("message", Objects.toString(rs.getString("message"), ""));
+                            row.put("detail", Objects.toString(rs.getString("detail"), ""));
+                            rows.add(row);
+                        }
+                    }
+                }
+            }
+        }
+        payload.put("rows", rows);
+        payload.put("totalRows", total);
+        payload.put("truncated", total > rows.size());
+        payload.put("text", formatLogText(rows, total, filterLabel, db.toString()));
+        return payload;
+    }
+
+    /** "problems" fasst Fehler und Warnungen zusammen - die Stufen, die eine Reaktion brauchen. */
+    private static List<String> logSeverities(String severity) {
+        return switch (Objects.toString(severity, "").trim().toLowerCase(Locale.ROOT)) {
+            case "error" -> List.of("error");
+            case "warning" -> List.of("warning");
+            case "info" -> List.of("info");
+            case "problems" -> List.of("error", "warning");
+            default -> List.of("error", "warning", "info");
+        };
+    }
+
+    private static String logFilterLabel(List<String> severities) {
+        if (severities.size() == 3) return "alle Meldungen";
+        if (severities.size() == 2) return "nur Fehler und Warnungen";
+        return switch (severities.get(0)) {
+            case "error" -> "nur Fehler";
+            case "warning" -> "nur Warnungen";
+            default -> "nur Hinweise";
+        };
+    }
+
+    private static String severityLabel(String severity) {
+        return switch (Objects.toString(severity, "")) {
+            case "error" -> "FEHLER ";
+            case "warning" -> "WARNUNG";
+            default -> "INFO   ";
+        };
+    }
+
+    private static String formatLogTimestamp(String iso) {
+        try {
+            return LOG_TIMESTAMP_FORMAT.format(Instant.parse(iso));
+        } catch (Exception e) {
+            return Objects.toString(iso, "");
+        }
+    }
+
+    /**
+     * Kopfzeile mit Zeitpunkt, Filter und Datenbankpfad: ohne die ist ein hochgeladener Auszug
+     * nicht einzuordnen. Stacktraces werden eingerueckt, damit Meldung und Detail unterscheidbar
+     * bleiben, wenn der Text irgendwo ohne Formatierung landet.
+     */
+    private static String formatLogText(List<Map<String, Object>> rows, long total, String filterLabel, String dbPath) {
+        StringBuilder text = new StringBuilder();
+        text.append("GoAffPro Sync – Fehlerprotokoll\n");
+        text.append("Erzeugt:   ").append(LOG_TIMESTAMP_FORMAT.format(Instant.now())).append(" (Europe/Berlin)\n");
+        text.append("Filter:    ").append(filterLabel).append(" · ")
+                .append(String.format(Locale.GERMANY, "%,d", rows.size())).append(" von ")
+                .append(String.format(Locale.GERMANY, "%,d", total)).append(" Einträgen\n");
+        text.append("Datenbank: ").append(dbPath).append("\n");
+        if (rows.isEmpty()) {
+            text.append("\nKeine Einträge für diesen Filter.\n");
+            return text.toString();
+        }
+        for (Map<String, Object> row : rows) {
+            text.append('\n').append('[').append(Objects.toString(row.get("tsLocal"), "")).append("] ")
+                    .append(severityLabel(Objects.toString(row.get("severity"), "")));
+            long runId = longValue(row.get("runId"));
+            if (runId > 0) text.append("  Lauf #").append(runId);
+            String source = Objects.toString(row.get("source"), "");
+            if (!source.isBlank()) text.append("  ").append(source);
+            String endpointKey = Objects.toString(row.get("endpointKey"), "");
+            if (!endpointKey.isBlank()) text.append(" · ").append(endpointKey);
+            text.append('\n').append("  ").append(Objects.toString(row.get("message"), "")).append('\n');
+            String detail = Objects.toString(row.get("detail"), "");
+            if (!detail.isBlank()) {
+                for (String line : detail.split("\\R")) {
+                    text.append("    ").append(line).append('\n');
+                }
+            }
+        }
+        return text.toString();
     }
 
     public void setEnabled(Properties config, boolean enabled) {
@@ -799,7 +984,7 @@ public class GoAffProSyncService {
                 result.warning(text);
                 run.lastWarning = lastOf(result.warnings);
             }
-            updateEndpointStats(connection, result);
+            updateEndpointStats(connection, result, currentRunId);
             return result;
         }
         Set<String> seenIds = new LinkedHashSet<>();
@@ -914,7 +1099,7 @@ public class GoAffProSyncService {
             markRemoteMissing(connection, endpoint.entityType, runStartedAt);
         }
         result.complete = complete;
-        updateEndpointStats(connection, result);
+        updateEndpointStats(connection, result, currentRunId);
         return result;
     }
 
@@ -942,7 +1127,7 @@ public class GoAffProSyncService {
                 result.warning("Gruppenmitglieder für Gruppe " + groupId + " konnten nicht gelesen werden: " + e.getMessage());
             }
         }
-        updateEndpointStats(connection, result);
+        updateEndpointStats(connection, result, currentRunId);
         return result;
     }
 
@@ -998,7 +1183,7 @@ public class GoAffProSyncService {
                 result.warning("MLM-Parents für " + affiliateId + " nicht lesbar: " + e.getMessage());
             }
         }
-        updateEndpointStats(connection, result);
+        updateEndpointStats(connection, result, currentRunId);
         return result;
     }
 
@@ -1025,7 +1210,7 @@ public class GoAffProSyncService {
                 result.warning("Asset-Ordner " + folderId + " nicht lesbar: " + e.getMessage());
             }
         }
-        updateEndpointStats(connection, result);
+        updateEndpointStats(connection, result, currentRunId);
         return result;
     }
 
@@ -1054,7 +1239,7 @@ public class GoAffProSyncService {
                 }
             }
         }
-        updateEndpointStats(connection, result);
+        updateEndpointStats(connection, result, currentRunId);
         return result;
     }
 
@@ -1448,16 +1633,18 @@ public class GoAffProSyncService {
                     startedBeforeThisProcess = Instant.parse(entry.getValue()).isBefore(PROCESS_START);
                 } catch (Exception ignored) {
                 }
-                ps.setString(1, startedBeforeThisProcess ? ORPHAN_RESTART_MESSAGE : ORPHAN_CRASH_MESSAGE);
+                String reason = startedBeforeThisProcess ? ORPHAN_RESTART_MESSAGE : ORPHAN_CRASH_MESSAGE;
+                ps.setString(1, reason);
                 ps.setString(2, now);
                 ps.setLong(3, entry.getKey());
                 ps.addBatch();
+                appendLog(connection, "warning", "sync", entry.getKey(), null, reason, null);
             }
             ps.executeBatch();
         }
     }
 
-    private static void updateEndpointStats(Connection connection, EndpointResult result) throws Exception {
+    private static void updateEndpointStats(Connection connection, EndpointResult result, long runId) throws Exception {
         String now = Instant.now().toString();
         try (PreparedStatement ps = connection.prepareStatement("""
                 INSERT INTO sync_endpoint_stats(endpoint_key, entity_type, display_name, api_path, last_success_at, last_status, last_error, last_seen, inserted, updated, unchanged, downloaded, file_bytes, api_calls, complete, warning)
@@ -1498,6 +1685,137 @@ public class GoAffProSyncService {
             messages.addAll(result.notes);
             ps.setString(16, String.join("\n", messages));
             ps.executeUpdate();
+        }
+        writeEndpointMessages(connection, result, now);
+        for (String warning : result.warnings) {
+            appendLog(connection, "warning", "endpoint", runId, result.endpointKey, warning, null);
+        }
+        for (String note : result.notes) {
+            appendLog(connection, "info", "endpoint", runId, result.endpointKey, note, null);
+        }
+    }
+
+    /**
+     * Eine Zeile je Meldung mit eigener Stufe. Die Sammelspalte sync_endpoint_stats.warning wird
+     * bewusst weiter befuellt - die Endpoint-Detailtabelle der Oberflaeche haengt daran.
+     */
+    private static void writeEndpointMessages(Connection connection, EndpointResult result, String now) throws Exception {
+        try (PreparedStatement delete = connection.prepareStatement("DELETE FROM sync_endpoint_messages WHERE endpoint_key=?")) {
+            delete.setString(1, result.endpointKey);
+            delete.executeUpdate();
+        }
+        if (result.warnings.isEmpty() && result.notes.isEmpty()) return;
+        try (PreparedStatement ps = connection.prepareStatement("""
+                INSERT INTO sync_endpoint_messages(endpoint_key, seq, severity, message, updated_at)
+                VALUES(?,?,?,?,?)
+                """)) {
+            int seq = 0;
+            for (String warning : result.warnings) seq = addEndpointMessage(ps, result.endpointKey, seq, "warning", warning, now);
+            for (String note : result.notes) seq = addEndpointMessage(ps, result.endpointKey, seq, "info", note, now);
+            ps.executeBatch();
+        }
+    }
+
+    private static int addEndpointMessage(PreparedStatement ps, String endpointKey, int seq, String severity, String message, String now) throws Exception {
+        if (message == null || message.isBlank()) return seq;
+        ps.setString(1, endpointKey);
+        ps.setInt(2, seq);
+        ps.setString(3, severity);
+        ps.setString(4, message);
+        ps.setString(5, now);
+        ps.addBatch();
+        return seq + 1;
+    }
+
+    /**
+     * Fehlertolerant mit Absicht: ein misslungener Protokolleintrag darf niemals einen Sync
+     * abbrechen. Innerhalb eines Laufs wird je (Stufe, Endpoint, Text) entdoppelt - ein
+     * Initialsync erzeugt sonst hunderte identischer Zeilen, und affiliate_related schreibt
+     * seine Statistik zweimal (siehe Kommentar bei syncNotes). Ueber Laufgrenzen hinweg wird
+     * nicht entdoppelt: ein wiederkehrendes Problem soll auch wiederkehrend im Protokoll stehen.
+     *
+     * Ohne Lauf-ID (Abbrueche, Datenhygiene auf dem Lesepfad) greift stattdessen ein Zeitfenster
+     * von einer Stunde. Sonst schriebe eine alle drei Sekunden pollende Oberflaeche denselben
+     * Satz im Sekundentakt fort.
+     */
+    private static void appendLog(Connection connection, String severity, String source, long runId, String endpointKey, String message, String detail) {
+        if (message == null || message.isBlank()) return;
+        String sql = runId > 0
+                ? """
+                  INSERT INTO sync_log(ts, severity, source, run_id, endpoint_key, message, detail)
+                  SELECT ?,?,?,?,?,?,?
+                  WHERE NOT EXISTS (SELECT 1 FROM sync_log
+                                    WHERE run_id=? AND severity=? AND COALESCE(endpoint_key,'')=? AND message=?)
+                  """
+                : """
+                  INSERT INTO sync_log(ts, severity, source, run_id, endpoint_key, message, detail)
+                  SELECT ?,?,?,?,?,?,?
+                  WHERE NOT EXISTS (SELECT 1 FROM sync_log
+                                    WHERE run_id IS NULL AND severity=? AND message=? AND ts > ?)
+                  """;
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, Instant.now().toString());
+            ps.setString(2, severity);
+            ps.setString(3, source);
+            if (runId > 0) ps.setLong(4, runId);
+            else ps.setNull(4, java.sql.Types.INTEGER);
+            ps.setString(5, Objects.toString(endpointKey, ""));
+            ps.setString(6, message);
+            ps.setString(7, detail == null || detail.isBlank() ? null : trim(detail, SYNC_LOG_MAX_DETAIL_CHARS));
+            if (runId > 0) {
+                ps.setLong(8, runId);
+                ps.setString(9, severity);
+                ps.setString(10, Objects.toString(endpointKey, ""));
+                ps.setString(11, message);
+            } else {
+                ps.setString(8, severity);
+                ps.setString(9, message);
+                ps.setString(10, Instant.now().minus(Duration.ofHours(1)).toString());
+            }
+            ps.executeUpdate();
+        } catch (Exception e) {
+            System.err.println("GoAffPro Protokolleintrag verworfen: " + describeThrowable(e));
+        }
+    }
+
+    /** Fuer Abbrueche, bei denen keine Verbindung mehr offen ist. Schluckt jeden Fehler. */
+    private static void appendLogQuietly(Properties config, String severity, String source, long runId, String endpointKey, String message, String detail) {
+        if (config == null || message == null || message.isBlank()) return;
+        try {
+            Path db = resolveDbPath(config);
+            initDatabase(db);
+            try (Connection connection = connect(db)) {
+                appendLog(connection, severity, source, runId, endpointKey, message, detail);
+            }
+        } catch (Exception e) {
+            System.err.println("GoAffPro Protokolleintrag verworfen: " + describeThrowable(e));
+        }
+    }
+
+    private static String stackTraceOf(Throwable t) {
+        if (t == null) return null;
+        StringWriter writer = new StringWriter();
+        t.printStackTrace(new PrintWriter(writer));
+        return writer.toString();
+    }
+
+    /**
+     * Am Laufende, nie im Lesepfad: eine Statusabfrage soll nichts loeschen. Zwei Grenzen, damit
+     * weder ein ruhiges Jahr noch ein einziger wilder Initialsync das Protokoll unbrauchbar macht.
+     */
+    private static void pruneSyncLog(Connection connection) {
+        try (PreparedStatement ps = connection.prepareStatement("DELETE FROM sync_log WHERE ts < ?")) {
+            ps.setString(1, Instant.now().minus(Duration.ofDays(SYNC_LOG_MAX_AGE_DAYS)).toString());
+            ps.executeUpdate();
+        } catch (Exception e) {
+            System.err.println("GoAffPro Protokollkappung (Alter) uebersprungen: " + describeThrowable(e));
+        }
+        try (PreparedStatement ps = connection.prepareStatement(
+                "DELETE FROM sync_log WHERE id NOT IN (SELECT id FROM sync_log ORDER BY id DESC LIMIT ?)")) {
+            ps.setInt(1, SYNC_LOG_MAX_ROWS);
+            ps.executeUpdate();
+        } catch (Exception e) {
+            System.err.println("GoAffPro Protokollkappung (Anzahl) uebersprungen: " + describeThrowable(e));
         }
     }
 
@@ -1627,6 +1945,95 @@ public class GoAffProSyncService {
                       created_at TEXT NOT NULL
                     )
                     """);
+            // Eine Zeile je Meldung statt einer Sammelspalte je Endpoint. Vorher kippte eine
+            // einzige echte Warnung den gesamten Text des Endpoints - Hinweise eingeschlossen -
+            // in den roten Kasten, weil die Einstufung an der Zeile hing statt an der Meldung.
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sync_endpoint_messages (
+                      endpoint_key TEXT NOT NULL,
+                      seq INTEGER NOT NULL,
+                      severity TEXT NOT NULL,
+                      message TEXT NOT NULL,
+                      updated_at TEXT NOT NULL,
+                      PRIMARY KEY (endpoint_key, seq)
+                    )
+                    """);
+            statement.executeUpdate("""
+                    CREATE TABLE IF NOT EXISTS sync_log (
+                      id INTEGER PRIMARY KEY AUTOINCREMENT,
+                      ts TEXT NOT NULL,
+                      severity TEXT NOT NULL,
+                      source TEXT,
+                      run_id INTEGER,
+                      endpoint_key TEXT,
+                      message TEXT NOT NULL,
+                      detail TEXT
+                    )
+                    """);
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sync_log_severity ON sync_log(severity, id DESC)");
+            statement.executeUpdate("CREATE INDEX IF NOT EXISTS idx_sync_log_run ON sync_log(run_id)");
+            backfillEndpointMessages(statement);
+        }
+    }
+
+    /**
+     * Zieht Altmeldungen aus der Sammelspalte einmalig in die Meldungstabelle nach, damit die
+     * Oberflaeche nicht bis zum naechsten Lauf leer bleibt.
+     *
+     * Bewusst kein Rueckfall im Lesepfad: "keine Zeilen fuer diesen Endpoint" ist nach dem ersten
+     * neuen Lauf auch der Normalzustand eines sauberen Endpoints und von einem Altbestand nicht
+     * unterscheidbar - ein Rueckfall wuerde alte Texte fuer immer wiederbeleben. Der Guard
+     * warning <> '' greift, weil updateEndpointStats bei leerer Meldungsliste '' schreibt.
+     * CASE ... ELSE 'warning' faengt zugleich Altzeilen mit last_status IS NULL ab, die wegen des
+     * SQL-NULL-Vergleichs bisher aus beiden Listen fielen.
+     */
+    private static void backfillEndpointMessages(Statement statement) {
+        try (ResultSet rs = statement.executeQuery("SELECT 1 FROM sync_endpoint_messages LIMIT 1")) {
+            if (rs.next()) return;
+        } catch (Exception e) {
+            return;
+        }
+        try {
+            // Die Altspalte klebt alle Meldungen eines Endpoints mit "\n" zusammen. Aufspalten
+            // bringt wenigstens je Meldung eine eigene Zeile; die Stufe bleibt zwangslaeufig die
+            // der ganzen Zeile, weil die alte Struktur nichts Feineres hergibt. Richtig getrennt
+            // wird ab dem naechsten Lauf.
+            List<String[]> pending = new ArrayList<>();
+            try (ResultSet rs = statement.executeQuery("""
+                    SELECT endpoint_key, warning, COALESCE(last_status, 'warning') AS last_status,
+                           COALESCE(last_success_at, '') AS updated_at
+                    FROM sync_endpoint_stats
+                    WHERE warning IS NOT NULL AND warning <> ''
+                    """)) {
+                while (rs.next()) {
+                    String severity = "note".equals(rs.getString("last_status")) ? "info" : "warning";
+                    String updatedAt = rs.getString("updated_at");
+                    String endpointKey = rs.getString("endpoint_key");
+                    int seq = 0;
+                    for (String line : Objects.toString(rs.getString("warning"), "").split("\\R")) {
+                        if (line.isBlank()) continue;
+                        pending.add(new String[]{endpointKey, String.valueOf(seq++), severity, line.trim(), updatedAt});
+                    }
+                }
+            }
+            if (pending.isEmpty()) return;
+            try (PreparedStatement ps = statement.getConnection().prepareStatement("""
+                    INSERT INTO sync_endpoint_messages(endpoint_key, seq, severity, message, updated_at)
+                    VALUES(?,?,?,?,?)
+                    """)) {
+                for (String[] row : pending) {
+                    ps.setString(1, row[0]);
+                    ps.setInt(2, Integer.parseInt(row[1]));
+                    ps.setString(3, row[2]);
+                    ps.setString(4, row[3]);
+                    ps.setString(5, row[4]);
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+        } catch (Exception e) {
+            // Eine Statusabfrage darf an der Nachmigration nie scheitern.
+            System.err.println("GoAffPro Meldungs-Nachmigration uebersprungen: " + describeThrowable(e));
         }
     }
 
@@ -1656,6 +2063,8 @@ public class GoAffProSyncService {
             markInvalidEmptyEntities(connection);
         } catch (Exception e) {
             System.err.println("GoAffPro Sync: Bereinigung leerer Objekte übersprungen: " + describeThrowable(e));
+            appendLog(connection, "warning", "maintenance", 0L, null,
+                    "Bereinigung leerer Objekte übersprungen: " + describeThrowable(e), stackTraceOf(e));
         }
     }
 
@@ -2008,40 +2417,73 @@ public class GoAffProSyncService {
         return rows;
     }
 
-    private static List<String> syncWarnings(Connection connection) throws Exception {
-        List<String> warnings = new ArrayList<>();
-        try (PreparedStatement ps = connection.prepareStatement("""
-                SELECT display_name, warning FROM sync_endpoint_stats
-                WHERE warning IS NOT NULL AND warning <> '' AND last_status <> 'note'
-                ORDER BY display_name
-                """);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                warnings.add(rs.getString("display_name") + ": " + rs.getString("warning"));
+    /**
+     * Liest aus sync_endpoint_messages, wo jede Meldung ihre eigene Stufe traegt. Frueher hing
+     * die Einstufung an sync_endpoint_stats.last_status, also an der ganzen Zeile: eine einzige
+     * echte Warnung schob auch alle Hinweise desselben Endpoints in den roten Kasten.
+     *
+     * groupByText nur fuer Hinweise: der Affiliate-Detail-Sync schreibt seine Statistik zweimal -
+     * einmal unter eigenem Schluessel, einmal ueber den in die Affiliates gemergten Lauf - und
+     * stuende sonst doppelt da. Warnungen duerfen dagegen NICHT nach Text gruppiert werden:
+     * Traffic und Connections tragen denselben Pagination-Satz, Groups und Store Logs denselben
+     * 504-Satz. Gruppiert verschwaende je einer der beiden Endpoints spurlos aus der Anzeige.
+     */
+    private static List<String> endpointMessages(Connection connection, String severity, boolean groupByText) throws Exception {
+        String sql = groupByText
+                ? """
+                  SELECT MIN(COALESCE(s.display_name, m.endpoint_key)) AS display_name, m.message
+                  FROM sync_endpoint_messages m
+                  LEFT JOIN sync_endpoint_stats s ON s.endpoint_key = m.endpoint_key
+                  WHERE m.severity = ? AND m.message <> ''
+                  GROUP BY m.message
+                  ORDER BY 1
+                  """
+                : """
+                  SELECT COALESCE(s.display_name, m.endpoint_key) AS display_name, m.message
+                  FROM sync_endpoint_messages m
+                  LEFT JOIN sync_endpoint_stats s ON s.endpoint_key = m.endpoint_key
+                  WHERE m.severity = ? AND m.message <> ''
+                  ORDER BY 1, m.seq
+                  """;
+        List<String> messages = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(sql)) {
+            ps.setString(1, severity);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    messages.add(rs.getString("display_name") + ": " + rs.getString("message"));
+                }
             }
         }
-        return warnings;
+        return messages;
+    }
+
+    private static List<String> syncWarnings(Connection connection) throws Exception {
+        return endpointMessages(connection, "warning", false);
+    }
+
+    private static List<String> syncNotes(Connection connection) throws Exception {
+        return endpointMessages(connection, "info", true);
     }
 
     /**
-     * Hinweise zu bewussten Drosselungen. Nach Text gruppiert, weil der Affiliate-Detail-Sync
-     * seine Statistik zweimal schreibt - einmal unter eigenem Schluessel, einmal ueber den in
-     * die Affiliates gemergten Lauf. Sonst stuende derselbe Satz doppelt in der Oberflaeche.
+     * Echte Stoerungen seit dem letzten erfolgreichen Lauf. Ergaenzt lastRun.error, ersetzt es
+     * nicht: ein abgebrochener Lauf bleibt auch dann sichtbar, wenn das Protokoll gekappt wurde.
      */
-    private static List<String> syncNotes(Connection connection) throws Exception {
-        List<String> notes = new ArrayList<>();
+    private static List<String> syncErrors(Connection connection, String sinceIso) throws Exception {
+        List<String> errors = new ArrayList<>();
         try (PreparedStatement ps = connection.prepareStatement("""
-                SELECT MIN(display_name) AS display_name, warning FROM sync_endpoint_stats
-                WHERE warning IS NOT NULL AND warning <> '' AND last_status = 'note'
-                GROUP BY warning
-                ORDER BY 1
-                """);
-             ResultSet rs = ps.executeQuery()) {
-            while (rs.next()) {
-                notes.add(rs.getString("display_name") + ": " + rs.getString("warning"));
+                SELECT MIN(ts) AS ts, message FROM sync_log
+                WHERE severity = 'error' AND ts > ?
+                GROUP BY message
+                ORDER BY 1 DESC
+                LIMIT 20
+                """)) {
+            ps.setString(1, Objects.toString(sinceIso, ""));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) errors.add(rs.getString("message"));
             }
         }
-        return notes;
+        return errors;
     }
 
     private static List<JsonNode> entitiesFromConnection(Connection connection, String entityType) throws Exception {
@@ -2116,24 +2558,52 @@ public class GoAffProSyncService {
         }
     }
 
-    private static String computeState(Properties config, Map<String, Object> lastRun, Map<String, Object> lastSuccess) {
-        if (!isSyncEnabled(config)) return "Pausiert";
-        if (Boolean.TRUE.equals(lastRun.get("running"))) {
+    /**
+     * Der laufende Zustand kam frueher aus lastRun.get("running"). Diesen Schluessel setzt aber
+     * weder toStatusMap() noch runRow() - die beiden einzigen Quellen fuer diese Map. "Sync laeuft"
+     * war damit unerreichbar und die Oberflaeche meldete waehrend eines Laufs "Aktuell", waehrend
+     * das Badge daneben blau leuchtete. Deshalb jetzt als expliziter Parameter.
+     *
+     * Ein laufender Sync schlaegt "Pausiert": Pausieren setzt nur das Konfig-Flag und bricht einen
+     * bereits laufenden Vorgang nicht ab. "Pausiert" waehrend sichtbarer Arbeit waere gelogen.
+     */
+    private static String computeStateKey(Properties config, boolean running, Map<String, Object> lastRun, Map<String, Object> lastSuccess) {
+        if (running) {
             String mode = Objects.toString(lastRun.get("mode"), "");
-            return "initial".equals(mode) ? "Initialsync läuft" : "Sync läuft";
+            return "initial".equals(mode) ? "running_initial" : "running";
         }
+        if (!isSyncEnabled(config)) return "paused";
         String lastStatus = Objects.toString(lastRun.get("status"), "");
-        if ("error".equals(lastStatus)) return "Fehler";
+        if ("error".equals(lastStatus)) return "error";
         String finishedAt = Objects.toString(lastSuccess.get("finishedAt"), "");
-        if (finishedAt.isBlank()) return "Noch nicht synchronisiert";
+        if (finishedAt.isBlank()) return "never";
         try {
             long hours = Duration.between(Instant.parse(finishedAt), Instant.now()).toHours();
             boolean warning = "warning".equals(lastStatus);
-            if (hours > 26) return warning ? "Veraltet mit Warnungen" : "Veraltet";
-            return warning ? "Synchronisiert mit Warnungen" : "Aktuell";
+            if (hours > 26) return warning ? "stale_warning" : "stale";
+            return warning ? "ok_warning" : "ok";
         } catch (Exception e) {
-            return "Unklar";
+            return "unknown";
         }
+    }
+
+    /**
+     * Einzige Stelle, an der aus dem Schluessel deutscher Text wird. Die Oberflaeche faerbt nach
+     * dem Schluessel, nicht nach diesem Text - sonst haengt die Farbe an der Formulierung.
+     */
+    private static String stateLabel(String stateKey) {
+        return switch (Objects.toString(stateKey, "")) {
+            case "paused" -> "Pausiert";
+            case "running_initial" -> "Initialsync läuft";
+            case "running" -> "Sync läuft";
+            case "error" -> "Fehler";
+            case "never" -> "Noch nicht synchronisiert";
+            case "stale_warning" -> "Veraltet mit Warnungen";
+            case "stale" -> "Veraltet";
+            case "ok_warning" -> "Synchronisiert mit Warnungen";
+            case "ok" -> "Aktuell";
+            default -> "Unklar";
+        };
     }
 
     private static boolean isSyncEnabled(Properties config) {

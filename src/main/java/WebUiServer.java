@@ -205,6 +205,7 @@ public class WebUiServer {
         server.createContext("/api/sync/status", new GoAffProSyncStatusHandler());
         server.createContext("/api/sync/inventory", new GoAffProSyncInventoryHandler());
         server.createContext("/api/sync/runs", new GoAffProSyncRunsHandler());
+        server.createContext("/api/sync/log", new GoAffProSyncLogHandler());
         server.createContext("/api/sync/run", new GoAffProSyncRunHandler());
         server.createContext("/api/sync/diagnostics/run", new GoAffProSyncDiagnosticsRunHandler());
         server.createContext("/api/sync/diagnostics/latest", new GoAffProSyncDiagnosticsLatestHandler());
@@ -1229,6 +1230,34 @@ public class WebUiServer {
             try {
                 Properties config = loadConfigWithUiSettings();
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.inventory(config)));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class GoAffProSyncLogHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Properties config = loadConfigWithUiSettings();
+                Map<String, String> query = parseQueryParams(exchange.getRequestURI());
+                int limit = 200;
+                try {
+                    limit = Integer.parseInt(Objects.toString(query.get("limit"), "200").trim());
+                } catch (Exception ignored) {
+                }
+                String severity = Objects.toString(query.get("severity"), "all");
+                sendResponse(exchange, 200, "application/json",
+                        OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.log(config, limit, severity)));
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }

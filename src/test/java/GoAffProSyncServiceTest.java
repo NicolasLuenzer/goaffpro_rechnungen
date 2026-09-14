@@ -17,6 +17,7 @@ import java.time.Instant;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -707,7 +708,356 @@ class GoAffProSyncServiceTest {
         assertEquals(List.of("Alpha: Bewusst gedrosselt."), status.get("notes"));
     }
 
+    // ── Statuswahrheit ──────────────────────────────────────────────────────────
+
+    /**
+     * Regression: computeState fragte frueher lastRun.get("running") ab - einen Schluessel, den
+     * weder toStatusMap() noch runRow() je setzen. "Sync laeuft" war damit unerreichbar und die
+     * Oberflaeche meldete waehrend eines Laufs "Aktuell".
+     */
+    @Test
+    void laufenderSyncHeisstAuchLaufenderSync() throws Exception {
+        Properties config = new Properties();
+        Map<String, Object> lastSuccess = Map.of("finishedAt", Instant.now().toString());
+
+        assertEquals("running_initial", computeStateKey(config, true, Map.of("mode", "initial"), lastSuccess));
+        assertEquals("Initialsync läuft", stateLabel("running_initial"));
+        assertEquals("running", computeStateKey(config, true, Map.of("mode", "delta"), lastSuccess));
+        assertEquals("Sync läuft", stateLabel("running"));
+
+        // Pausieren setzt nur das Konfig-Flag und bricht keinen laufenden Vorgang ab:
+        // "Pausiert" waehrend sichtbarer Arbeit waere gelogen.
+        Properties paused = new Properties();
+        paused.setProperty("goaffproSyncEnabled", "false");
+        assertEquals("running", computeStateKey(paused, true, Map.of("mode", "delta"), lastSuccess));
+        assertEquals("paused", computeStateKey(paused, false, Map.of(), lastSuccess));
+    }
+
+    @Test
+    void stateKeyUndBezeichnungBleibenDeckungsgleich() throws Exception {
+        Properties config = new Properties();
+        String frisch = Instant.now().toString();
+        String alt = Instant.now().minus(java.time.Duration.ofHours(40)).toString();
+
+        assertEquals("error", computeStateKey(config, false, Map.of("status", "error"), Map.of("finishedAt", frisch)));
+        assertEquals("never", computeStateKey(config, false, Map.of(), Map.of()));
+        assertEquals("ok", computeStateKey(config, false, Map.of("status", "success"), Map.of("finishedAt", frisch)));
+        assertEquals("ok_warning", computeStateKey(config, false, Map.of("status", "warning"), Map.of("finishedAt", frisch)));
+        assertEquals("stale", computeStateKey(config, false, Map.of("status", "success"), Map.of("finishedAt", alt)));
+        assertEquals("stale_warning", computeStateKey(config, false, Map.of("status", "warning"), Map.of("finishedAt", alt)));
+        assertEquals("unknown", computeStateKey(config, false, Map.of(), Map.of("finishedAt", "kein Zeitstempel")));
+
+        for (String[] pair : new String[][]{
+                {"paused", "Pausiert"}, {"running_initial", "Initialsync läuft"}, {"running", "Sync läuft"},
+                {"error", "Fehler"}, {"never", "Noch nicht synchronisiert"},
+                {"stale_warning", "Veraltet mit Warnungen"}, {"stale", "Veraltet"},
+                {"ok_warning", "Synchronisiert mit Warnungen"}, {"ok", "Aktuell"}, {"unknown", "Unklar"}}) {
+            assertEquals(pair[1], stateLabel(pair[0]), "Bezeichnung für " + pair[0]);
+        }
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void statusMeldetLaufendeDiagnoseAlsBeschaeftigt(@TempDir Path tempDir) throws Exception {
+        Properties config = new Properties();
+        config.setProperty("goaffproSyncDataPath", tempDir.toString());
+        var status = new GoAffProSyncService().status(config);
+        // Ohne diese Felder kann die Oberflaeche eine laufende Diagnose nicht von Ruhe
+        // unterscheiden - sie blockiert aber jeden Sync-Start.
+        assertEquals(Boolean.FALSE, status.get("busy"));
+        assertEquals(Boolean.FALSE, status.get("diagnosticsRunning"));
+        assertEquals("never", status.get("stateKey"));
+        assertEquals("Noch nicht synchronisiert", status.get("state"));
+    }
+
+    // ── Meldungen je Stufe ──────────────────────────────────────────────────────
+
+    /**
+     * Regression zum gemeldeten Bild: Warnung und Hinweis desselben Endpoints standen gemeinsam
+     * im roten Kasten, weil die Einstufung an sync_endpoint_stats.last_status hing - also an der
+     * ganzen Zeile statt an der einzelnen Meldung.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void warnungUndHinweisDesselbenEndpointsLandenInGetrenntenListen(@TempDir Path tempDir) throws Exception {
+        GoAffProSyncService service = openEmptyDatabase(tempDir);
+        Properties config = configFor(tempDir);
+        insertEndpointStats(tempDir, "gemischt", "Gemischt", "warning", "Echt kaputt.\nBewusst gedrosselt.");
+        insertEndpointMessage(tempDir, "gemischt", 0, "warning", "Echt kaputt.");
+        insertEndpointMessage(tempDir, "gemischt", 1, "info", "Bewusst gedrosselt.");
+
+        var status = service.status(config);
+        List<String> warnungen = (List<String>) status.get("warnings");
+        List<String> hinweise = (List<String>) status.get("notes");
+
+        assertEquals(List.of("Gemischt: Echt kaputt."), warnungen);
+        assertEquals(List.of("Gemischt: Bewusst gedrosselt."), hinweise);
+        assertFalse(warnungen.stream().anyMatch(w -> w.contains("gedrosselt")),
+                "Der Hinweis darf nicht zusätzlich als Warnung erscheinen: " + warnungen);
+    }
+
+    /**
+     * Traffic und Connections tragen denselben Pagination-Satz, Groups und Store Logs denselben
+     * 504-Satz. Wuerden Warnungen nach Text gruppiert, verschwaende je einer der beiden spurlos.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void gleicherWarntextAnZweiEndpunktenBleibtZweimalSichtbar(@TempDir Path tempDir) throws Exception {
+        GoAffProSyncService service = openEmptyDatabase(tempDir);
+        insertEndpointStats(tempDir, "traffic", "Traffic", "warning", "Nur erste Seite synchronisiert.");
+        insertEndpointStats(tempDir, "connections", "Connections", "warning", "Nur erste Seite synchronisiert.");
+        insertEndpointMessage(tempDir, "traffic", 0, "warning", "Nur erste Seite synchronisiert.");
+        insertEndpointMessage(tempDir, "connections", 0, "warning", "Nur erste Seite synchronisiert.");
+
+        List<String> warnungen = (List<String>) service.status(configFor(tempDir)).get("warnings");
+        assertEquals(2, warnungen.size(), "Beide Endpunkte müssen sichtbar bleiben: " + warnungen);
+        assertTrue(warnungen.contains("Traffic: Nur erste Seite synchronisiert."), warnungen.toString());
+        assertTrue(warnungen.contains("Connections: Nur erste Seite synchronisiert."), warnungen.toString());
+    }
+
+    /**
+     * Altzeilen mit last_status IS NULL fielen wegen des SQL-NULL-Vergleichs aus beiden Listen -
+     * sichtbar waren sie nur in der Endpoint-Tabelle. Der Backfill holt sie zurueck und zerlegt
+     * die zusammengeklebte Sammelspalte in einzelne Meldungen.
+     */
+    @Test
+    @SuppressWarnings("unchecked")
+    void altbestandOhneStatusWirdBeimOeffnenUebernommen(@TempDir Path tempDir) throws Exception {
+        GoAffProSyncService service = openEmptyDatabase(tempDir);
+        insertEndpointStats(tempDir, "alt", "Altbestand", null, "Erste Meldung.\nZweite Meldung.");
+
+        List<String> warnungen = (List<String>) service.status(configFor(tempDir)).get("warnings");
+        assertEquals(List.of("Altbestand: Erste Meldung.", "Altbestand: Zweite Meldung."), warnungen);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void sauberEndpointBelebtAlteMeldungNichtWiederAuf(@TempDir Path tempDir) throws Exception {
+        GoAffProSyncService service = openEmptyDatabase(tempDir);
+        Properties config = configFor(tempDir);
+        insertEndpointStats(tempDir, "alt", "Altbestand", "warning", "Alte Meldung.");
+        assertEquals(1, ((List<String>) service.status(config).get("warnings")).size());
+
+        // Ein sauberer Lauf leert beide Quellen. Der Backfill darf jetzt nichts nachschieben.
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + tempDir.resolve("goaffpro_sync.sqlite"));
+             PreparedStatement ps = c.prepareStatement("UPDATE sync_endpoint_stats SET warning='', last_status='success'")) {
+            ps.executeUpdate();
+        }
+        deleteEndpointMessages(tempDir);
+
+        assertEquals(List.of(), service.status(config).get("warnings"),
+                "Eine geleerte Sammelspalte darf nicht erneut als Altbestand gelten");
+    }
+
+    // ── Fehlerprotokoll ─────────────────────────────────────────────────────────
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void fehlerprotokollHaeltDenStacktraceFest(@TempDir Path tempDir) throws Exception {
+        GoAffProSyncService service = openEmptyDatabase(tempDir);
+        Properties config = configFor(tempDir);
+        logSyncFailure(config, "sync", "Sync (delta)", new java.io.IOException("Platte voll"));
+
+        var log = service.log(config, 50, "all");
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) log.get("rows");
+        assertEquals(1, rows.size(), "Der Abbruch muss im Protokoll stehen: " + rows);
+        assertEquals("error", rows.get(0).get("severity"));
+        assertTrue(String.valueOf(rows.get(0).get("message")).contains("Platte voll"), rows.toString());
+        String detail = String.valueOf(rows.get(0).get("detail"));
+        assertTrue(detail.contains("java.io.IOException"), "Stacktrace fehlt: " + detail);
+        assertTrue(detail.contains("\tat "), "Stacktrace-Zeilen fehlen: " + detail);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void fehlerprotokollFiltertAufFehlerUndWarnungen(@TempDir Path tempDir) throws Exception {
+        GoAffProSyncService service = openEmptyDatabase(tempDir);
+        insertLogRow(tempDir, "error", "Ein Fehler.");
+        insertLogRow(tempDir, "warning", "Eine Warnung.");
+        insertLogRow(tempDir, "info", "Ein Hinweis.");
+
+        var problems = service.log(configFor(tempDir), 50, "problems");
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) problems.get("rows");
+        assertEquals(2, rows.size(), rows.toString());
+        assertFalse(rows.stream().anyMatch(r -> "info".equals(r.get("severity"))), rows.toString());
+        assertEquals(3, ((List<Map<String, Object>>) service.log(configFor(tempDir), 50, "all").get("rows")).size());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void fehlerprotokollLiefertNeuesteZuerstUndMeldetGekappteMenge(@TempDir Path tempDir) throws Exception {
+        GoAffProSyncService service = openEmptyDatabase(tempDir);
+        for (int i = 1; i <= 5; i++) insertLogRow(tempDir, "warning", "Meldung " + i);
+
+        var log = service.log(configFor(tempDir), 2, "all");
+        List<Map<String, Object>> rows = (List<Map<String, Object>>) log.get("rows");
+        assertEquals(2, rows.size());
+        assertEquals("Meldung 5", rows.get(0).get("message"), "Neueste zuerst");
+        assertEquals(5L, log.get("totalRows"));
+        assertEquals(Boolean.TRUE, log.get("truncated"));
+    }
+
+    @Test
+    void fehlerprotokollWirdAufMaximaleZeilenzahlGekappt(@TempDir Path tempDir) throws Exception {
+        openEmptyDatabase(tempDir);
+        Path db = tempDir.resolve("goaffpro_sync.sqlite");
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + db)) {
+            try (PreparedStatement ps = c.prepareStatement(
+                    "INSERT INTO sync_log(ts,severity,source,message) VALUES(?,?,?,?)")) {
+                for (int i = 0; i < 5100; i++) {
+                    ps.setString(1, Instant.now().toString());
+                    ps.setString(2, "info");
+                    ps.setString(3, "sync");
+                    ps.setString(4, "Meldung " + i);
+                    ps.addBatch();
+                }
+                ps.executeBatch();
+            }
+            pruneSyncLog(c);
+            try (PreparedStatement ps = c.prepareStatement("SELECT COUNT(*), MAX(message) FROM sync_log");
+                 ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals(5000, rs.getInt(1), "Auf 5000 Zeilen kappen");
+            }
+            try (PreparedStatement ps = c.prepareStatement("SELECT message FROM sync_log ORDER BY id DESC LIMIT 1");
+                 ResultSet rs = ps.executeQuery()) {
+                assertTrue(rs.next());
+                assertEquals("Meldung 5099", rs.getString(1), "Die jüngste Zeile muss überleben");
+            }
+        }
+    }
+
+    @Test
+    void fehlerprotokollTextIstKopierfertig(@TempDir Path tempDir) throws Exception {
+        GoAffProSyncService service = openEmptyDatabase(tempDir);
+        Properties config = configFor(tempDir);
+        logSyncFailure(config, "sync", "Sync (delta)", new java.io.IOException("Platte voll"));
+
+        String text = String.valueOf(service.log(config, 50, "all").get("text"));
+        assertTrue(text.startsWith("GoAffPro Sync – Fehlerprotokoll"), text);
+        assertTrue(text.contains("Erzeugt:"), text);
+        assertTrue(text.contains("(Europe/Berlin)"), text);
+        assertTrue(text.contains("Datenbank:"), "Ohne Pfad ist ein hochgeladener Auszug nicht einzuordnen");
+        assertTrue(text.contains("alle Meldungen"), text);
+        assertTrue(text.matches("(?s).*\\[\\d{2}\\.\\d{2}\\.\\d{4} \\d{2}:\\d{2}:\\d{2}\\].*"), text);
+        assertTrue(text.contains("FEHLER"), text);
+        assertTrue(text.contains("    java.io.IOException"), "Stacktrace muss eingerückt sein: " + text);
+        assertFalse(text.contains("<"), "Der Kopiertext darf kein Markup enthalten");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void einLaufSchreibtGenauEineAbschlusszeile(@TempDir Path tempDir) throws Exception {
+        HttpServer server = fakeServer(exchange -> new FakeResponse(200, "[]"));
+        try {
+            Properties config = configFor(tempDir);
+            config.setProperty("goaffproSyncApiBase", fakeBase(server));
+            config.setProperty("goaffproSyncMaxCallsPerHour", "3600000");
+
+            GoAffProSyncService service = new GoAffProSyncService();
+            service.runSync(config, "test-key", "delta");
+
+            List<Map<String, Object>> rows = (List<Map<String, Object>>) service.log(config, 500, "all").get("rows");
+            assertEquals(1, rows.stream().filter(r -> String.valueOf(r.get("message")).startsWith("Lauf beendet")).count(),
+                    "Genau eine Abschlusszeile je Lauf: " + rows);
+            assertEquals(1, rows.stream().filter(r -> String.valueOf(r.get("message")).startsWith("Lauf gestartet")).count(),
+                    "Genau eine Startzeile je Lauf: " + rows);
+        } finally {
+            server.stop(0);
+        }
+    }
+
     // ── Hilfsmethoden ───────────────────────────────────────────────────────────
+
+    private static Properties configFor(Path tempDir) {
+        Properties config = new Properties();
+        config.setProperty("goaffproSyncDataPath", tempDir.toString());
+        return config;
+    }
+
+    /** status() kehrt ohne Datei früh zurück; die leere Datei genügt SQLite, initDatabase legt an. */
+    private static GoAffProSyncService openEmptyDatabase(Path tempDir) throws Exception {
+        java.nio.file.Files.createFile(tempDir.resolve("goaffpro_sync.sqlite"));
+        GoAffProSyncService service = new GoAffProSyncService();
+        service.status(configFor(tempDir));
+        return service;
+    }
+
+    private static void insertEndpointStats(Path tempDir, String key, String displayName,
+                                            String lastStatus, String warning) throws Exception {
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + tempDir.resolve("goaffpro_sync.sqlite"));
+             PreparedStatement ps = c.prepareStatement(
+                     "INSERT INTO sync_endpoint_stats (endpoint_key, entity_type, display_name, api_path, last_status, warning)"
+                             + " VALUES (?,?,?,?,?,?)")) {
+            ps.setString(1, key);
+            ps.setString(2, key);
+            ps.setString(3, displayName);
+            ps.setString(4, "/" + key);
+            ps.setString(5, lastStatus);
+            ps.setString(6, warning);
+            ps.executeUpdate();
+        }
+    }
+
+    private static void insertEndpointMessage(Path tempDir, String key, int seq, String severity, String message) throws Exception {
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + tempDir.resolve("goaffpro_sync.sqlite"));
+             PreparedStatement ps = c.prepareStatement(
+                     "INSERT INTO sync_endpoint_messages(endpoint_key, seq, severity, message, updated_at) VALUES(?,?,?,?,?)")) {
+            ps.setString(1, key);
+            ps.setInt(2, seq);
+            ps.setString(3, severity);
+            ps.setString(4, message);
+            ps.setString(5, Instant.now().toString());
+            ps.executeUpdate();
+        }
+    }
+
+    private static void deleteEndpointMessages(Path tempDir) throws Exception {
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + tempDir.resolve("goaffpro_sync.sqlite"));
+             PreparedStatement ps = c.prepareStatement("DELETE FROM sync_endpoint_messages")) {
+            ps.executeUpdate();
+        }
+    }
+
+    private static void insertLogRow(Path tempDir, String severity, String message) throws Exception {
+        try (Connection c = DriverManager.getConnection("jdbc:sqlite:" + tempDir.resolve("goaffpro_sync.sqlite"));
+             PreparedStatement ps = c.prepareStatement(
+                     "INSERT INTO sync_log(ts,severity,source,message) VALUES(?,?,?,?)")) {
+            ps.setString(1, Instant.now().toString());
+            ps.setString(2, severity);
+            ps.setString(3, "sync");
+            ps.setString(4, message);
+            ps.executeUpdate();
+        }
+    }
+
+    private static String computeStateKey(Properties config, boolean running,
+                                          Map<String, Object> lastRun, Map<String, Object> lastSuccess) throws Exception {
+        Method method = GoAffProSyncService.class.getDeclaredMethod(
+                "computeStateKey", Properties.class, boolean.class, Map.class, Map.class);
+        method.setAccessible(true);
+        return (String) method.invoke(null, config, running, lastRun, lastSuccess);
+    }
+
+    private static String stateLabel(String stateKey) throws Exception {
+        Method method = GoAffProSyncService.class.getDeclaredMethod("stateLabel", String.class);
+        method.setAccessible(true);
+        return (String) method.invoke(null, stateKey);
+    }
+
+    private static void logSyncFailure(Properties config, String source, String context, Throwable t) throws Exception {
+        Method method = GoAffProSyncService.class.getDeclaredMethod(
+                "logSyncFailure", Properties.class, String.class, String.class, Throwable.class);
+        method.setAccessible(true);
+        method.invoke(null, config, source, context, t);
+    }
+
+    private static void pruneSyncLog(Connection connection) throws Exception {
+        Method method = GoAffProSyncService.class.getDeclaredMethod("pruneSyncLog", Connection.class);
+        method.setAccessible(true);
+        method.invoke(null, connection);
+    }
+
 
     private static void assertEndpointWarning(Connection connection, String endpointKey, String expectedPart) throws Exception {
         assertEndpointMessage(connection, endpointKey, expectedPart, "warning");

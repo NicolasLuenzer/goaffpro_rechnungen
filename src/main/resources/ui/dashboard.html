@@ -146,6 +146,28 @@
     /* Hinweis statt Warnung: bewusste Drosselungen sind keine Stoerung. */
     .info-banner { margin: 10px 0; padding: 12px 16px; border: 1.5px solid var(--clr-info-border); border-left-width: 4px; background: var(--clr-info-bg); color: var(--clr-info); border-radius: var(--radius-sm); font-weight: 600; }
     .text-warn { color: var(--clr-warn); }
+    /* Drei Stufen statt zwei. Eigene Komponente statt .warning-banner umzufaerben: die traegt
+       trotz ihres Namens die Fehlerfarben und wird an fuenf weiteren Stellen rot gebraucht. */
+    .msg-group { margin:10px 0; padding:12px 16px; border:1.5px solid; border-left-width:4px; border-radius:var(--radius-sm); }
+    .msg-group .msg-head { font-weight:700; margin-bottom:6px; }
+    .msg-group ul { margin:0; padding-left:18px; font-weight:500; }
+    .msg-group li { margin:3px 0; }
+    .msg-group.error { border-color:var(--clr-error-border); background:var(--clr-error-bg); color:var(--clr-error); }
+    .msg-group.warn { border-color:var(--clr-warn-border); background:var(--clr-warn-bg); color:var(--clr-warn); }
+    .msg-group.info { border-color:var(--clr-info-border); background:var(--clr-info-bg); color:var(--clr-info); }
+    .msg-group.ok { border-color:var(--clr-success-border); background:var(--clr-success-bg); color:var(--clr-success); font-weight:600; }
+    /* Beantwortet die erste Frage beim Oeffnen: laeuft gerade etwas, ja oder nein. */
+    .sync-live-card { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:12px 0; padding:16px 18px; border:1px solid var(--clr-border); border-radius:var(--radius-md); background:var(--clr-surface); box-shadow:var(--shadow-sm); }
+    .sync-live-dot { width:13px; height:13px; border-radius:50%; flex:none; background:var(--clr-muted); }
+    .sync-live-dot.running { background:var(--clr-info); animation:syncPulse 1.2s ease-in-out infinite; }
+    .sync-live-dot.ok { background:var(--clr-success); }
+    .sync-live-dot.warning { background:var(--clr-warn); }
+    .sync-live-dot.error { background:var(--clr-error); }
+    .sync-live-main { flex:1 1 280px; min-width:0; }
+    .sync-live-title { font-size:16px; font-weight:700; }
+    .sync-live-sub { color:var(--clr-muted); font-size:var(--fs-sm); margin-top:3px; line-height:1.5; }
+    .sync-live-timer { font-variant-numeric:tabular-nums; font-weight:700; font-size:18px; color:var(--clr-info); }
+    @keyframes syncPulse { 0%,100% { opacity:1; } 50% { opacity:.2; } }
     tr.row-warning td { background: #fdf4f4 !important; }
 
     /* ── Version Badge ── */
@@ -257,6 +279,8 @@
     .sync-state-badge.running { background:var(--clr-info-bg); color:var(--clr-info); border-color:var(--clr-info-border); }
     .sync-state-badge.warning { background:var(--clr-warn-bg); color:var(--clr-warn); border-color:var(--clr-warn-border); }
     .sync-state-badge.error { background:var(--clr-error-bg); color:var(--clr-error); border-color:var(--clr-error-border); }
+    /* Pausiert ist kein Problem, sondern eine Entscheidung: neutral statt warnendes Bernstein. */
+    .sync-state-badge.paused { background:#f1f3f5; color:var(--clr-muted); border-color:var(--clr-border-neutral); }
     .sync-progress-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; margin:12px 0; }
     .sync-progress-item { border:1px solid var(--clr-border); border-radius:var(--radius-sm); padding:12px; background:var(--clr-surface-tint); }
     .sync-progress-item strong { display:block; margin-bottom:4px; }
@@ -1080,13 +1104,15 @@
           <button id="syncPauseBtn" class="danger" type="button">Sync pausieren</button>
           <button id="syncResumeBtn" class="secondary" type="button">Sync fortsetzen</button>
         </div>
-        <p id="syncStatusText" class="status">Noch kein Syncstatus geladen.</p>
-        <div id="syncErrorBanner" class="warning-banner" style="display:none"></div>
-        <div id="syncWarnings" class="warning-banner" style="display:none"></div>
-        <div id="syncNotes" class="info-banner" style="display:none"></div>
-        <div id="syncStatusCard" class="sync-status-card"></div>
+        <p id="syncActionMessage" class="status" style="display:none"></p>
+        <div id="syncLiveCard" class="sync-live-card"></div>
+        <div id="syncErrorGroup" class="msg-group error" style="display:none"></div>
+        <div id="syncWarnGroup" class="msg-group warn" style="display:none"></div>
+        <div id="syncNoteGroup" class="msg-group info" style="display:none"></div>
+        <div id="syncAllClear" class="msg-group ok" style="display:none">Keine offenen Meldungen.</div>
         <div id="syncProgressCard" class="sync-status-card" style="display:none"></div>
         <div id="syncKpiGrid" class="kpi-grid"></div>
+        <div id="syncStatusCard" class="sync-status-card"></div>
         <div class="toolbar"><strong>Diagnose</strong></div>
         <div class="settings-group" style="background:#fff;margin-bottom:16px;">
           <p class="settings-hint">Die Diagnose schreibt nicht in den produktiven Sync-Bestand. Sie prüft ausgewählte Problem-Endpunkte mit kleinen Testabfragen.</p>
@@ -1115,6 +1141,24 @@
         <div class="table-scroll"><table><thead><tr><th>Endpoint</th><th>Entität</th><th>Gelesen</th><th>Neu</th><th>Geändert</th><th>Unverändert</th><th>Downloads</th><th>API-Calls</th><th>Vollständig</th><th>Warnung / Hinweis</th></tr></thead><tbody id="syncEndpointBody"></tbody></table></div>
         <div class="toolbar"><strong>Letzte Sync-Läufe</strong></div>
         <div class="table-scroll"><table><thead><tr><th>ID</th><th>Modus</th><th>Status</th><th>Start</th><th>Ende</th><th>API-Calls</th><th>Gesehen</th><th>Neu</th><th>Geändert</th><th>Warnungen</th><th>Fehler</th></tr></thead><tbody id="syncRunsBody"></tbody></table></div>
+
+        <div class="toolbar"><strong>Fehlerprotokoll</strong></div>
+        <div class="settings-group" style="background:#fff;margin-bottom:16px;">
+          <p class="settings-hint">Dauerhaft in der Sync-Datenbank, gekappt auf 30 Tage bzw. 5000 Einträge. Der Kopiertext enthält Zeitpunkt, Filter und vollständige Stacktraces.</p>
+          <div class="toolbar">
+            <label>Filter
+              <select id="syncLogFilter">
+                <option value="problems">Nur Fehler und Warnungen</option>
+                <option value="all">Alle Meldungen</option>
+              </select>
+            </label>
+            <button id="syncLogRefreshBtn" class="secondary" type="button">Protokoll laden</button>
+            <button id="syncLogCopyBtn" class="secondary" type="button">In Zwischenablage kopieren</button>
+            <span id="syncLogStatus" class="status">Noch nicht geladen.</span>
+          </div>
+          <div class="table-scroll"><table><thead><tr><th>Zeit</th><th>Stufe</th><th>Quelle</th><th>Lauf</th><th>Endpoint</th><th>Meldung</th></tr></thead><tbody id="syncLogBody"></tbody></table></div>
+          <textarea id="syncLogManualBox" readonly style="display:none;width:100%;min-height:220px;margin-top:10px;font-family:ui-monospace,Consolas,monospace;font-size:12px;"></textarea>
+        </div>
 
         <div class="toolbar"><strong>Datensicherung &amp; Umzug</strong></div>
         <div class="settings-group" style="background:#fff;margin-bottom:16px;">
@@ -1735,50 +1779,34 @@
       return d.toLocaleString('de-DE', { dateStyle: 'short', timeStyle: 'short' });
     }
 
-    function syncStateClass(state, running) {
-      const text = String(state || '').toLowerCase();
-      if (running || text.includes('läuft')) return 'running';
-      if (text.includes('aktuell')) return 'ok';
-      if (text.includes('fehler')) return 'error';
+    // Faerbt nach dem stabilen Schluessel vom Server, nicht nach dem deutschen Anzeigetext:
+    // sonst haengt die Badge-Farbe an der Formulierung und bricht bei jeder Textaenderung.
+    function syncStateClass(stateKey, busy) {
+      const key = String(stateKey || '');
+      if (busy || key.indexOf('running') === 0) return 'running';
+      if (key === 'ok') return 'ok';
+      if (key === 'error') return 'error';
+      if (key === 'paused') return 'paused';
       return 'warning';
     }
 
     function renderSyncStatus(data) {
-      const status = document.getElementById('syncStatusText');
       const card = document.getElementById('syncStatusCard');
       const kpis = document.getElementById('syncKpiGrid');
-      const warnings = document.getElementById('syncWarnings');
-      const notes = document.getElementById('syncNotes');
       const inventoryGrid = document.getElementById('syncInventoryGrid');
       const inventoryBody = document.getElementById('syncInventoryBody');
       const endpointBody = document.getElementById('syncEndpointBody');
       const runsBody = document.getElementById('syncRunsBody');
-      if (!status || !card || !kpis || !inventoryBody || !endpointBody || !runsBody) return;
+      if (!card || !kpis || !inventoryBody || !endpointBody || !runsBody) return;
 
       const inventory = Array.isArray(data.inventory) ? data.inventory : [];
       const endpoints = Array.isArray(data.endpointRows) ? data.endpointRows : [];
       const recentRuns = Array.isArray(data.recentRuns) ? data.recentRuns : [];
-      const warningRows = Array.isArray(data.warnings) ? data.warnings : [];
-      const currentRun = data.currentRun || {};
       const state = data.state || (data.running ? 'Läuft' : 'Unbekannt');
-      const cls = syncStateClass(state, data.running);
+      const cls = syncStateClass(data.stateKey, data.busy);
 
-      const lastRun = data.lastRun || {};
-      const lastRunFailed = lastRun.status === 'error';
-      const lastRunError = String(lastRun.error || '').trim();
-      status.textContent = `Syncstatus: ${state}${lastRunFailed && lastRunError ? ` – ${lastRunError}` : ''}. `
-        + `Letzter erfolgreicher Sync: ${formatSyncTimestamp(data.lastSuccessAt)}.`;
-      renderSyncErrorBanner(lastRun, lastRunFailed, data.running);
-      if (warnings) {
-        warnings.style.display = warningRows.length ? '' : 'none';
-        warnings.innerHTML = warningRows.map(w => escapeHtml(String(w))).join('<br>');
-      }
-      if (notes) {
-        // Bewusste Drosselungen: sichtbar, aber blau statt rot.
-        const noteRows = Array.isArray(data.notes) ? data.notes : [];
-        notes.style.display = noteRows.length ? '' : 'none';
-        notes.innerHTML = noteRows.map(n => escapeHtml(String(n))).join('<br>');
-      }
+      renderSyncLive(data);
+      renderSyncMessages(data);
       card.innerHTML = `
         <div class="sync-status-head">
           <div>
@@ -1788,7 +1816,6 @@
           <span class="sync-state-badge ${cls}">${escapeHtml(state)}</span>
         </div>
         <div class="settings-hint">Automatik: stündlich ${data.hourlyEnabled ? 'aktiv' : 'aus'}, Deep-Check ${data.deepEnabled ? 'aktiv' : 'aus'}, Asset-Downloads ${data.assetDownloadEnabled ? 'aktiv' : 'aus'}, API-Budget ${escapeHtml(String(data.callLimitPerHour || '-'))} Calls/Stunde.</div>
-        ${data.running && currentRun ? `<div class="settings-hint">Aktueller Lauf: ${escapeHtml(currentRun.mode || '')}, Endpoint ${escapeHtml(currentRun.currentEndpoint || '-')}, Seite ${escapeHtml(String(currentRun.currentPage || 0))}, gesehen ${escapeHtml(String(currentRun.seen || 0))}, Endpoint gesehen ${escapeHtml(String(currentRun.currentEndpointSeen || 0))}, API-Calls ${escapeHtml(String(currentRun.apiCalls || 0))}, Endpoint-Calls ${escapeHtml(String(currentRun.currentEndpointApiCalls || 0))}, Warnungen ${escapeHtml(String(currentRun.warningCount || 0))}${currentRun.lastWarning ? `<br>Letzte Warnung: ${escapeHtml(currentRun.lastWarning)}` : ''}${currentRun.currentApiPath ? `<br>Pfad: ${escapeHtml(currentRun.currentApiPath)}` : ''}</div>` : ''}
       `;
       kpis.innerHTML = [
         ['Datensätze lokal', data.entityCount || 0],
@@ -1856,23 +1883,143 @@
     }
 
     /** Zeigt den Fehler des letzten Laufs prominent an – bisher stand er nur klein in der Läufe-Tabelle. */
-    function renderSyncErrorBanner(lastRun, lastRunFailed, running) {
-      const banner = document.getElementById('syncErrorBanner');
-      if (!banner) return;
-      if (!lastRunFailed || running) {
-        banner.style.display = 'none';
-        banner.innerHTML = '';
+    let syncLiveStartedAt = null;
+    let syncLiveTicker = null;
+
+    function syncModeLabel(mode) {
+      const value = String(mode || '').trim();
+      if (value === 'delta') return 'Delta-Sync';
+      if (value === 'deep') return 'Deep-Check';
+      if (value === 'initial') return 'Initialsync';
+      if (value === 'diagnostics') return 'Diagnose';
+      return value || 'Sync';
+    }
+
+    // Nicht "formatDuration" nennen: diese Datei hat weiter unten bereits eine gleichnamige
+    // Funktion fuer die ETA, die in Sekunden rechnet. Zwei Funktionsdeklarationen im selben
+    // Gueltigkeitsbereich ueberschreiben sich stillschweigend.
+    function formatElapsed(ms) {
+      if (!Number.isFinite(ms) || ms < 0) return '–';
+      const total = Math.floor(ms / 1000);
+      const pad = v => String(v).padStart(2, '0');
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      return h > 0 ? `${h}:${pad(m)}:${pad(total % 60)}` : `${pad(m)}:${pad(total % 60)}`;
+    }
+
+    function updateSyncLiveTimer() {
+      const el = document.getElementById('syncLiveTimer');
+      if (!el || !syncLiveStartedAt) return;
+      el.textContent = formatElapsed(Date.now() - syncLiveStartedAt);
+    }
+
+    /**
+     * Beantwortet die erste Frage beim Oeffnen: laeuft gerade etwas. Die Laufzeit tickt lokal im
+     * Sekundentakt weiter, ohne dafuer eine Anfrage zu stellen - eine sichtbar laufende Uhr zeigt
+     * zuverlaessiger als ein Fortschrittsbalken, dass der Vorgang nicht haengt.
+     */
+    function renderSyncLive(data) {
+      const card = document.getElementById('syncLiveCard');
+      if (!card) return;
+      const busy = !!(data.busy || data.running || data.diagnosticsRunning);
+      const state = data.state || 'Unbekannt';
+      const cls = syncStateClass(data.stateKey, busy);
+      const run = data.currentRun || {};
+      const lastRun = data.lastRun || {};
+
+      if (busy) {
+        const mode = (data.diagnosticsRunning && !data.running) ? 'diagnostics' : (run.mode || lastRun.mode);
+        const started = Date.parse(run.startedAt || '');
+        syncLiveStartedAt = Number.isFinite(started) ? started : null;
+        const parts = [];
+        if (Number(run.endpointCount) > 0) parts.push(`Schritt ${Number(run.endpointIndex) || 0} von ${Number(run.endpointCount)}`);
+        if (run.currentEndpoint) parts.push(String(run.currentEndpoint));
+        if (run.seen != null) parts.push(`${Number(run.seen).toLocaleString('de-DE')} Datensätze`);
+        if (run.startedAt) parts.push(`gestartet ${formatSyncTimestamp(run.startedAt)}`);
+        card.innerHTML = `
+          <span class="sync-live-dot running"></span>
+          <div class="sync-live-main">
+            <div class="sync-live-title">Läuft: ${escapeHtml(syncModeLabel(mode))}</div>
+            <div class="sync-live-sub">${escapeHtml(parts.join(' · ') || 'wird vorbereitet …')}</div>
+          </div>
+          <div style="text-align:right;">
+            <div class="sync-live-timer" id="syncLiveTimer">–</div>
+            <div class="sync-live-sub">Laufzeit</div>
+          </div>`;
+        updateSyncLiveTimer();
+        if (!syncLiveTicker) syncLiveTicker = window.setInterval(updateSyncLiveTimer, 1000);
         return;
       }
+
+      if (syncLiveTicker) { window.clearInterval(syncLiveTicker); syncLiveTicker = null; }
+      syncLiveStartedAt = null;
+      const outcome = lastRun.status === 'error' ? 'fehlgeschlagen'
+        : (lastRun.status === 'warning' ? 'mit Warnungen beendet' : (lastRun.status ? 'erfolgreich beendet' : ''));
+      const sub = [];
+      if (lastRun.status) {
+        sub.push(`Letzter Lauf: ${syncModeLabel(lastRun.mode)} ${outcome}, ${formatSyncTimestamp(lastRun.finishedAt || lastRun.startedAt)}`);
+      }
+      sub.push(`Letzter erfolgreicher Sync: ${formatSyncTimestamp(data.lastSuccessAt)}`);
+      card.innerHTML = `
+        <span class="sync-live-dot ${cls}"></span>
+        <div class="sync-live-main">
+          <div class="sync-live-title">Kein Sync aktiv</div>
+          <div class="sync-live-sub">${sub.map(escapeHtml).join('<br>')}</div>
+        </div>
+        <span class="sync-state-badge ${cls}">${escapeHtml(state)}</span>`;
+    }
+
+    /**
+     * Drei getrennte Gruppen mit Zaehler. Vorher standen Warnungen und Hinweise gemeinsam in einem
+     * roten Kasten, weil die Einstufung serverseitig an der Endpoint-Zeile hing statt an der
+     * einzelnen Meldung - jede bewusste Drosselung sah damit aus wie eine Stoerung.
+     */
+    function renderSyncMessages(data) {
+      const errorRows = Array.isArray(data.errors) ? data.errors.slice() : [];
+      const warnRows = Array.isArray(data.warnings) ? data.warnings : [];
+      const noteRows = Array.isArray(data.notes) ? data.notes : [];
+      const lastRun = data.lastRun || {};
+      const lastRunFailed = lastRun.status === 'error' && !data.running;
+      const lastRunError = String(lastRun.error || '').trim();
       const mode = String(lastRun.mode || '').trim();
-      const modeLabel = mode === 'delta' ? 'Delta-Sync' : (mode === 'deep' ? 'Deep-Check' : 'Initialsync');
-      banner.style.display = '';
-      banner.innerHTML = `<div><strong>Letzter Sync fehlgeschlagen</strong> — ${escapeHtml(modeLabel)}`
-        + `${lastRun.id ? ` (Lauf #${escapeHtml(String(lastRun.id))})` : ''}`
-        + `, ${escapeHtml(formatSyncTimestamp(lastRun.finishedAt || lastRun.startedAt))}</div>`
-        + `<div style="margin-top:4px;font-weight:500;">${escapeHtml(String(lastRun.error || 'Kein Fehlertext hinterlegt.'))}</div>`
-        + `<div class="toolbar" style="margin-top:10px;"><button id="syncRetryBtn" type="button" class="secondary">Erneut versuchen</button></div>`;
-      document.getElementById('syncRetryBtn')?.addEventListener('click', () => startGoAffProSync(mode || 'delta'));
+
+      let head = '';
+      if (lastRunFailed) {
+        head = `<div style="font-weight:600;margin-bottom:6px;">${escapeHtml('Letzter Sync fehlgeschlagen — '
+          + syncModeLabel(mode) + (lastRun.id ? ` (Lauf #${lastRun.id})` : '')
+          + ', ' + formatSyncTimestamp(lastRun.finishedAt || lastRun.startedAt))}</div>`;
+        if (lastRunError && errorRows.indexOf(lastRunError) < 0) errorRows.unshift(lastRunError);
+      }
+
+      const group = document.getElementById('syncErrorGroup');
+      if (group) {
+        const show = errorRows.length > 0 || lastRunFailed;
+        group.style.display = show ? '' : 'none';
+        group.innerHTML = show
+          ? `<div class="msg-head">Fehler (${errorRows.length})</div>${head}`
+            + (errorRows.length ? `<ul>${errorRows.map(r => `<li>${escapeHtml(String(r))}</li>`).join('')}</ul>` : '')
+            + (lastRunFailed ? `<div class="toolbar" style="margin-top:10px;"><button id="syncRetryBtn" type="button" class="secondary">Erneut versuchen</button></div>` : '')
+          : '';
+        if (lastRunFailed) {
+          document.getElementById('syncRetryBtn')?.addEventListener('click', () => startGoAffProSync(mode || 'delta'));
+        }
+      }
+      fillSyncMessageGroup('syncWarnGroup', 'Warnungen', warnRows);
+      fillSyncMessageGroup('syncNoteGroup', 'Hinweise', noteRows);
+      const allClear = document.getElementById('syncAllClear');
+      if (allClear) {
+        allClear.style.display = (!errorRows.length && !lastRunFailed && !warnRows.length && !noteRows.length) ? '' : 'none';
+      }
+    }
+
+    function fillSyncMessageGroup(id, label, rows) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.style.display = rows.length ? '' : 'none';
+      el.innerHTML = rows.length
+        ? `<div class="msg-head">${escapeHtml(label)} (${rows.length})</div>`
+          + `<ul>${rows.map(r => `<li>${escapeHtml(String(r))}</li>`).join('')}</ul>`
+        : '';
     }
 
     function formatDuration(seconds) {
@@ -1989,7 +2136,11 @@
       try {
         const data = await apiGet('/api/sync/status');
         renderSyncProgress(data);
-        if (!data.running) {
+        renderSyncLive(data);
+        renderSyncMessages(data);
+        // busy statt running: eine laufende Diagnose blockiert den Sync und gehoert genauso
+        // in die schnelle Aktualisierung.
+        if (!data.busy) {
           stopSyncFastPoll();
           await loadSyncStatus();
         }
@@ -2000,7 +2151,7 @@
 
     function startSyncFastPoll() {
       if (!syncFastPollTimer) {
-        syncFastPollTimer = window.setInterval(pollSyncProgress, 10000);
+        syncFastPollTimer = window.setInterval(pollSyncProgress, 3000);
       }
     }
 
@@ -2176,7 +2327,7 @@
       if (text.includes('ok')) return 'risk-ok';
       if (text.includes('ignorieren') || text.includes('deprecated')) return 'risk-hint';
       if (text.includes('pagination') || text.includes('fields')) return 'risk-hint';
-      return 'risk-alert';
+      return 'risk-review';
     }
 
     function renderSyncDiagnostics(data) {
@@ -2278,8 +2429,6 @@
     }
 
     async function loadSyncStatus() {
-      const status = document.getElementById('syncStatusText');
-      if (status) status.textContent = 'Lade GoAffPro-Syncstatus...';
       try {
         const [statusData, inventoryData, runsData] = await Promise.all([
           apiGet('/api/sync/status'),
@@ -2289,47 +2438,167 @@
         statusData.endpointRows = Array.isArray(inventoryData.endpointRows) ? inventoryData.endpointRows : [];
         statusData.recentRuns = Array.isArray(runsData.rows) ? runsData.rows : (statusData.recentRuns || []);
         renderSyncStatus(statusData);
-        if (statusData.running) {
+        if (statusData.busy) {
           startSyncFastPoll();
         } else {
           stopSyncFastPoll();
         }
       } catch (error) {
-        if (status) status.textContent = `Fehler beim Syncstatus: ${error.message}`;
+        const card = document.getElementById('syncLiveCard');
+        if (card) {
+          card.innerHTML = `<span class="sync-live-dot error"></span>
+            <div class="sync-live-main">
+              <div class="sync-live-title">Syncstatus nicht erreichbar</div>
+              <div class="sync-live-sub">${escapeHtml(String(error.message || error))}</div>
+            </div>`;
+        }
       }
     }
 
-    async function startGoAffProSync(mode) {
-      const status = document.getElementById('syncStatusText');
+    // Absichtlich nur auf Anforderung: das Protokoll traegt Stacktraces und waere im 3-Sekunden-
+    // Takt schnell mehrere Megabyte. Der zuletzt geladene Text wird fuer das Kopieren gemerkt.
+    let syncLogText = '';
+
+    async function loadSyncLog() {
+      const body = document.getElementById('syncLogBody');
+      const info = document.getElementById('syncLogStatus');
+      const filter = document.getElementById('syncLogFilter');
+      if (!body) return;
+      const severity = filter ? filter.value : 'problems';
+      if (info) info.textContent = 'Lade Protokoll...';
       try {
-        if (status) status.textContent = `Starte ${mode}-Sync...`;
+        const data = await apiGet(`/api/sync/log?limit=500&severity=${encodeURIComponent(severity)}`);
+        const rows = Array.isArray(data.rows) ? data.rows : [];
+        syncLogText = String(data.text || '');
+        body.innerHTML = rows.length
+          ? rows.map(r => `<tr>
+              <td>${escapeHtml(String(r.tsLocal || r.ts || ''))}</td>
+              <td><span class="risk-badge ${syncLogSeverityClass(r.severity)}">${escapeHtml(syncLogSeverityLabel(r.severity))}</span></td>
+              <td>${escapeHtml(String(r.source || ''))}</td>
+              <td>${Number(r.runId) > 0 ? escapeHtml(String(r.runId)) : '–'}</td>
+              <td>${escapeHtml(String(r.endpointKey || ''))}</td>
+              <td>${escapeHtml(String(r.message || ''))}${r.detail ? `<div class="settings-hint" style="white-space:pre-wrap;">${escapeHtml(String(r.detail))}</div>` : ''}</td>
+            </tr>`).join('')
+          : '<tr><td colspan="6">Keine Einträge für diesen Filter.</td></tr>';
+        if (info) {
+          info.textContent = `${rows.length} von ${data.totalRows || 0} Einträgen geladen.`;
+        }
+      } catch (error) {
+        syncLogText = '';
+        body.innerHTML = `<tr><td colspan="6">Protokoll nicht lesbar: ${escapeHtml(String(error.message || error))}</td></tr>`;
+        if (info) info.textContent = 'Protokoll konnte nicht geladen werden.';
+      }
+    }
+
+    function syncLogSeverityLabel(value) {
+      if (value === 'error') return 'Fehler';
+      if (value === 'warning') return 'Warnung';
+      return 'Info';
+    }
+
+    function syncLogSeverityClass(value) {
+      if (value === 'error') return 'risk-review';
+      if (value === 'warning') return 'risk-hint';
+      return 'risk-note';
+    }
+
+    /**
+     * navigator.clipboard gibt es nur im sicheren Kontext (https oder localhost). Auf einem
+     * Container-Port ueber http ist die Schnittstelle nicht fehlerhaft, sondern schlicht nicht
+     * vorhanden - deshalb drei Stufen und in der letzten eine ehrliche Ansage statt einer
+     * Erfolgsmeldung, die nicht stimmt.
+     */
+    async function copyTextToClipboard(text) {
+      if (window.isSecureContext && navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+          await navigator.clipboard.writeText(text);
+          return 'clipboard';
+        } catch (error) {
+          // Stufe 2
+        }
+      }
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        // Kein display:none - unsichtbare Felder sind nicht selektierbar, execCommand liefe leer.
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        const ok = document.execCommand('copy');
+        document.body.removeChild(ta);
+        if (ok) return 'execCommand';
+      } catch (error) {
+        // Stufe 3
+      }
+      return 'manual';
+    }
+
+    async function copySyncLog() {
+      const info = document.getElementById('syncLogStatus');
+      const box = document.getElementById('syncLogManualBox');
+      if (!syncLogText) await loadSyncLog();
+      if (!syncLogText) {
+        if (info) info.textContent = 'Kein Protokolltext zum Kopieren geladen.';
+        return;
+      }
+      const lines = syncLogText.split('\n').length;
+      const result = await copyTextToClipboard(syncLogText);
+      if (result === 'manual') {
+        if (box) {
+          box.style.display = '';
+          box.value = syncLogText;
+          box.focus();
+          box.select();
+        }
+        if (info) {
+          info.textContent = 'Automatisches Kopieren hat nicht geklappt – die Zwischenablage ist nur über https oder localhost erreichbar. '
+            + 'Der Text steht unten, bitte mit Strg+A und Strg+C kopieren.';
+        }
+        return;
+      }
+      if (box) box.style.display = 'none';
+      if (info) info.textContent = `In die Zwischenablage kopiert (${lines.toLocaleString('de-DE')} Zeilen).`;
+    }
+
+    // Server-Meldungen zu Aktionen sichtbar halten: auf einen abgelehnten Start antwortet der
+    // Server mit HTTP 200 und nur einem Text - ohne Anzeige sieht es aus, als passiere nichts.
+    function setSyncActionMessage(text) {
+      const el = document.getElementById('syncActionMessage');
+      if (!el) return;
+      const value = String(text || '').trim();
+      el.style.display = value ? '' : 'none';
+      el.textContent = value;
+    }
+
+    async function startGoAffProSync(mode) {
+      try {
+        setSyncActionMessage(`Starte ${syncModeLabel(mode)}...`);
         const data = await apiPost('/api/sync/run', { mode });
         renderSyncStatus(data);
-        // Server-Meldung sichtbar machen: bei pausiertem Sync antwortet der Server mit HTTP 200
-        // und einem Hinweis - ohne Anzeige sieht es so aus, als passiere gar nichts.
-        const gestartet = data.running === true;
-        if (status && data.message) status.textContent = data.message;
-        if (gestartet) {
+        setSyncActionMessage(data.message);
+        if (data.running === true) {
           startSyncFastPoll();
           window.setTimeout(loadSyncStatus, 2000);
         }
       } catch (error) {
-        if (status) status.textContent = `Sync konnte nicht gestartet werden: ${error.message}`;
+        setSyncActionMessage(`Sync konnte nicht gestartet werden: ${error.message}`);
       }
     }
 
     async function pauseGoAffProSync() {
       const data = await apiPost('/api/sync/pause', {});
       renderSyncStatus(data);
-      const status = document.getElementById('syncStatusText');
-      if (status && data.message) status.textContent = data.message;
+      setSyncActionMessage(data.message);
     }
 
     async function resumeGoAffProSync() {
       const data = await apiPost('/api/sync/resume', {});
       renderSyncStatus(data);
-      const status = document.getElementById('syncStatusText');
-      if (status && data.message) status.textContent = data.message;
+      setSyncActionMessage(data.message);
     }
 
     function renderValidationTable() {
@@ -4342,6 +4611,9 @@
         if (syncResumeBtn) syncResumeBtn.addEventListener('click', resumeGoAffProSync);
         if (syncDiagnosticsRunBtn) syncDiagnosticsRunBtn.addEventListener('click', startSyncDiagnostics);
         if (syncDiagnosticsRefreshBtn) syncDiagnosticsRefreshBtn.addEventListener('click', loadSyncDiagnostics);
+        document.getElementById('syncLogRefreshBtn')?.addEventListener('click', loadSyncLog);
+        document.getElementById('syncLogCopyBtn')?.addEventListener('click', copySyncLog);
+        document.getElementById('syncLogFilter')?.addEventListener('change', loadSyncLog);
         document.querySelectorAll('.sync-diagnostic-endpoint').forEach(input => input.addEventListener('change', loadSyncDiagnostics));
         if (loadValidationBtn) loadValidationBtn.addEventListener('click', loadValidationData);
         if (loadValidationTreeBtn) loadValidationTreeBtn.addEventListener('click', loadValidationTreeData);
@@ -4374,6 +4646,7 @@
         await loadSyncStatus();
         await loadBackupStatus();
         await loadSyncDiagnostics();
+        await loadSyncLog();
         window.setInterval(loadSyncStatus, 30000);
         updateEmptyTablesVisibility(document);
       } catch (error) {
