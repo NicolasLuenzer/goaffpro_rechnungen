@@ -178,18 +178,35 @@ Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
 - Enthält einen Button **„Stammdaten laden / neu laden“**.
 - Jeder Klick leert die Tabelle und lädt die Daten neu vom Backend.
 - Die Daten basieren auf GoAffPro-Endpoint `affiliates` mit erweitertem Feldsatz.
-- Angezeigt werden nur praxisrelevante Felder, u. a.:
+- Angezeigt werden nur praxisrelevante Felder:
   - ID
   - Name
   - E-Mail
   - Telefon
   - Adresse
   - Land
-  - Steuernummer
-  - Zahlmethode
+  - Geburtsdatum
+  - USt-Nr.
   - IBAN
+  - Kontoinhaber
   - IBAN korrekt
+  - Vertrag
   - Status
+  - Aktion (Erinnerung senden, fehlende Felder, Versandhistorie)
+
+### Spalte „Vertrag"
+
+- ✅ bedeutet: an der Beraterin hängt ein Dokument, dessen **Titel oder Dateiname** das Wort
+  „Vertrag" enthält (Groß-/Kleinschreibung egal). Der Titel des gefundenen Dokuments erscheint
+  beim Darüberfahren.
+- ❌ bedeutet: kein solches Dokument gefunden.
+- **?** bedeutet: die Dokumente konnten nicht abgerufen werden. Das ist ausdrücklich **nicht**
+  dasselbe wie „kein Vertrag" — in diesem Fall wird auch keine Erinnerung wegen des Vertrags
+  ausgelöst.
+- Der unterschriebene SERVICEPARTNER-Vertrag wird von GoAffPro als `contract_<id>.pdf` mit dem
+  Titel „VEMMiNA Beratervertrag" abgelegt. Das Wort „Vertrag" steckt also nur im Titel, nicht im
+  Dateinamen — deshalb werden beide Felder geprüft.
+- Ein fehlender Vertrag zählt als fehlendes Feld und erscheint damit in der Erinnerungsmail.
 
 
 ## 11) Dynamischer Hilfe-Bereich
@@ -200,22 +217,21 @@ Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
 
 ## 12) Validierungsfilter
 
-Im Reiter **Validierung** stehen schnelle Filter zur Verfügung (für alle relevanten Spalten jeweils mit/ohne):
+Im Reiter **Validierung** gibt es zwei Wege, die Tabelle einzugrenzen:
 
-- Name (mit/ohne)
-- E-Mail (mit/ohne)
-- Telefon (mit/ohne)
-- Adresse (mit/ohne)
-- Land (mit/ohne)
-- Geburtsdatum (mit/ohne)
-- Steuernummer (mit/ohne)
-- Zahlmethode (mit/ohne)
-- IBAN (mit/ohne)
-- IBAN korrekt / ungültig
-- Status (mit/ohne)
-- zusätzlicher Status-Filter (Dropdown)
+**Schnellfilter „nur Approved"** — der Schalter neben dem Lade-Button blendet alle Beraterinnen
+aus, deren Status nicht `approved` ist. Die Statuszeile zeigt dann „X von Y Datensätzen
+angezeigt". Greift der Filter auf keine Zeile, erscheint statt einer leeren Tabelle der Hinweis
+„Keine Datensätze mit diesem Filter."
 
-Die Filter sind kombinierbar und wirken direkt auf die geladene Tabelle.
+**Spaltenfilter und Sortierung (wie in Excel)** — gilt für jede Spalte und jede Tabelle:
+
+- **Linksklick** auf einen Spaltenkopf sortiert auf- bzw. absteigend.
+- **Rechtsklick** auf einen Spaltenkopf öffnet ein Filtermenü mit allen vorkommenden Werten und
+  ihrer Häufigkeit, inklusive „Alle" / „Keine" / „Filter löschen".
+- Spaltenbreiten lassen sich am rechten Rand des Spaltenkopfs ziehen.
+
+Beide Wege sind kombinierbar und wirken direkt auf die geladene Tabelle.
 
 ## 13) Speichern-Button (Änderungsstatus)
 

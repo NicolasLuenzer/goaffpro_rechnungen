@@ -1225,15 +1225,16 @@
         <div id="validation-masterdata-section" class="validation-section active">
           <div class="toolbar">
             <button id="loadValidationBtn" class="secondary" type="button">Stammdaten laden / neu laden</button>
+            <label><input type="checkbox" id="filterOnlyApproved" /> nur Approved</label>
           </div>
           <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
           <div class="validation-table-wrap">
           <table id="validationMasterdataTable">
             <colgroup>
-              <col style="width:68px" /><col style="width:110px" /><col style="width:150px" /><col style="width:100px" /><col style="width:155px" /><col style="width:42px" /><col style="width:88px" /><col style="width:80px" /><col style="width:155px" /><col style="width:95px" /><col style="width:75px" /><col style="width:70px" /><col style="width:162px" />
+              <col style="width:68px" /><col style="width:110px" /><col style="width:150px" /><col style="width:100px" /><col style="width:155px" /><col style="width:42px" /><col style="width:88px" /><col style="width:80px" /><col style="width:155px" /><col style="width:95px" /><col style="width:75px" /><col style="width:70px" /><col style="width:70px" /><col style="width:162px" />
             </colgroup>
             <thead>
-              <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th title="Umsatzsteuernummer">USt-Nr.</th><th>IBAN</th><th>Kontoinhaber</th><th>IBAN korrekt</th><th>Status</th><th>Aktion</th></tr>
+              <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th title="Umsatzsteuernummer">USt-Nr.</th><th>IBAN</th><th>Kontoinhaber</th><th>IBAN korrekt</th><th title="Es hängt ein Dokument an der Beraterin, dessen Titel oder Dateiname das Wort &quot;Vertrag&quot; enthält">Vertrag</th><th>Status</th><th>Aktion</th></tr>
             </thead>
             <tbody id="validationBody"></tbody>
           </table>
@@ -2601,20 +2602,37 @@
       setSyncActionMessage(data.message);
     }
 
+    // Der Status kommt roh und kleingeschrieben aus der API ("approved"), deshalb unempfindlich
+    // gegen Gross-/Kleinschreibung vergleichen - so wie isApprovedAffiliate() serverseitig auch.
+    function isApprovedValidationRow(row) {
+      return String((row && row.status) || '').trim().toLowerCase() === 'approved';
+    }
+
     function renderValidationTable() {
       const status = document.getElementById('validationStatus');
       const body = document.getElementById('validationBody');
       if (!status || !body) return;
-      body.innerHTML = validationRowsCache.map(r => {
+      const onlyApproved = !!document.getElementById('filterOnlyApproved')?.checked;
+      // Auf dem Datenarray filtern, nicht per row.style.display: das setzt applyTableFilterAndSort()
+      // fuer den Excel-Spaltenfilter und beide wuerden sich gegenseitig ueberschreiben.
+      const rows = onlyApproved ? validationRowsCache.filter(isApprovedValidationRow) : validationRowsCache;
+      body.innerHTML = rows.map(r => {
         const missing = collectMissingValidationFields(r);
         const logs = reminderLogByAdvisor.get(String(r.id || '')) || [];
         const last = logs[0] || {};
         const historyHtml = !logs.length
           ? '<span class="mail-log-badge none">nicht versendet</span>'
           : `<span class="mail-log-badge sent">${logs.length} gesendet</span> <button type="button" class="secondary reminder-log-btn" data-advisor-id="${escapeHtml(String(r.id || ''))}">anzeigen</button><div class="settings-hint">letzte: ${escapeHtml(last.toEmail || '')} (${escapeHtml(last.sentAt || '')})</div>`;
-        return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderValidationCell(r.taxNumber)}${renderValidationCell(r.iban)}${renderValidationCell(r.ibanOwner)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderValidationCell(r.status)}<td><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="settings-hint">${escapeHtml(missing.join(', ') || 'keine fehlenden Felder')}</div><div class="settings-hint">${historyHtml}</div></td></tr>`;
+        return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderValidationCell(r.taxNumber)}${renderValidationCell(r.iban)}${renderValidationCell(r.ibanOwner)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderContractCell(r)}${renderValidationCell(r.status)}<td><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="settings-hint">${escapeHtml(missing.join(', ') || 'keine fehlenden Felder')}</div><div class="settings-hint">${historyHtml}</div></td></tr>`;
       }).join('');
-      status.textContent = `${validationRowsCache.length} Datensätze geladen.`;
+      if (!rows.length) {
+        // updateEmptyTablesVisibility blendet eine leere Tabelle samt Kopfzeile aus - dann waere
+        // nicht mehr zu sehen, dass nur der Filter greift.
+        body.innerHTML = `<tr><td colspan="14">Keine Datensätze mit diesem Filter.</td></tr>`;
+      }
+      status.textContent = rows.length === validationRowsCache.length
+        ? `${validationRowsCache.length} Datensätze geladen.`
+        : `${rows.length} von ${validationRowsCache.length} Datensätzen angezeigt.`;
       const table = body.closest('table');
       ensureResizableColumns(table || document);
       applyTableFilterAndSort(table);
@@ -3786,7 +3804,11 @@
         ['IBAN', row.iban],
         ['Kontoinhaber', row.ibanOwner]
       ];
-      return checks.filter(([,v]) => String(v || '').trim() === '').map(([label]) => label);
+      const missing = checks.filter(([,v]) => String(v || '').trim() === '').map(([label]) => label);
+      // Nur bei gesichertem "nein" mahnen. Bei "unbekannt" konnten wir die Dokumente nicht
+      // abrufen - dann darf keine Erinnerung wegen eines Vertrags rausgehen, den es geben koennte.
+      if (String(row.contractStatus || '').trim() === 'nein') missing.push('Unterschriebener Beratervertrag');
+      return missing;
     }
 
     async function sendValidationReminder(row) {
@@ -4179,6 +4201,21 @@
       const text = escapeHtml(value || '');
       const emptyClass = String(value || '').trim() === '' ? ' class="validation-empty-cell"' : '';
       return `<td${emptyClass}>${text}</td>`;
+    }
+
+    /**
+     * Drei Zustaende statt zwei: konnte der Dateiabruf nicht durchgefuehrt werden, waere ein ❌
+     * eine Falschaussage. "?" sagt ehrlich, dass wir es nicht wissen.
+     */
+    function renderContractCell(row) {
+      const state = String((row && row.contractStatus) || '').trim();
+      if (state === 'unbekannt') {
+        return `<td title="Die Dokumente konnten nicht abgerufen werden">?</td>`;
+      }
+      const doc = String((row && row.contractDocument) || '').trim();
+      return state === 'ja'
+        ? `<td title="${escapeHtml(doc)}">✅</td>`
+        : `<td title="Kein Dokument mit &quot;Vertrag&quot; im Titel oder Dateinamen">❌</td>`;
     }
 
     function drawBarChart(canvasId, labels, values, barColor) {
@@ -4611,6 +4648,7 @@
         if (syncResumeBtn) syncResumeBtn.addEventListener('click', resumeGoAffProSync);
         if (syncDiagnosticsRunBtn) syncDiagnosticsRunBtn.addEventListener('click', startSyncDiagnostics);
         if (syncDiagnosticsRefreshBtn) syncDiagnosticsRefreshBtn.addEventListener('click', loadSyncDiagnostics);
+        document.getElementById('filterOnlyApproved')?.addEventListener('change', renderValidationTable);
         document.getElementById('syncLogRefreshBtn')?.addEventListener('click', loadSyncLog);
         document.getElementById('syncLogCopyBtn')?.addEventListener('click', copySyncLog);
         document.getElementById('syncLogFilter')?.addEventListener('change', loadSyncLog);

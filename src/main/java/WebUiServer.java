@@ -5354,11 +5354,84 @@ public class WebUiServer {
                 .replace("'", "&apos;");
     }
 
+    private static final int CONTRACT_FILE_PAGE_SIZE = 500;
+    private static final int CONTRACT_FILE_MAX_PAGES = 20;
+
+    /** Ein Dokument gilt als Vertrag, wenn Titel ODER Dateiname das Wort enthaelt. */
+    static boolean mentionsContract(String value) {
+        return Objects.toString(value, "").toLowerCase(java.util.Locale.ROOT).contains("vertrag");
+    }
+
+    /**
+     * Dreiwertig mit Absicht. Konnten die Dokumente nicht abgerufen werden, ist "nein" eine
+     * Falschaussage - und wuerde ueber die fehlenden Felder sogar eine Erinnerungsmail ausloesen.
+     */
+    static String contractStatusFor(boolean contractsKnown, String contractDocument) {
+        if (!contractsKnown) return "unbekannt";
+        return Objects.toString(contractDocument, "").isBlank() ? "nein" : "ja";
+    }
+
+    /**
+     * Ordnet Beraterinnen ihr Vertragsdokument zu: Affiliate-ID -> Titel der gefundenen Datei.
+     *
+     * Bewusst OHNE fields-Parameter: mit fields= antwortet /v1/admin/files mit einem reduzierten,
+     * anders benannten Objekt ohne affiliate_id - also genau ohne das Feld, um das es hier geht.
+     * (Aus demselben Grund taugt der Sync-Bestand dafuer nicht, siehe FILE_FIELDS in
+     * GoAffProSyncService.)
+     *
+     * Geprueft wird Titel UND Dateiname: der unterschriebene Vertrag liegt als
+     * "contract_&lt;contract_id&gt;.pdf" ab und traegt "Vertrag" ausschliesslich im Titel
+     * ("VEMMiNA Beratervertrag"). Eine Suche nur im Dateinamen fände ihn nicht.
+     */
+    static Map<String, String> collectContractDocuments(JsonNode files) {
+        Map<String, String> byAffiliate = new LinkedHashMap<>();
+        if (files == null || !files.isArray()) return byAffiliate;
+        for (JsonNode file : files) {
+            String title = asText(file, "file_title").trim();
+            String filename = asText(file, "filename").trim();
+            if (!mentionsContract(title) && !mentionsContract(filename)) continue;
+            // affiliate_id kommt als Zahl, die Tabellen-ID als String. Ohne diese Normalisierung
+            // ueber asText() greift die Zuordnung spaeter nie.
+            String affiliateId = asText(file, "affiliate_id").trim();
+            if (affiliateId.isBlank()) continue;
+            byAffiliate.putIfAbsent(affiliateId, title.isBlank() ? filename : title);
+        }
+        return byAffiliate;
+    }
+
+    private static Map<String, String> fetchAffiliateContractDocuments(String apiKey) throws Exception {
+        Map<String, String> byAffiliate = new LinkedHashMap<>();
+        int offset = 0;
+        for (int page = 0; page < CONTRACT_FILE_MAX_PAGES; page++) {
+            // page= wird von diesem Endpunkt ignoriert, offset= wirkt.
+            JsonNode root = requestJson("https://api.goaffpro.com/v1/admin/files?limit="
+                    + CONTRACT_FILE_PAGE_SIZE + "&offset=" + offset, apiKey);
+            JsonNode files = root.get("files");
+            int received = files != null && files.isArray() ? files.size() : 0;
+            if (received == 0) break;
+            collectContractDocuments(files).forEach(byAffiliate::putIfAbsent);
+            offset += received;
+            if (offset >= root.path("total_results").asInt(offset)) break;
+        }
+        return byAffiliate;
+    }
+
     private static List<Map<String, String>> fetchAdvisorValidationRows(String apiKey) throws Exception {
         String url = "https://api.goaffpro.com/v1/admin/affiliates?fields=id,avatar,honorific,date_of_birth,gender,name,first_name,last_name,email,ref_code,company_name,ref_codes,coupon,coupons,phone,website,facebook,twitter,instagram,address_1,address_2,city,state,zip,country,phone,admin_note,extra_1,extra_2,extra_3,group_id,registration_ip,personal_message,payment_method,payment_details,commission,status,last_login,total_referral_earnings,total_network_earnings,total_amount_paid,total_amount_pending,total_other_earnings,number_of_orders,tax_identification_number,login_token,signup_page,comments,tags,approved_at,blocked_at,created_at,updated_at";
         JsonNode root = requestJson(url, apiKey);
         JsonNode affiliates = root.get("affiliates");
         if (affiliates == null || !affiliates.isArray()) return List.of();
+
+        // Scheitert der Dateiabruf, darf die Stammdatentabelle nicht mitfallen - und erst recht
+        // nicht fuer alle "kein Vertrag" behaupten. Dann bleibt der Zustand ausdruecklich unbekannt.
+        Map<String, String> contractsByAffiliate = Map.of();
+        boolean contractsKnown = true;
+        try {
+            contractsByAffiliate = fetchAffiliateContractDocuments(apiKey);
+        } catch (Exception e) {
+            contractsKnown = false;
+            System.err.println("GoAffPro Vertragsdokumente nicht abrufbar: " + e.getMessage());
+        }
 
         List<Map<String, String>> rows = new ArrayList<>();
         for (JsonNode a : affiliates) {
@@ -5378,6 +5451,9 @@ public class WebUiServer {
             row.put("iban", iban);
             row.put("ibanOwner", asText(a.path("payment_details"), "account_name").trim());
             row.put("ibanValid", isValidIban(iban) ? "Ja" : "Nein");
+            String contract = Objects.toString(contractsByAffiliate.get(row.get("id")), "");
+            row.put("contractDocument", contract);
+            row.put("contractStatus", contractStatusFor(contractsKnown, contract));
             if (isValidationRowRelevant(row)) rows.add(row);
         }
         rows.sort((a, b) -> Objects.toString(a.get("name"), "").compareToIgnoreCase(Objects.toString(b.get("name"), "")));
@@ -6844,7 +6920,9 @@ public class WebUiServer {
         return ("Hallo " + name + "\n\n" +
                 "für die vollständige Pflege Ihrer Stammdaten fehlen uns noch folgende Angaben:\n" +
                 fields + "\n\n" +
-                "Bitte senden Sie uns diese Informationen kurz per E-Mail zurück, damit wir Ihre Stammdaten vervollständigen können.\n\n" +
+                // Seit der Vertrag in dieser Liste stehen kann, passt "per E-Mail zurücksenden"
+                // allein nicht mehr: unterschrieben wird im Beraterinnen-Konto.
+                "Bitte senden Sie uns diese Informationen kurz per E-Mail zurück bzw. unterzeichnen Sie den Vertrag in Ihrem Beraterinnen-Konto, damit wir Ihre Stammdaten vervollständigen können.\n\n" +
                 "Vielen Dank und viele Grüße\nIhr VEMMiNA Team");
     }
 
@@ -6867,7 +6945,7 @@ public class WebUiServer {
                   <p>Hallo {{salutationName}},</p>
                   <p>für die vollständige Pflege Ihrer Stammdaten fehlen uns noch folgende Angaben:</p>
                   <div style="background:#fff1f2;border:1px solid #fecdd3;border-radius:8px;padding:10px;white-space:pre-wrap;">{{missingFields}}</div>
-                  <p>Bitte senden Sie uns diese Informationen kurz per E-Mail zurück, damit wir Ihre Stammdaten vervollständigen können.</p>
+                  <p>Bitte senden Sie uns diese Informationen kurz per E-Mail zurück bzw. unterzeichnen Sie den Vertrag in Ihrem Beraterinnen-Konto, damit wir Ihre Stammdaten vervollständigen können.</p>
                   <p>Vielen Dank und viele Grüße<br/><b>Ihr VEMMiNA Team</b></p>
                 </div>
                 </body></html>
