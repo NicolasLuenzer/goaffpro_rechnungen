@@ -220,9 +220,10 @@ Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
 Im Reiter **Validierung** gibt es zwei Wege, die Tabelle einzugrenzen:
 
 **Schnellfilter „nur Approved"** — der Schalter neben dem Lade-Button blendet alle Beraterinnen
-aus, deren Status nicht `approved` ist. Die Statuszeile zeigt dann „X von Y Datensätzen
-angezeigt". Greift der Filter auf keine Zeile, erscheint statt einer leeren Tabelle der Hinweis
-„Keine Datensätze mit diesem Filter."
+aus, deren Status nicht `approved` ist. Er ist **standardmäßig aktiv**; zum Anzeigen aller
+Datensätze (auch `blocked`, `invited`, `pending`) einfach abwählen. Die Statuszeile zeigt „X von Y
+Datensätzen angezeigt", solange gefiltert wird. Greift der Filter auf keine Zeile, erscheint statt
+einer leeren Tabelle der Hinweis „Keine Datensätze mit diesem Filter."
 
 **Spaltenfilter und Sortierung (wie in Excel)** — gilt für jede Spalte und jede Tabelle:
 
