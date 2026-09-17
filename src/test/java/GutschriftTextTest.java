@@ -432,4 +432,125 @@ class GutschriftTextTest {
         assertEquals(38.0, vat, 0.001);
         assertEquals(238.0, net + vat, 0.001);
     }
+
+    // ── Bankverbindung: GoAffPro liefert account_number / branch_code / account_name ──
+
+    private static Properties bankTestConfig() {
+        Properties config = new Properties();
+        config.setProperty("eInvoiceBuyerName", "S+R Linear Technology GmbH");
+        config.setProperty("eInvoiceBuyerStreet", "Bleidenröder Str. 11");
+        config.setProperty("eInvoiceBuyerZip", "35315");
+        config.setProperty("eInvoiceBuyerCity", "Homberg/Ohm");
+        config.setProperty("eInvoiceBuyerCountry", "DE");
+        return config;
+    }
+
+    private static String gutschriftText(JsonNode payment, JsonNode affiliate) throws Exception {
+        Path pdf = Files.createTempFile("gutschrift-bank", ".pdf");
+        invokeCreateEInvoicePdf(pdf, null, payment, affiliate, bankTestConfig(),
+                "GS-2026-0009", "01.09.2026 bis 30.09.2026", false);
+        try (PDDocument document = PDDocument.load(pdf.toFile())) {
+            return new PDFTextStripper().getText(document);
+        }
+    }
+
+    /**
+     * Regression: Die Gutschrift fragte die Bankverbindung unter iban/bic/account_holder ab,
+     * GoAffPro liefert sie aber als account_number/branch_code/account_name - IBAN und BIC
+     * blieben dadurch auf jedem echten Beleg leer.
+     */
+    @Test
+    void gutschrift_uebernimmtBankverbindungAusGoAffProFeldnamen() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode payment = mapper.readTree("""
+                {"id":"3433225","amount":"1.47","currency":"EUR","created_at":"2026-09-17T16:35:00Z"}
+                """);
+        JsonNode affiliate = mapper.readTree("""
+                {
+                  "name": "Test2 Nachnahme",
+                  "address_1": "Keltenweg 16",
+                  "zip": "77966",
+                  "city": "Kappel",
+                  "country": "DE",
+                  "tax_identification_number": "12357895",
+                  "payment_details": {
+                    "account_name": "Konto Test2",
+                    "account_number": "DE02120300000000202051",
+                    "branch_code": "BYLADEM1001"
+                  }
+                }
+                """);
+
+        String text = gutschriftText(payment, affiliate);
+
+        assertTrue(text.contains("DE02120300000000202051"), "IBAN muss auf der Gutschrift stehen");
+        assertTrue(text.contains("BYLADEM1001"), "BIC muss auf der Gutschrift stehen");
+        assertTrue(text.contains("Konto Test2"),
+                "Kontoinhaber muss aus account_name stammen, nicht aus dem Beraterinnennamen");
+    }
+
+    /**
+     * Der Zahllauf nennt das Konto, auf das tatsächlich ausgezahlt wurde. Wechselt die Beraterin
+     * ihr Konto nach der Auszahlung, darf die Gutschrift nicht das neue Konto ausweisen -
+     * sonst widerspricht sie dem Provisionsnachweis zum selben Zahllauf.
+     */
+    @Test
+    void gutschrift_bevorzugtBankverbindungDesZahllaufs() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode payment = mapper.readTree("""
+                {
+                  "id": "3433225", "amount": "1.47", "currency": "EUR",
+                  "created_at": "2026-09-17T16:35:00Z",
+                  "payment_details": {
+                    "account_name": "Altes Konto",
+                    "account_number": "DE11111111111111111111",
+                    "branch_code": "ALTEDEFFXXX"
+                  }
+                }
+                """);
+        JsonNode affiliate = mapper.readTree("""
+                {
+                  "name": "Test2 Nachnahme",
+                  "address_1": "Keltenweg 16", "zip": "77966", "city": "Kappel", "country": "DE",
+                  "tax_identification_number": "12357895",
+                  "payment_details": {
+                    "account_name": "Neues Konto",
+                    "account_number": "DE99999999999999999999",
+                    "branch_code": "NEUEDEFFXXX"
+                  }
+                }
+                """);
+
+        String text = gutschriftText(payment, affiliate);
+
+        assertTrue(text.contains("DE11111111111111111111"),
+                "Die Gutschrift muss die IBAN des Zahllaufs ausweisen");
+        assertFalse(text.contains("DE99999999999999999999"),
+                "Die spaeter geaenderte Stammdaten-IBAN darf nicht auf dem Beleg erscheinen");
+    }
+
+    /** Fehlt die Bankverbindung am Zahllauf, greifen die Stammdaten der Beraterin. */
+    @Test
+    void gutschrift_faelltAufStammdatenZurueck() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode payment = mapper.readTree("""
+                {"id":"3433225","amount":"1.47","currency":"EUR","created_at":"2026-09-17T16:35:00Z"}
+                """);
+        JsonNode affiliate = mapper.readTree("""
+                {
+                  "name": "Test2 Nachnahme",
+                  "address_1": "Keltenweg 16", "zip": "77966", "city": "Kappel", "country": "DE",
+                  "tax_identification_number": "12357895",
+                  "payment_details": {
+                    "account_name": "Neues Konto",
+                    "account_number": "DE99999999999999999999"
+                  }
+                }
+                """);
+
+        String text = gutschriftText(payment, affiliate);
+
+        assertTrue(text.contains("DE99999999999999999999"),
+                "Ohne Bankverbindung am Zahllauf muss die Stammdaten-IBAN greifen");
+    }
 }

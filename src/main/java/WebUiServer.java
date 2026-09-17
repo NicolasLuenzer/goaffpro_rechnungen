@@ -5229,10 +5229,10 @@ public class WebUiServer {
         String sellerCountry = affiliate != null ? asText(affiliate, "country") : "";
         String sellerTaxNumber = affiliate != null ? asText(affiliate, "tax_identification_number") : "";
 
-        String bankIban = parseAffiliatePaymentField(affiliate, "iban");
-        String bankBic = parseAffiliatePaymentField(affiliate, "bic");
-        String bankAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
-        if (bankAccountHolder.isBlank()) bankAccountHolder = parseAffiliatePaymentField(affiliate, "name");
+        String bankIban = payoutBankField(payment, affiliate, "iban");
+        String bankBic = payoutBankField(payment, affiliate, "bic");
+        String bankAccountHolder = payoutBankField(payment, affiliate, "account_holder");
+        if (bankAccountHolder.isBlank()) bankAccountHolder = sellerName;
 
         // Altfall-Rechnungen tragen als Rechnungsdatum den Ausstellungstag (passend zum Nummernjahr);
         // Auszahlungsdatum und Leistungszeitraum werden im Dokument separat ausgewiesen.
@@ -5354,21 +5354,48 @@ public class WebUiServer {
         Files.writeString(xmlPath, xml, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
     }
 
+    // GoAffPro liefert die Bankverbindung als account_number / branch_code / account_name.
+    // Die Belege fragen sie unter den sprechenden Namen iban / bic / account_holder ab; ohne
+    // diese Abbildung blieben IBAN und BIC auf Gutschrift und ZUGFeRD-XML leer. Die
+    // gleichnamigen Schluessel stehen zuerst, damit abweichende Nutzlasten weiter greifen.
+    private static final Map<String, List<String>> PAYMENT_FIELD_ALIASES = Map.of(
+            "iban", List.of("iban", "account_number"),
+            "bic", List.of("bic", "branch_code"),
+            "account_holder", List.of("account_holder", "account_name"));
+
     private static String parseAffiliatePaymentField(JsonNode affiliate, String key) {
-        if (affiliate == null || affiliate.isMissingNode() || affiliate.isNull()) return "";
-        JsonNode paymentDetails = affiliate.get("payment_details");
-        if (paymentDetails == null || paymentDetails.isMissingNode() || paymentDetails.isNull()) return "";
-        if (paymentDetails.isObject()) {
-            return asText(paymentDetails, key).trim();
-        }
-        String raw = paymentDetails.asText("").trim();
-        if (raw.isBlank()) return "";
-        try {
-            JsonNode parsed = OBJECT_MAPPER.readTree(raw);
-            if (parsed != null && parsed.isObject()) return asText(parsed, key).trim();
-        } catch (Exception ignored) {
+        JsonNode paymentDetails = paymentDetailsNode(affiliate);
+        if (paymentDetails == null) return "";
+        for (String candidate : PAYMENT_FIELD_ALIASES.getOrDefault(key, List.of(key))) {
+            String value = asText(paymentDetails, candidate).trim();
+            if (!value.isBlank()) return value;
         }
         return "";
+    }
+
+    /** payment_details kommt je nach Endpoint als Objekt oder als eingebetteter JSON-String. */
+    private static JsonNode paymentDetailsNode(JsonNode source) {
+        if (source == null || source.isMissingNode() || source.isNull()) return null;
+        JsonNode paymentDetails = source.get("payment_details");
+        if (paymentDetails == null || paymentDetails.isMissingNode() || paymentDetails.isNull()) return null;
+        if (paymentDetails.isObject()) return paymentDetails;
+        String raw = paymentDetails.asText("").trim();
+        if (raw.isBlank()) return null;
+        try {
+            JsonNode parsed = OBJECT_MAPPER.readTree(raw);
+            if (parsed != null && parsed.isObject()) return parsed;
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    // Die Bankverbindung des Zahllaufs hat Vorrang: Sie nennt das Konto, auf das tatsaechlich
+    // ausgezahlt wurde. Der Stammdatensatz greift nur ersatzweise - sonst widerspraeche die
+    // Gutschrift dem Provisionsnachweis zum selben Zahllauf, sobald die Beraterin ihr Konto
+    // nach der Auszahlung wechselt.
+    private static String payoutBankField(JsonNode payment, JsonNode affiliate, String key) {
+        String fromPayment = parseAffiliatePaymentField(payment, key);
+        return fromPayment.isBlank() ? parseAffiliatePaymentField(affiliate, key) : fromPayment;
     }
 
     private static String formatDateYmd(String isoDateTime) {
@@ -6233,9 +6260,9 @@ public class WebUiServer {
         String advisorEmail = affiliate != null ? asText(affiliate, "email") : "";
         String advisorPhone = affiliate != null ? asText(affiliate, "phone") : "";
         String advisorTaxNumber = affiliate != null ? asText(affiliate, "tax_identification_number") : "";
-        String advisorIban = parseAffiliatePaymentField(affiliate, "iban");
-        String advisorBic = parseAffiliatePaymentField(affiliate, "bic");
-        String advisorAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
+        String advisorIban = payoutBankField(payment, affiliate, "iban");
+        String advisorBic = payoutBankField(payment, affiliate, "bic");
+        String advisorAccountHolder = payoutBankField(payment, affiliate, "account_holder");
         if (advisorAccountHolder.isBlank()) advisorAccountHolder = advisorName;
         String paymentId = payment != null ? asText(payment, "id") : "-";
         String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
@@ -6714,9 +6741,9 @@ public class WebUiServer {
                 (buyerZip + " " + buyerCity).trim(),
                 buyerCountry
         ).stream().filter(v -> v != null && !v.isBlank()).toList());
-        String advisorIban = parseAffiliatePaymentField(affiliate, "iban");
-        String advisorBic = parseAffiliatePaymentField(affiliate, "bic");
-        String advisorAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
+        String advisorIban = payoutBankField(payment, affiliate, "iban");
+        String advisorBic = payoutBankField(payment, affiliate, "bic");
+        String advisorAccountHolder = payoutBankField(payment, affiliate, "account_holder");
         if (advisorAccountHolder.isBlank()) advisorAccountHolder = advisorName;
         // GoAffPro kennt nur ein Sammelfeld. Steht dort eine Umsatzsteuer-ID, muss der Beleg sie
         // auch so benennen - "Steuernummer: DE449899715" wäre schlicht falsch beschriftet.
