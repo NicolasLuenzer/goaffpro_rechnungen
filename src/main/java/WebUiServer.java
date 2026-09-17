@@ -5638,7 +5638,12 @@ public class WebUiServer {
     }
 
     private static String formatAffiliateAddress(JsonNode affiliate) {
-        if (affiliate == null || affiliate.isMissingNode() || affiliate.isNull()) return "";
+        return String.join(", ", affiliateAddressParts(affiliate));
+    }
+
+    /** Anschriftfeld-Zeilen (Straße / PLZ Ort / Land) - für mehrzeilige Belegadressen. */
+    private static List<String> affiliateAddressParts(JsonNode affiliate) {
+        if (affiliate == null || affiliate.isMissingNode() || affiliate.isNull()) return List.of();
 
         String address1 = asText(affiliate, "address_1");
         String address2 = asText(affiliate, "address_2");
@@ -5664,7 +5669,7 @@ public class WebUiServer {
         if (cityLine.length() > 0) parts.add(cityLine.toString());
 
         if (!country.isBlank()) parts.add(country);
-        return String.join(", ", parts);
+        return parts;
     }
 
     private static class TransactionSplit {
@@ -6726,6 +6731,9 @@ public class WebUiServer {
                 .replace("{{taxNote}}", taxTreatment.documentNote.isBlank() ? ""
                         : "<div>" + escapeHtmlEmail(taxTreatment.documentNote) + "</div>")
                 .replace("{{advisorName}}", escapeHtmlEmail(advisorName))
+                .replace("{{advisorAddressLines}}", affiliateAddressParts(affiliate).stream()
+                        .map(line -> "<div>" + escapeHtmlEmail(line) + "</div>")
+                        .collect(Collectors.joining()))
                 .replace("{{advisorAddress}}", escapeHtmlEmail(advisorAddress))
                 .replace("{{advisorEmail}}", escapeHtmlEmail(advisorEmail))
                 .replace("{{advisorPhone}}", escapeHtmlEmail(advisorPhone))
@@ -6870,6 +6878,9 @@ public class WebUiServer {
                 """;
     }
 
+    // Optisch an die Geschäftsrechnung der S+R Linear Technology GmbH angeglichen:
+    // Logo links / Absender rechts, Rücksendeangabe, Anschriftfeld, Titel, Metablock,
+    // Positionstabelle mit Haarlinien, rechtsbündiger Summenblock, zentrierte Fußzeile.
     private static String getDefaultEInvoicePdfViewHtmlTemplate() {
         return """
                 <!doctype html>
@@ -6877,103 +6888,105 @@ public class WebUiServer {
                 <head>
                   <meta charset="UTF-8" />
                   <style>
-                    @page { size: A4; margin: 18mm 16mm; }
-                    body { font-family: Arial, sans-serif; color:#111827; font-size:10px; line-height:1.35; }
+                    @page { size: A4; margin: 16mm 18mm 14mm 20mm; }
+                    body { font-family: Arial, Helvetica, sans-serif; color:#000000; font-size:9.5px; line-height:1.38; }
                     table { border-collapse: collapse; }
-                    .muted { color:#5f6b7a; }
-                    .rule { border-top:1px solid #d6dbe2; }
+                    .muted { color:#444444; }
+                    .sender { font-size:9px; line-height:1.45; }
+                    .doctitle { font-size:23px; letter-spacing:.2px; }
+                    .meta td { padding:0 0 2px 0; vertical-align:top; }
+                    .meta .lbl { width:118px; }
+                    .items th { font-weight:700; padding:5px 6px; border-top:1px solid #000000; border-bottom:1px solid #000000; }
+                    .items td { padding:6px 6px; vertical-align:top; }
+                    .sums td { padding:2.5px 6px; text-align:right; }
+                    .sums .val { width:92px; }
+                    .total td { font-weight:700; }
+                    .foot { text-align:center; font-size:8px; line-height:1.5; }
                   </style>
                 </head>
                 <body>
-                  <table style="width:100%;margin-bottom:42px;">
+
+                  <table style="width:100%;margin-bottom:34px;">
                     <tr>
-                      <td style="vertical-align:top;width:48%;">
-                        <img src="{{vemminaLogoDataUri}}" alt="VEMMiNA" data-vemmina-logo="true" style="width:150px;height:auto;" />
+                      <td style="vertical-align:top;width:52%;">
+                        <img src="{{vemminaLogoDataUri}}" alt="VEMMiNA" data-vemmina-logo="true" style="width:168px;height:auto;display:block;" />
                       </td>
-                      <td style="vertical-align:top;text-align:right;width:52%;font-size:10px;">
-                        <div style="font-weight:700;">{{buyerCompanyName}}</div>
+                      <td class="sender" style="vertical-align:top;text-align:right;width:48%;">
+                        <div>{{buyerCompanyName}}</div>
                         <div>{{buyerAddress}}</div>
-                        <div style="margin-top:8px;font-weight:700;">Gutschriftausstellerin (Leistungsempf&auml;ngerin)</div>
-                        <div>USt-IdNr: {{buyerVatId}}</div>
-                        <div>Steuernummer: {{buyerTaxNumber}}</div>
-                        <div style="margin-top:8px;">{{issuerContactName}}</div>
+                        <div>{{issuerContactName}}</div>
                         <div>{{issuerContactEmail}}</div>
+                        <div class="muted" style="margin-top:5px;">Gutschriftausstellerin (Leistungsempf&auml;ngerin)</div>
                       </td>
                     </tr>
                   </table>
 
-                  <div class="muted" style="font-size:8px;border-bottom:1px solid #cfd5dd;padding-bottom:4px;width:64%;margin-bottom:10px;">
+                  <div style="font-size:7px;border-bottom:1px solid #000000;padding-bottom:2px;width:62%;margin-bottom:11px;">
                     {{buyerCompanyName}}, {{buyerAddress}}
                   </div>
 
-                  <table style="width:100%;margin-bottom:42px;">
-                    <tr>
-                      <td style="vertical-align:top;width:58%;font-size:10px;">
-                        <div style="font-weight:700;">{{advisorName}}</div>
-                        <div>{{advisorAddress}}</div>
-                        <div style="margin-top:8px;" class="muted">Gutschriftempf&auml;ngerin (Leistungserbringerin)</div>
-                        <div class="muted">E-Mail: {{advisorEmail}}</div>
-                        <div class="muted">Telefon: {{advisorPhone}}</div>
-                        <div class="muted">{{advisorTaxLine}}</div>
-                      </td>
-                      <td style="vertical-align:top;width:42%;">
-                        <table style="width:100%;font-size:10px;">
-                          <tr><td class="muted" style="padding:0 0 5px 0;">Gutschriftnummer</td><td style="text-align:right;padding:0 0 5px 0;">{{gutschriftNr}}</td></tr>
-                          <tr><td class="muted" style="padding:0 0 5px 0;">Datum</td><td style="text-align:right;padding:0 0 5px 0;">{{created}}</td></tr>
-                          <tr><td class="muted" style="padding:0 0 5px 0;">Zahllauf-ID</td><td style="text-align:right;padding:0 0 5px 0;">{{paymentId}}</td></tr>
-                          <tr><td class="muted" style="padding:0 0 5px 0;">Leistungszeitraum</td><td style="text-align:right;padding:0 0 5px 0;">{{periodLabel}}</td></tr>
-                        </table>
-                      </td>
-                    </tr>
+                  <div style="margin-bottom:8px;">
+                    <div style="font-weight:700;">{{advisorName}}</div>
+                    {{advisorAddressLines}}
+                  </div>
+                  <div class="muted" style="margin-bottom:44px;">
+                    <div>Gutschriftempf&auml;ngerin (Leistungserbringerin)</div>
+                    <div>{{advisorTaxLine}}</div>
+                  </div>
+
+                  <div class="doctitle" style="margin-bottom:3px;">Gutschrift</div>
+                  <div class="muted" style="font-size:8px;margin-bottom:18px;">Gutschrift gem&auml;&szlig; &sect; 14 Abs. 2 Satz 5 UStG</div>
+
+                  <table class="meta" style="width:100%;margin-bottom:38px;">
+                    <tr><td class="lbl">Gutschriftnummer</td><td>{{gutschriftNr}}</td></tr>
+                    <tr><td class="lbl">Gutschriftdatum</td><td>{{created}}</td></tr>
+                    <tr><td class="lbl">Zahllauf</td><td>{{paymentId}}</td></tr>
+                    <tr><td class="lbl">Leistungszeitraum</td><td>{{periodLabel}}</td></tr>
                   </table>
 
-                  <div style="font-size:18px;margin-bottom:30px;">Gutschrift</div>
-
-                  <table style="width:100%;font-size:10px;margin-bottom:34px;">
+                  <table class="items" style="width:100%;margin-bottom:22px;">
                     <thead>
-                      <tr class="rule">
-                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:34px;">Pos</th>
-                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:86px;">Nummer</th>
-                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;">Artikel</th>
-                        <th style="text-align:right;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:58px;">Anzahl</th>
-                        <th style="text-align:right;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:96px;">Preis</th>
-                        <th style="text-align:right;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:104px;">Summe</th>
+                      <tr>
+                        <th style="text-align:left;width:26px;">Pos</th>
+                        <th style="text-align:left;width:74px;">Nummer</th>
+                        <th style="text-align:left;">Artikel</th>
+                        <th style="text-align:right;width:50px;">Anzahl</th>
+                        <th style="text-align:right;width:74px;">Preis</th>
+                        <th style="text-align:right;width:80px;">Summe</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr>
-                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">1</td>
-                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">{{paymentId}}</td>
-                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">Vermittlungsprovision Provisionszeitraum {{periodLabel}}</td>
-                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">1,00</td>
-                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">{{amount}}</td>
-                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">{{amount}}</td>
+                        <td>1</td>
+                        <td>{{paymentId}}</td>
+                        <td>Vermittlungsprovision lt. Provisionszeitraum {{periodLabel}}</td>
+                        <td style="text-align:right;">1,00</td>
+                        <td style="text-align:right;">{{amount}}</td>
+                        <td style="text-align:right;">{{amount}}</td>
                       </tr>
                     </tbody>
                   </table>
 
-                  <table style="width:46%;margin-left:54%;font-size:10px;margin-bottom:28px;">
-                    <tr><td style="padding:4px 0;">Gesamt netto</td><td style="padding:4px 0;text-align:right;">{{amount}}</td></tr>
-                    <tr><td style="padding:4px 0;">Zwischensumme (netto)</td><td style="padding:4px 0;text-align:right;">{{amount}}</td></tr>
-                    <tr><td style="padding:4px 0;">{{vatLine}}</td><td style="padding:4px 0;text-align:right;">{{vatAmount}}</td></tr>
-                    <tr><td style="padding:5px 0;border-top:1px solid #d6dbe2;font-weight:700;">Gesamtsumme</td><td style="padding:5px 0;border-top:1px solid #d6dbe2;text-align:right;font-weight:700;">{{grossAmount}}</td></tr>
-                    <tr><td style="padding:5px 0;">Auszahlungsbetrag</td><td style="padding:5px 0;text-align:right;">{{grossAmount}}</td></tr>
+                  <table class="sums" style="width:52%;margin-left:48%;margin-bottom:26px;">
+                    <tr><td>Zwischensumme (netto)</td><td class="val">{{amount}}</td></tr>
+                    <tr><td>{{vatLine}}</td><td class="val">{{vatAmount}}</td></tr>
+                    <tr class="total"><td style="border-top:1px solid #000000;">Auszahlungsbetrag</td><td class="val" style="border-top:1px solid #000000;">{{grossAmount}}</td></tr>
                   </table>
 
-                  <div style="margin-bottom:20px;">
+                  <div style="margin-bottom:26px;">
                     {{taxNote}}
-                    <div>Gutschrift gem&auml;&szlig; &sect; 14 Abs. 2 Satz 5 UStG.</div>
+                    <div>Auszahlung erfolgt ohne Abzug auf das unten genannte Konto.</div>
                     <div>Bitte pr&uuml;fen Sie diese Gutschrift. Die Gutschrift verliert ihre Wirkung als Rechnung, soweit ihr widersprochen wird.</div>
                   </div>
 
-                  <div style="margin-top:18px;border-top:1px solid #d6dbe2;padding-top:10px;font-size:10px;">
+                  <div style="margin-bottom:30px;">
                     <div style="font-weight:700;">Bankverbindung der Gutschriftempf&auml;ngerin</div>
                     <div>Kontoinhaber: {{advisorAccountHolder}}</div>
                     <div>IBAN: {{advisorIban}}</div>
                     <div>BIC: {{advisorBic}}</div>
                   </div>
 
-                  <div style="margin-top:42px;border-top:1px solid #d6dbe2;padding-top:10px;text-align:center;font-size:9px;line-height:1.45;" class="muted">
+                  <div class="foot muted" style="border-top:1px solid #000000;padding-top:9px;">
                     <div>{{buyerCompanyName}}</div>
                     <div>{{buyerAddress}}</div>
                     <div>{{issuerPublicEmail}}</div>
@@ -7422,12 +7435,18 @@ public class WebUiServer {
             "f3a1dfba4807b5fc50459cb6d6ab474d9a5e7750a273866db1e7f01e1000e1f6";
     private static final String PREVIOUS_RECHNUNG_MAIL_TEMPLATE_SHA256 =
             "da71bfb46910b418cf80d3bf2fc14212060bfad946f51404c9e76f15ae1d491c";
+    // Ungestaltete Altvorlage ("E-Rechnung" mit <h2>/<p><b>), inklusive des nachträglich
+    // eingefügten Logos - sie wird durch das an die Rechnung angeglichene Layout ersetzt.
+    private static final String PREVIOUS_GUTSCHRIFT_PDF_TEMPLATE_SHA256 =
+            "972396d948ab949864199dad27f62eb7ba2ad849f3c9e4f5b89d734ee821fbcd";
 
-    private static void migratePreviousRechnungTemplates(Properties config) {
+    private static void migratePreviousDocumentTemplates(Properties config) {
         migratePreviousRechnungTemplate(config, "eInvoicePdfTemplateHtmlRechnung",
                 PREVIOUS_RECHNUNG_PDF_TEMPLATE_SHA256, getDefaultRechnungPdfViewHtmlTemplate());
         migratePreviousRechnungTemplate(config, "emailTemplateHtmlRechnung",
                 PREVIOUS_RECHNUNG_MAIL_TEMPLATE_SHA256, getDefaultRechnungMailHtmlTemplate());
+        migratePreviousRechnungTemplate(config, "eInvoicePdfTemplateHtml",
+                PREVIOUS_GUTSCHRIFT_PDF_TEMPLATE_SHA256, getDefaultEInvoicePdfViewHtmlTemplate());
     }
 
     private static void migratePreviousRechnungTemplate(Properties config, String key,
@@ -7941,7 +7960,7 @@ public class WebUiServer {
         config.setProperty(REMINDER_LOG_KEY, Objects.toString(uiSettings.getProperty(REMINDER_LOG_KEY), Objects.toString(config.getProperty(REMINDER_LOG_KEY), "")));
         config.setProperty(LEADER_WEEKLY_MAIL_LOG_KEY, Objects.toString(uiSettings.getProperty(LEADER_WEEKLY_MAIL_LOG_KEY), Objects.toString(config.getProperty(LEADER_WEEKLY_MAIL_LOG_KEY), "")));
 
-        migratePreviousRechnungTemplates(config);
+        migratePreviousDocumentTemplates(config);
         ensureVemminaLogoInConfiguredGutschriftTemplate(config);
         ensureCommissionInHistory(config, Objects.toString(config.getProperty("lastImportedComission"), "0"));
     }
