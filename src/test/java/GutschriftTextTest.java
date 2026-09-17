@@ -595,6 +595,77 @@ class GutschriftTextTest {
                 "Die Zeile muss einen Einzelpreis tragen");
     }
 
+    /**
+     * BR-CO-25: Bei positivem Zahlbetrag sind Zahlungsbedingungen Pflicht. Ein leer gesetzter
+     * Konfigurationsschluessel darf nicht den Standardwert aushebeln.
+     */
+    @Test
+    void zugferd_setztZahlungsbedingungenAuchBeiLeeremSchluessel() throws Exception {
+        Properties config = bankTestConfig();
+        config.setProperty("eInvoicePaymentTerms", "");
+
+        String xml = zugferdXml(zugferdPayment(), zugferdAffiliate(), config);
+
+        assertTrue(xml.contains("<ram:SpecifiedTradePaymentTerms><ram:Description>Zahlbar sofort ohne Abzug"),
+                "Leerer Schluessel muss auf den Standardtext zurueckfallen (BT-20)");
+    }
+
+    /**
+     * BR-CO-26: Ohne BT-29/30/31 laesst sich die Leistungserbringerin nicht zuordnen.
+     * Eine blosse Steuernummer (BT-32) genuegt dafuer nicht.
+     */
+    @Test
+    void zugferd_gibtBeraterinnenIdAlsSellerIdentifierAus() throws Exception {
+        JsonNode affiliate = new ObjectMapper().readTree("""
+                {"id":"21004297","name":"Test2 Nachnahme","address_1":"Keltenweg 16","zip":"77966",
+                 "city":"Kappel","country":"DE","tax_identification_number":"12357895"}
+                """);
+
+        String xml = zugferdXml(zugferdPayment(), affiliate, bankTestConfig());
+
+        assertTrue(xml.contains("<ram:ID>21004297</ram:ID>"),
+                "Die Affiliate-ID muss als BT-29 im SellerTradeParty stehen");
+    }
+
+    /** Steht im Sammelfeld eine USt-IdNr, gehoert sie als BT-31 (VA) ausgezeichnet, sonst als FC. */
+    @Test
+    void zugferd_unterscheidetUstIdVonSteuernummer() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        JsonNode mitVatId = mapper.readTree("""
+                {"id":"1","name":"A","address_1":"X 1","zip":"77966","city":"Kappel","country":"DE",
+                 "tax_identification_number":"DE459084219"}
+                """);
+        JsonNode mitSteuernummer = mapper.readTree("""
+                {"id":"2","name":"B","address_1":"X 1","zip":"77966","city":"Kappel","country":"DE",
+                 "tax_identification_number":"12357895"}
+                """);
+
+        String xmlVat = zugferdXml(zugferdPayment(), mitVatId, bankTestConfig());
+        String xmlTax = zugferdXml(zugferdPayment(), mitSteuernummer, bankTestConfig());
+
+        assertTrue(xmlVat.contains("<ram:ID schemeID=\"VA\">DE459084219</ram:ID>"),
+                "Eine USt-IdNr muss als VA ausgewiesen werden");
+        assertTrue(xmlTax.contains("<ram:ID schemeID=\"FC\">12357895</ram:ID>"),
+                "Eine Steuernummer muss als FC ausgewiesen werden");
+    }
+
+    /** BR-DE-2 / BT-10: Kontaktgruppe der Beraterin und Referenz der Ausstellerin. */
+    @Test
+    void zugferd_enthaeltVerkaeuferkontaktUndKaeuferreferenz() throws Exception {
+        JsonNode affiliate = new ObjectMapper().readTree("""
+                {"id":"21004297","name":"Test2 Nachnahme","email":"test2@vemmina.com",
+                 "phone":"+491232546","address_1":"Keltenweg 16","zip":"77966",
+                 "city":"Kappel","country":"DE","tax_identification_number":"12357895"}
+                """);
+
+        String xml = zugferdXml(zugferdPayment(), affiliate, bankTestConfig());
+
+        assertTrue(xml.contains("<ram:DefinedTradeContact>"), "BG-6 Verkaeuferkontakt muss vorhanden sein");
+        assertTrue(xml.contains("<ram:URIID>test2@vemmina.com</ram:URIID>"), "Kontakt-E-Mail muss gesetzt sein");
+        assertTrue(xml.contains("<ram:BuyerReference>3433225</ram:BuyerReference>"),
+                "BT-10 muss die Zahllauf-ID tragen");
+    }
+
     /** Eine Steuernummer ohne Inhalt ist schemawidrig - dann darf das Element ganz fehlen. */
     @Test
     void zugferd_laesstLeereSteuernummerWeg() throws Exception {

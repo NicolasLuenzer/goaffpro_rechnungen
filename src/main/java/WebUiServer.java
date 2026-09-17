@@ -5220,7 +5220,10 @@ public class WebUiServer {
         String buyerCountry = buyerProperty(config, kind, "Country", "DE");
         String buyerVatId = buyerProperty(config, kind, "VatId", "");
         String buyerTaxNumber = buyerProperty(config, kind, "TaxNumber", "");
-        String paymentTerms = Objects.toString(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug").trim();
+        // BR-CO-25: Bei positivem Zahlbetrag sind Zahlungsziel oder Zahlungsbedingungen Pflicht.
+        // Objects.toString liefert bei einem leer gesetzten Schluessel "" statt des Standardwerts -
+        // der Beleg ginge dann ohne BT-20 raus. firstNonBlank behandelt leer wie nicht gesetzt.
+        String paymentTerms = firstNonBlank(config.getProperty("eInvoicePaymentTerms"), "Zahlbar sofort ohne Abzug");
 
         String sellerName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
         String sellerStreet = affiliate != null ? asText(affiliate, "address_1") : "";
@@ -5254,7 +5257,40 @@ public class WebUiServer {
 
         // Leere Pflichtelemente sind schlimmer als fehlende: <ram:ID schemeID="FC"></ram:ID> ist
         // laut Schema eine Angabe ohne Inhalt. Steuernummern daher nur ausgeben, wenn vorhanden.
-        String sellerTaxRegistration = taxRegistrationXml("FC", sellerTaxNumber);
+        // GoAffPro hat nur ein Sammelfeld: Steht dort eine USt-IdNr, gehoert sie als BT-31 (VA)
+        // ausgezeichnet, sonst als BT-32 (FC) - dieselbe Unterscheidung wie auf dem PDF.
+        String sellerTaxRegistration = looksLikeVatId(sellerTaxNumber)
+                ? taxRegistrationXml("VA", normalizeVatId(sellerTaxNumber))
+                : taxRegistrationXml("FC", sellerTaxNumber);
+        // BR-CO-26: Ohne BT-29/BT-30/BT-31 kann der Kaeufer die Leistungserbringerin nicht
+        // automatisiert zuordnen. Eine Steuernummer (BT-32) genuegt dafuer nicht. Beraterinnen
+        // ohne USt-IdNr tragen daher ihre GoAffPro-Affiliate-ID als BT-29.
+        String sellerId = affiliate != null ? asText(affiliate, "id") : "";
+        String sellerIdXml = sellerId.isBlank() ? "" : "<ram:ID>" + escapeXml(sellerId) + "</ram:ID>";
+        // BG-6 / BT-34: Kontaktdaten der Beraterin, soweit in den Stammdaten vorhanden.
+        String sellerEmail = affiliate != null ? asText(affiliate, "email") : "";
+        String sellerPhone = affiliate != null ? asText(affiliate, "phone") : "";
+        String sellerContactXml = (sellerEmail.isBlank() && sellerPhone.isBlank()) ? ""
+                : "<ram:DefinedTradeContact><ram:PersonName>" + escapeXml(sellerName) + "</ram:PersonName>"
+                  + (sellerPhone.isBlank() ? ""
+                        : "<ram:TelephoneUniversalCommunication><ram:CompleteNumber>" + escapeXml(sellerPhone)
+                          + "</ram:CompleteNumber></ram:TelephoneUniversalCommunication>")
+                  + (sellerEmail.isBlank() ? ""
+                        : "<ram:EmailURIUniversalCommunication><ram:URIID>" + escapeXml(sellerEmail)
+                          + "</ram:URIID></ram:EmailURIUniversalCommunication>")
+                  + "</ram:DefinedTradeContact>";
+        String sellerUriXml = sellerEmail.isBlank() ? ""
+                : "<ram:URIUniversalCommunication><ram:URIID schemeID=\"EM\">" + escapeXml(sellerEmail)
+                  + "</ram:URIID></ram:URIUniversalCommunication>";
+        String buyerEmail = buyerProperty(config, kind, "ContactEmail", "buchhaltung@sr-gmbh.de");
+        String buyerUriXml = buyerEmail.isBlank() ? ""
+                : "<ram:URIUniversalCommunication><ram:URIID schemeID=\"EM\">" + escapeXml(buyerEmail)
+                  + "</ram:URIID></ram:URIUniversalCommunication>";
+        // BT-10: Bei der Selbstabrechnung vergibt die Ausstellerin die Referenz selbst -
+        // die Zahllauf-ID ist genau das interne Ordnungsmerkmal, unter dem der Beleg laeuft.
+        String buyerReference = asText(payment, "id");
+        String buyerReferenceXml = buyerReference.isBlank() ? ""
+                : "<ram:BuyerReference>" + escapeXml(buyerReference) + "</ram:BuyerReference>";
         String buyerTaxRegistration = taxRegistrationXml("VA", buyerVatId) + taxRegistrationXml("FC", buyerTaxNumber);
         String paymentTermsXml = paymentTerms.isBlank()
                 ? ""
@@ -5310,14 +5346,19 @@ public class WebUiServer {
                       </ram:SpecifiedLineTradeSettlement>
                     </ram:IncludedSupplyChainTradeLineItem>
                     <ram:ApplicableHeaderTradeAgreement>
+                      {{buyerReference}}
                       <ram:SellerTradeParty>
+                        {{sellerId}}
                         <ram:Name>{{sellerName}}</ram:Name>
+                        {{sellerContact}}
                         <ram:PostalTradeAddress><ram:PostcodeCode>{{sellerZip}}</ram:PostcodeCode><ram:LineOne>{{sellerStreet}}</ram:LineOne><ram:CityName>{{sellerCity}}</ram:CityName><ram:CountryID>{{sellerCountry}}</ram:CountryID></ram:PostalTradeAddress>
+                        {{sellerUri}}
                         {{sellerTaxRegistration}}
                       </ram:SellerTradeParty>
                       <ram:BuyerTradeParty>
                         <ram:Name>{{buyerName}}</ram:Name>
                         <ram:PostalTradeAddress><ram:PostcodeCode>{{buyerZip}}</ram:PostcodeCode><ram:LineOne>{{buyerStreet}}</ram:LineOne><ram:CityName>{{buyerCity}}</ram:CityName><ram:CountryID>{{buyerCountry}}</ram:CountryID></ram:PostalTradeAddress>
+                        {{buyerUri}}
                         {{buyerTaxRegistration}}
                       </ram:BuyerTradeParty>
                     </ram:ApplicableHeaderTradeAgreement>
@@ -5357,6 +5398,11 @@ public class WebUiServer {
                 .replace("{{sellerTaxNumber}}", escapeXml(sellerTaxNumber))
                 .replace("{{sellerTaxRegistration}}", sellerTaxRegistration)
                 .replace("{{buyerTaxRegistration}}", buyerTaxRegistration)
+                .replace("{{sellerId}}", sellerIdXml)
+                .replace("{{sellerContact}}", sellerContactXml)
+                .replace("{{sellerUri}}", sellerUriXml)
+                .replace("{{buyerUri}}", buyerUriXml)
+                .replace("{{buyerReference}}", buyerReferenceXml)
                 .replace("{{paymentMeans}}", paymentMeansXml)
                 .replace("{{paymentTermsBlock}}", paymentTermsXml)
                 .replace("{{buyerName}}", escapeXml(buyerName))
