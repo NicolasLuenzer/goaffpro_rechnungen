@@ -5252,6 +5252,29 @@ public class WebUiServer {
                 ? ""
                 : "<ram:ExemptionReason>" + escapeXml(taxTreatment.exemptionReason) + "</ram:ExemptionReason>";
 
+        // Leere Pflichtelemente sind schlimmer als fehlende: <ram:ID schemeID="FC"></ram:ID> ist
+        // laut Schema eine Angabe ohne Inhalt. Steuernummern daher nur ausgeben, wenn vorhanden.
+        String sellerTaxRegistration = taxRegistrationXml("FC", sellerTaxNumber);
+        String buyerTaxRegistration = taxRegistrationXml("VA", buyerVatId) + taxRegistrationXml("FC", buyerTaxNumber);
+        String paymentTermsXml = paymentTerms.isBlank()
+                ? ""
+                : "<ram:SpecifiedTradePaymentTerms><ram:Description>" + escapeXml(paymentTerms)
+                  + "</ram:Description></ram:SpecifiedTradePaymentTerms>";
+        // TypeCode 58 (SEPA-Ueberweisung) verlangt laut EN16931 BR-50 eine IBAN. Fehlt sie,
+        // waere 58 mit leerem Konto falsch - dann 1 (Zahlungsart nicht festgelegt) ohne Konto.
+        String paymentMeansXml = bankIban.isBlank()
+                ? "<ram:SpecifiedTradeSettlementPaymentMeans><ram:TypeCode>1</ram:TypeCode>"
+                  + "</ram:SpecifiedTradeSettlementPaymentMeans>"
+                : "<ram:SpecifiedTradeSettlementPaymentMeans><ram:TypeCode>58</ram:TypeCode>"
+                  + "<ram:PayeePartyCreditorFinancialAccount><ram:IBANID>" + escapeXml(bankIban) + "</ram:IBANID>"
+                  + (bankAccountHolder.isBlank() ? ""
+                        : "<ram:AccountName>" + escapeXml(bankAccountHolder) + "</ram:AccountName>")
+                  + "</ram:PayeePartyCreditorFinancialAccount>"
+                  + (bankBic.isBlank() ? ""
+                        : "<ram:PayeeSpecifiedCreditorFinancialInstitution><ram:BICID>" + escapeXml(bankBic)
+                          + "</ram:BICID></ram:PayeeSpecifiedCreditorFinancialInstitution>")
+                  + "</ram:SpecifiedTradeSettlementPaymentMeans>";
+
         String xml = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100"
@@ -5271,6 +5294,10 @@ public class WebUiServer {
                     <ram:IncludedSupplyChainTradeLineItem>
                       <ram:AssociatedDocumentLineDocument><ram:LineID>1</ram:LineID></ram:AssociatedDocumentLineDocument>
                       <ram:SpecifiedTradeProduct><ram:Name>Vermittlungsprovision {{periodLabel}}</ram:Name></ram:SpecifiedTradeProduct>
+                      <ram:SpecifiedLineTradeAgreement>
+                        <ram:NetPriceProductTradePrice><ram:ChargeAmount>{{netAmount}}</ram:ChargeAmount></ram:NetPriceProductTradePrice>
+                      </ram:SpecifiedLineTradeAgreement>
+                      <ram:SpecifiedLineTradeDelivery><ram:BilledQuantity unitCode="C62">1</ram:BilledQuantity></ram:SpecifiedLineTradeDelivery>
                       <ram:SpecifiedLineTradeSettlement>
                         <ram:ApplicableTradeTax>
                           <ram:TypeCode>VAT</ram:TypeCode>
@@ -5286,18 +5313,18 @@ public class WebUiServer {
                       <ram:SellerTradeParty>
                         <ram:Name>{{sellerName}}</ram:Name>
                         <ram:PostalTradeAddress><ram:PostcodeCode>{{sellerZip}}</ram:PostcodeCode><ram:LineOne>{{sellerStreet}}</ram:LineOne><ram:CityName>{{sellerCity}}</ram:CityName><ram:CountryID>{{sellerCountry}}</ram:CountryID></ram:PostalTradeAddress>
-                        <ram:SpecifiedTaxRegistration><ram:ID schemeID="FC">{{sellerTaxNumber}}</ram:ID></ram:SpecifiedTaxRegistration>
+                        {{sellerTaxRegistration}}
                       </ram:SellerTradeParty>
                       <ram:BuyerTradeParty>
                         <ram:Name>{{buyerName}}</ram:Name>
                         <ram:PostalTradeAddress><ram:PostcodeCode>{{buyerZip}}</ram:PostcodeCode><ram:LineOne>{{buyerStreet}}</ram:LineOne><ram:CityName>{{buyerCity}}</ram:CityName><ram:CountryID>{{buyerCountry}}</ram:CountryID></ram:PostalTradeAddress>
-                        <ram:SpecifiedTaxRegistration><ram:ID schemeID="VA">{{buyerVatId}}</ram:ID></ram:SpecifiedTaxRegistration>
-                        <ram:SpecifiedTaxRegistration><ram:ID schemeID="FC">{{buyerTaxNumber}}</ram:ID></ram:SpecifiedTaxRegistration>
+                        {{buyerTaxRegistration}}
                       </ram:BuyerTradeParty>
                     </ram:ApplicableHeaderTradeAgreement>
                     <ram:ApplicableHeaderTradeDelivery/>
                     <ram:ApplicableHeaderTradeSettlement>
                       <ram:InvoiceCurrencyCode>{{currency}}</ram:InvoiceCurrencyCode>
+                      {{paymentMeans}}
                       <ram:ApplicableTradeTax>
                         <ram:CalculatedAmount>{{vatAmount}}</ram:CalculatedAmount>
                         <ram:TypeCode>VAT</ram:TypeCode>
@@ -5306,14 +5333,10 @@ public class WebUiServer {
                         <ram:CategoryCode>{{taxCategoryCode}}</ram:CategoryCode>
                         <ram:RateApplicablePercent>{{taxRatePercent}}</ram:RateApplicablePercent>
                       </ram:ApplicableTradeTax>
-                      <ram:SpecifiedTradeSettlementPaymentMeans>
-                        <ram:TypeCode>58</ram:TypeCode>
-                        <ram:PayeePartyCreditorFinancialAccount><ram:IBANID>{{bankIban}}</ram:IBANID><ram:AccountName>{{bankAccountHolder}}</ram:AccountName></ram:PayeePartyCreditorFinancialAccount>
-                        <ram:PayeeSpecifiedCreditorFinancialInstitution><ram:BICID>{{bankBic}}</ram:BICID></ram:PayeeSpecifiedCreditorFinancialInstitution>
-                      </ram:SpecifiedTradeSettlementPaymentMeans>
-                      <ram:SpecifiedTradePaymentTerms><ram:Description>{{paymentTerms}}</ram:Description></ram:SpecifiedTradePaymentTerms>
+                      {{paymentTermsBlock}}
                       <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
                         <ram:LineTotalAmount>{{netAmount}}</ram:LineTotalAmount>
+                        <ram:TaxBasisTotalAmount>{{netAmount}}</ram:TaxBasisTotalAmount>
                         <ram:TaxTotalAmount currencyID="{{currency}}">{{vatAmount}}</ram:TaxTotalAmount>
                         <ram:GrandTotalAmount>{{grossAmount}}</ram:GrandTotalAmount>
                         <ram:DuePayableAmount>{{grossAmount}}</ram:DuePayableAmount>
@@ -5332,6 +5355,10 @@ public class WebUiServer {
                 .replace("{{sellerCity}}", escapeXml(sellerCity))
                 .replace("{{sellerCountry}}", escapeXml(sellerCountry))
                 .replace("{{sellerTaxNumber}}", escapeXml(sellerTaxNumber))
+                .replace("{{sellerTaxRegistration}}", sellerTaxRegistration)
+                .replace("{{buyerTaxRegistration}}", buyerTaxRegistration)
+                .replace("{{paymentMeans}}", paymentMeansXml)
+                .replace("{{paymentTermsBlock}}", paymentTermsXml)
                 .replace("{{buyerName}}", escapeXml(buyerName))
                 .replace("{{buyerStreet}}", escapeXml(buyerStreet))
                 .replace("{{buyerZip}}", escapeXml(buyerZip))
@@ -5362,6 +5389,14 @@ public class WebUiServer {
             "iban", List.of("iban", "account_number"),
             "bic", List.of("bic", "branch_code"),
             "account_holder", List.of("account_holder", "account_name"));
+
+    /** Steuerregistrierung nur ausgeben, wenn eine Nummer vorliegt - leere IDs sind schemawidrig. */
+    private static String taxRegistrationXml(String schemeId, String value) {
+        String id = Objects.toString(value, "").trim();
+        return id.isBlank() ? ""
+                : "<ram:SpecifiedTaxRegistration><ram:ID schemeID=\"" + schemeId + "\">"
+                  + escapeXml(id) + "</ram:ID></ram:SpecifiedTaxRegistration>";
+    }
 
     private static String parseAffiliatePaymentField(JsonNode affiliate, String key) {
         JsonNode paymentDetails = paymentDetailsNode(affiliate);

@@ -529,6 +529,87 @@ class GutschriftTextTest {
                 "Die spaeter geaenderte Stammdaten-IBAN darf nicht auf dem Beleg erscheinen");
     }
 
+    // ── ZUGFeRD: Elementreihenfolge und Pflichtfelder des CII-Schemas ──
+
+    private static String zugferdXml(JsonNode payment, JsonNode affiliate, Properties config) throws Exception {
+        Method m = WebUiServer.class.getDeclaredMethod("createZugferdInvoiceXml",
+                Path.class, JsonNode.class, JsonNode.class, Properties.class,
+                String.class, String.class, taxClass());
+        m.setAccessible(true);
+        Path xml = Files.createTempFile("zugferd", ".xml");
+        m.invoke(null, xml, payment, affiliate, config, "GS-2026-0006",
+                "17.09.2026 bis 17.09.2026", taxTreatment(false));
+        return Files.readString(xml, StandardCharsets.UTF_8);
+    }
+
+    private static JsonNode zugferdPayment() throws Exception {
+        return new ObjectMapper().readTree("""
+                {
+                  "id":"3433225","amount":"1.47","currency":"EUR","created_at":"2026-09-17T16:35:00Z",
+                  "payment_details":{"account_number":"DE02120300000000202051",
+                                     "branch_code":"BYLADEM1001","account_name":"Test2"}
+                }
+                """);
+    }
+
+    private static JsonNode zugferdAffiliate() throws Exception {
+        return new ObjectMapper().readTree("""
+                {"name":"Test2 Nachnahme","address_1":"Keltenweg 16","zip":"77966",
+                 "city":"Kappel","country":"DE","tax_identification_number":"de123654"}
+                """);
+    }
+
+    /**
+     * Regression: SpecifiedTradeSettlementPaymentMeans stand hinter ApplicableTradeTax. Die
+     * CII-Sequenz verlangt es davor - der KoSIT-Validator wies das Dokument per XSD-Fehler zurueck.
+     */
+    @Test
+    void zugferd_paymentMeansStehtVorApplicableTradeTax() throws Exception {
+        String xml = zugferdXml(zugferdPayment(), zugferdAffiliate(), bankTestConfig());
+
+        int settlement = xml.indexOf("<ram:ApplicableHeaderTradeSettlement>");
+        assertTrue(settlement >= 0, "ApplicableHeaderTradeSettlement muss vorhanden sein");
+        int paymentMeans = xml.indexOf("<ram:SpecifiedTradeSettlementPaymentMeans>", settlement);
+        int headerTax = xml.indexOf("<ram:ApplicableTradeTax>", settlement);
+        assertTrue(paymentMeans >= 0, "PaymentMeans muss im Settlement stehen");
+        assertTrue(headerTax >= 0, "ApplicableTradeTax muss im Settlement stehen");
+        assertTrue(paymentMeans < headerTax,
+                "CII-Sequenz: PaymentMeans muss vor ApplicableTradeTax stehen");
+    }
+
+    /** BT-109: Ohne TaxBasisTotalAmount schlaegt die EN16931-Summenpruefung fehl. */
+    @Test
+    void zugferd_enthaeltTaxBasisTotalAmount() throws Exception {
+        String xml = zugferdXml(zugferdPayment(), zugferdAffiliate(), bankTestConfig());
+        assertTrue(xml.contains("<ram:TaxBasisTotalAmount>1.47</ram:TaxBasisTotalAmount>"),
+                "TaxBasisTotalAmount ist Pflicht und muss dem Nettobetrag entsprechen");
+    }
+
+    /** BT-129 / BT-146: Die Rechnungszeile braucht Menge und Einzelpreis. */
+    @Test
+    void zugferd_zeileHatMengeUndEinzelpreis() throws Exception {
+        String xml = zugferdXml(zugferdPayment(), zugferdAffiliate(), bankTestConfig());
+        assertTrue(xml.contains("<ram:BilledQuantity unitCode=\"C62\">1</ram:BilledQuantity>"),
+                "Die Zeile muss eine Menge tragen");
+        assertTrue(xml.contains("<ram:NetPriceProductTradePrice><ram:ChargeAmount>1.47</ram:ChargeAmount>"),
+                "Die Zeile muss einen Einzelpreis tragen");
+    }
+
+    /** Eine Steuernummer ohne Inhalt ist schemawidrig - dann darf das Element ganz fehlen. */
+    @Test
+    void zugferd_laesstLeereSteuernummerWeg() throws Exception {
+        Properties config = bankTestConfig();
+        config.setProperty("eInvoiceBuyerVatId", "DE459084219");
+        config.remove("eInvoiceBuyerTaxNumber");
+
+        String xml = zugferdXml(zugferdPayment(), zugferdAffiliate(), config);
+
+        assertFalse(xml.contains("<ram:ID schemeID=\"FC\"></ram:ID>"),
+                "Leere Steuernummer darf nicht ausgegeben werden");
+        assertTrue(xml.contains("<ram:ID schemeID=\"VA\">DE459084219</ram:ID>"),
+                "Die vorhandene USt-IdNr muss erhalten bleiben");
+    }
+
     /** Fehlt die Bankverbindung am Zahllauf, greifen die Stammdaten der Beraterin. */
     @Test
     void gutschrift_faelltAufStammdatenZurueck() throws Exception {
