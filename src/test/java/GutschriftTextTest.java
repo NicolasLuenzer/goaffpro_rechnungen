@@ -532,13 +532,18 @@ class GutschriftTextTest {
     // ── ZUGFeRD: Elementreihenfolge und Pflichtfelder des CII-Schemas ──
 
     private static String zugferdXml(JsonNode payment, JsonNode affiliate, Properties config) throws Exception {
+        return zugferdXml(payment, affiliate, config, false);
+    }
+
+    private static String zugferdXml(JsonNode payment, JsonNode affiliate, Properties config,
+                                     boolean isKlein) throws Exception {
         Method m = WebUiServer.class.getDeclaredMethod("createZugferdInvoiceXml",
                 Path.class, JsonNode.class, JsonNode.class, Properties.class,
                 String.class, String.class, taxClass());
         m.setAccessible(true);
         Path xml = Files.createTempFile("zugferd", ".xml");
         m.invoke(null, xml, payment, affiliate, config, "GS-2026-0006",
-                "17.09.2026 bis 17.09.2026", taxTreatment(false));
+                "17.09.2026 bis 17.09.2026", taxTreatment(isKlein));
         return Files.readString(xml, StandardCharsets.UTF_8);
     }
 
@@ -647,6 +652,29 @@ class GutschriftTextTest {
                 "Eine USt-IdNr muss als VA ausgewiesen werden");
         assertTrue(xmlTax.contains("<ram:ID schemeID=\"FC\">12357895</ram:ID>"),
                 "Eine Steuernummer muss als FC ausgewiesen werden");
+    }
+
+    /**
+     * BR-E-02: Bei Steuerbefreiung (Kategorie E) verlangt EN16931 BT-31, BT-32 oder BT-63.
+     * Eine Kleinunternehmerin hat keine USt-IdNr - ihre Steuernummer als BT-32 genuegt aber.
+     * Ohne diese Zeile waere fuer sie ueberhaupt keine konforme E-Gutschrift moeglich.
+     */
+    @Test
+    void zugferd_kleinunternehmerinMitSteuernummerIstKonform() throws Exception {
+        JsonNode affiliate = new ObjectMapper().readTree("""
+                {"id":"21004180","name":"Test1 Nachname","email":"test1@vemmina.com",
+                 "phone":"+499798798","address_1":"Im Oberdorf 3","zip":"77966",
+                 "city":"Kappel","country":"DE","tax_identification_number":"21/815/30140"}
+                """);
+
+        String xml = zugferdXml(zugferdPayment(), affiliate, bankTestConfig(), true);
+
+        assertTrue(xml.contains("<ram:CategoryCode>E</ram:CategoryCode>"),
+                "Kleinunternehmerin muss als steuerbefreit ausgewiesen sein");
+        assertTrue(xml.contains("<ram:ID schemeID=\"FC\">21/815/30140</ram:ID>"),
+                "Die Steuernummer muss als BT-32 im SellerTradeParty stehen (BR-E-02)");
+        assertFalse(xml.contains("schemeID=\"VA\">21/815/30140"),
+                "Eine Steuernummer darf nicht als USt-IdNr ausgezeichnet werden");
     }
 
     /** BR-DE-2 / BT-10: Kontaktgruppe der Beraterin und Referenz der Ausstellerin. */

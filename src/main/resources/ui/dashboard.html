@@ -4100,7 +4100,10 @@
         ['Adresse', row.address],
         ['Land', row.country],
         ['Geburtsdatum', row.dateOfBirth],
-        ['Umsatzsteuernummer', row.taxNumber],
+        // Bewusst beide Begriffe: Kleinunternehmerinnen haben keine Umsatzsteuer-ID und lassen
+        // das Feld bei der Beschriftung "Umsatzsteuernummer" folgerichtig leer. Für die
+        // E-Gutschrift genügt aber die Steuernummer (BT-32) - ohne sie ist der Beleg unbrauchbar.
+        ['Steuernummer oder Umsatzsteuer-ID', row.taxNumber],
         ['Zahlmethode', row.paymentMethod],
         ['IBAN', row.iban],
         ['Kontoinhaber', row.ibanOwner]
