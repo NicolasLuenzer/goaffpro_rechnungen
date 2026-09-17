@@ -4213,41 +4213,15 @@ public class WebUiServer {
                 // Belegnummer gezogen werden – generateNextDocumentNumber persistiert sofort.
                 String periodLabel = buildPaymentPeriodLabel(payment);
                 DocumentKindDecision decision = resolveDocumentKind(payment, config);
-                DocumentKind kind;
-                boolean kindOverridden = false;
-                if (decision.mixed()) {
-                    DocumentKind override = DocumentKind.fromWireValue(asText(body, "documentKind").trim(), null);
-                    if (override == null) {
-                        Map<String, Object> conflict = new LinkedHashMap<>();
-                        conflict.put("error", "Der Zahllauf enthält Provisionen vor und ab dem Stichtag "
-                                + rechnungCutoffDateRaw(config)
-                                + ". Es wurde kein Beleg erzeugt und keine Belegnummer vergeben. "
-                                + "Bitte manuell entscheiden, ob eine Gutschrift oder eine Rechnung ausgestellt wird.");
-                        conflict.put("code", "MIXED_PERIOD");
-                        conflict.put("paymentId", paymentId);
-                        conflict.put("periodLabel", periodLabel);
-                        conflict.put("cutoffDate", rechnungCutoffDateRaw(config));
-                        conflict.put("beforeCutoffCount", decision.beforeCutoffCount());
-                        conflict.put("fromCutoffCount", decision.fromCutoffCount());
-                        conflict.put("beforeCutoffAmount", decision.beforeCutoffAmount());
-                        conflict.put("fromCutoffAmount", decision.fromCutoffAmount());
-                        conflict.put("suggestedDocumentKind",
-                                decision.fromCutoffAmount() >= decision.beforeCutoffAmount() ? "gutschrift" : "rechnung");
-                        sendResponse(exchange, 409, "application/json", OBJECT_MAPPER.writeValueAsString(conflict));
-                        return;
-                    }
-                    kind = override;
-                    kindOverridden = true;
-                } else {
-                    // Außerhalb des Mixed-Falls wird ein mitgesendetes documentKind bewusst ignoriert.
-                    kind = decision.kind();
-                }
+                // Die Dokumentart wird allein aus dem Auszahlungsdatum abgeleitet; ein mitgesendetes
+                // documentKind wird bewusst ignoriert. Die Stellschraube ist der Stichtag.
+                DocumentKind kind = decision.kind();
 
                 Files.createDirectories(runExportDir);
 
                 String timestamp = FILE_TIMESTAMP.format(LocalDateTime.now());
                 String gutschriftNr = generateNextDocumentNumber(config, kind);
-                boolean isKleinunternehmer = affiliate == null || asText(affiliate, "tax_identification_number").isBlank();
+                TaxTreatment taxTreatment = resolveTaxTreatment(affiliate);
                 String baseFilename = "provisionsnachweis_" + sanitizeFilename(gutschriftNr) + "_" + timestamp;
                 Path pdfPath = runExportDir.resolve(baseFilename + ".pdf");
                 Path jsonPath = runExportDir.resolve(baseFilename + ".json");
@@ -4259,8 +4233,8 @@ public class WebUiServer {
                 createInvoiceDetailsPdf(pdfPath, response, affiliate, config, gutschriftNr, kind);
                 writeOriginalJson(jsonPath, response);
                 if (eInvoiceAttachAndStoreEnabled) {
-                    createZugferdInvoiceXml(zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer, kind);
-                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer, kind);
+                    createZugferdInvoiceXml(zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
+                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
                 }
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
@@ -4280,7 +4254,7 @@ public class WebUiServer {
                     String buyerCompanyNameForMail = buyerProperty(config, kind, "Name", kind.defaultBuyerName);
                     sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty(kind.mailTemplateKey), ""), resolveSmtpConfig(config), gutschriftNr, kind, buyerCompanyNameForMail);
                     String subject = documentMailSubject(kind, gutschriftNr, periodLabel, affiliateNameForMail);
-                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, kind, gutschriftNr, kindOverridden);
+                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, kind, gutschriftNr);
                 }
 
                 boolean opened = false;
@@ -4305,7 +4279,11 @@ public class WebUiServer {
                 payload.put("documentKindLabel", kind.label);
                 payload.put("documentNumber", gutschriftNr);
                 payload.put("documentKindSource", decision.source());
-                payload.put("documentKindOverridden", kindOverridden);
+                // Nur informativ: wie viele Provisionen des Zahllaufs aus der Zeit vor dem Stichtag
+                // stammen. Auf die Dokumentart wirkt das nicht, es erklärt aber den Beleginhalt.
+                payload.put("beforeCutoffCount", decision.beforeCutoffCount());
+                payload.put("fromCutoffCount", decision.fromCutoffCount());
+                payload.put("cutoffDate", rechnungCutoffDateRaw(config));
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
@@ -5166,12 +5144,12 @@ public class WebUiServer {
     }
 
     private static void createZugferdInvoiceXml(Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
-                                                String documentNumber, String periodLabel, boolean isKleinunternehmer) throws IOException {
-        createZugferdInvoiceXml(xmlPath, payment, affiliate, config, documentNumber, periodLabel, isKleinunternehmer, DocumentKind.GUTSCHRIFT);
+                                                String documentNumber, String periodLabel, TaxTreatment taxTreatment) throws IOException {
+        createZugferdInvoiceXml(xmlPath, payment, affiliate, config, documentNumber, periodLabel, taxTreatment, DocumentKind.GUTSCHRIFT);
     }
 
     private static void createZugferdInvoiceXml(Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
-                                                String documentNumber, String periodLabel, boolean isKleinunternehmer,
+                                                String documentNumber, String periodLabel, TaxTreatment taxTreatment,
                                                 DocumentKind kind) throws IOException {
         boolean enabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true"));
         if (!enabled) {
@@ -5208,14 +5186,15 @@ public class WebUiServer {
         String currency = asText(payment, "currency");
         if (currency.isBlank()) currency = "EUR";
         double netAmount = parseDoubleSafeStatic(asText(payment, "amount"));
-        double vatAmount = calculateVat(netAmount, isKleinunternehmer);
+        double vatAmount = calculateVat(netAmount, taxTreatment);
         double grossAmount = netAmount + vatAmount;
 
-        // Tax block: E = exempt (§19 Kleinunternehmer), S = standard 19%
-        String taxCategoryCode = isKleinunternehmer ? "E" : "S";
-        String taxRatePercent = isKleinunternehmer ? "0" : "19";
-        String taxExemptionReason = isKleinunternehmer
-                ? "<ram:ExemptionReason>Steuerbefreiung gem. § 19 UStG (Kleinunternehmerregelung)</ram:ExemptionReason>" : "";
+        // E = befreit (§ 19 Kleinunternehmerin), S = Regelsatz 19 %, AE = Reverse Charge
+        String taxCategoryCode = taxTreatment.zugferdCategoryCode;
+        String taxRatePercent = taxTreatment.zugferdRatePercent;
+        String taxExemptionReason = taxTreatment.exemptionReason.isBlank()
+                ? ""
+                : "<ram:ExemptionReason>" + escapeXml(taxTreatment.exemptionReason) + "</ram:ExemptionReason>";
 
         String xml = """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -5444,7 +5423,14 @@ public class WebUiServer {
             row.put("address", formatAffiliateAddress(a));
             row.put("country", asText(a, "country"));
             row.put("dateOfBirth", asText(a, "date_of_birth"));
-            row.put("taxNumber", asText(a, "tax_identification_number"));
+            String taxNumber = asText(a, "tax_identification_number");
+            row.put("taxNumber", taxNumber);
+            // GoAffPro hat nur ein Sammelfeld. Sieht der Wert nach einer Umsatzsteuer-ID aus,
+            // entscheidet er über den Steuerausweis auf der Gutschrift - dann muss eine formal
+            // fehlerhafte ID hier auffallen, statt still eine falsche Steuer auszulösen.
+            row.put("taxNumberKind", !looksLikeVatId(taxNumber) ? (taxNumber.isBlank() ? "" : "steuernummer")
+                    : (isStructurallyValidVatId(taxNumber) ? "ustid" : "ustid-ungueltig"));
+            row.put("vatTreatment", resolveTaxTreatment(a).name());
             row.put("status", asText(a, "status"));
             row.put("paymentMethod", asText(a, "payment_method"));
             String iban = asText(a.path("payment_details"), "account_number").trim();
@@ -5752,15 +5738,11 @@ public class WebUiServer {
         attachmentPart.setDataHandler(new DataHandler(fds));
         attachmentPart.setFileName(pdfPath.getFileName().toString());
 
-        MimeBodyPart jsonAttachmentPart = new MimeBodyPart();
-        FileDataSource jsonDs = new FileDataSource(jsonPath.toFile());
-        jsonAttachmentPart.setDataHandler(new DataHandler(jsonDs));
-        jsonAttachmentPart.setFileName(jsonPath.getFileName().toString());
-
+        // Die JSON-Rohdaten werden weiterhin im Exportordner abgelegt, aber bewusst NICHT mehr
+        // mitgeschickt: sie sind eine interne Datenablage und für die Beraterin ohne Nutzen.
         MimeMultipart multipart = new MimeMultipart("mixed");
         multipart.addBodyPart(contentPart);
         multipart.addBodyPart(attachmentPart);
-        multipart.addBodyPart(jsonAttachmentPart);
         if (includeEInvoiceAttachments && zugferdPath != null && eInvoicePdfPath != null) {
             MimeBodyPart zugferdAttachmentPart = new MimeBodyPart();
             FileDataSource zugferdDs = new FileDataSource(zugferdPath.toFile());
@@ -6094,17 +6076,16 @@ public class WebUiServer {
 
     private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath) {
         appendMailLogEntry(config, paymentId, recipientMode, toEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoiceViewPdfPath,
-                DocumentKind.GUTSCHRIFT, "", false);
+                DocumentKind.GUTSCHRIFT, "");
     }
 
     private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath,
-                                           DocumentKind kind, String documentNumber, boolean kindOverridden) {
+                                           DocumentKind kind, String documentNumber) {
         List<Map<String, String>> entries = readMailLogEntries(config);
         Map<String, String> row = new LinkedHashMap<>();
         row.put("paymentId", Objects.toString(paymentId, ""));
         row.put("documentKind", (kind != null ? kind : DocumentKind.GUTSCHRIFT).wireValue());
         row.put("documentNumber", Objects.toString(documentNumber, ""));
-        if (kindOverridden) row.put("documentKindOverridden", "true");
         row.put("recipientMode", Objects.toString(recipientMode, "contact"));
         row.put("toEmail", Objects.toString(toEmail, ""));
         row.put("subject", Objects.toString(subject, ""));
@@ -6168,16 +6149,20 @@ public class WebUiServer {
     }
 
     private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
-                                                         String documentNumber, String periodLabel, boolean isKleinunternehmer) throws IOException {
+                                                         String documentNumber, String periodLabel, TaxTreatment taxTreatment) throws IOException {
         createEInvoicePdfWithEmbeddedXml(pdfPath, xmlPath, payment, affiliate, config,
-                documentNumber, periodLabel, isKleinunternehmer, DocumentKind.GUTSCHRIFT);
+                documentNumber, periodLabel, taxTreatment, DocumentKind.GUTSCHRIFT);
     }
 
     private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
-                                                         String gutschriftNr, String periodLabel, boolean isKleinunternehmer,
+                                                         String gutschriftNr, String periodLabel, TaxTreatment taxTreatment,
                                                          DocumentKind kind) throws IOException {
-        if (!Boolean.getBoolean("goaffpro.legacyEInvoicePdfRenderer")) {
-            createEInvoicePdfFromHtmlTemplate(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, isKleinunternehmer, kind);
+        // Der handgezeichnete PDFBox-Pfad unten kennt nur die Gutschrift: er liest fest
+        // eInvoiceBuyer*, druckt "Gutschriftempfängerin" und den § 14-Widerspruchshinweis. Eine
+        // Altfall-Rechnung käme dort mit falschem Aussteller UND falschem Rechtstext heraus -
+        // deshalb gilt die Umschalt-Property ausschließlich für Gutschriften.
+        if (kind == DocumentKind.RECHNUNG || !Boolean.getBoolean("goaffpro.legacyEInvoicePdfRenderer")) {
+            createEInvoicePdfFromHtmlTemplate(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
             return;
         }
 
@@ -6194,7 +6179,7 @@ public class WebUiServer {
         String paymentId = payment != null ? asText(payment, "id") : "-";
         String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
         double netAmount = parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0");
-        double vatAmount = calculateVat(netAmount, isKleinunternehmer);
+        double vatAmount = calculateVat(netAmount, taxTreatment);
         double grossAmount = netAmount + vatAmount;
         String amount = euroPdf(netAmount);
         String vatAmountStr = euroPdf(vatAmount);
@@ -6387,7 +6372,7 @@ public class WebUiServer {
                 y -= 20f;
 
                 // VAT row
-                if (isKleinunternehmer) {
+                if (!taxTreatment.chargesVat()) {
                     cs.setNonStrokingColor(new Color(242, 242, 242));
                     cs.addRect(tX, y - 26f, tW, 26f); cs.fill();
                     cs.setStrokingColor(new Color(200, 200, 200));
@@ -6492,10 +6477,10 @@ public class WebUiServer {
     }
 
     private static void createEInvoicePdfFromHtmlTemplate(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
-                                                         String documentNumber, String periodLabel, boolean isKleinunternehmer,
+                                                         String documentNumber, String periodLabel, TaxTreatment taxTreatment,
                                                          DocumentKind kind) throws IOException {
         String template = documentPdfTemplateHtml(config, kind);
-        String renderedHtml = renderEInvoicePdfViewHtml(template, payment, affiliate, config, documentNumber, periodLabel, isKleinunternehmer, kind);
+        String renderedHtml = renderEInvoicePdfViewHtml(template, payment, affiliate, config, documentNumber, periodLabel, taxTreatment, kind);
         String xhtml = normalizeHtmlForPdf(renderedHtml);
         String baseUri = pdfPath.toAbsolutePath().getParent() == null
                 ? Paths.get(".").toAbsolutePath().toUri().toString()
@@ -6634,12 +6619,12 @@ public class WebUiServer {
     }
 
     private static String renderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate, Properties config,
-                                                    String documentNumber, String periodLabel, boolean isKleinunternehmer) {
-        return renderEInvoicePdfViewHtml(template, payment, affiliate, config, documentNumber, periodLabel, isKleinunternehmer, DocumentKind.GUTSCHRIFT);
+                                                    String documentNumber, String periodLabel, TaxTreatment taxTreatment) {
+        return renderEInvoicePdfViewHtml(template, payment, affiliate, config, documentNumber, periodLabel, taxTreatment, DocumentKind.GUTSCHRIFT);
     }
 
     private static String renderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate, Properties config,
-                                                    String gutschriftNr, String periodLabel, boolean isKleinunternehmer,
+                                                    String gutschriftNr, String periodLabel, TaxTreatment taxTreatment,
                                                     DocumentKind kind) {
         String advisorName = affiliate != null ? asText(affiliate, "name") : "Beraterin";
         String advisorAddress = formatAffiliateAddress(affiliate);
@@ -6649,12 +6634,12 @@ public class WebUiServer {
         String paymentId = payment != null ? asText(payment, "id") : "-";
         String created = formatDateTimeEuropeBerlinStatic(payment != null ? asText(payment, "created_at") : "");
         double netAmountVal = parseDoubleSafeStatic(payment != null ? asText(payment, "amount") : "0");
-        double vatAmountVal = calculateVat(netAmountVal, isKleinunternehmer);
+        double vatAmountVal = calculateVat(netAmountVal, taxTreatment);
         double grossAmountVal = netAmountVal + vatAmountVal;
         String amount = euroStatic(netAmountVal);
         String vatAmountFormatted = euroStatic(vatAmountVal);
         String grossAmountFormatted = euroStatic(grossAmountVal);
-        String vatLine = isKleinunternehmer ? "Gem. § 19 UStG keine USt." : "Umsatzsteuer (19 %)";
+        String vatLine = taxTreatment.totalsLabel;
         String currency = payment != null ? asText(payment, "currency") : "EUR";
         String buyerCompanyName = buyerProperty(config, kind, "Name", kind.defaultBuyerName);
         String buyerStreet = buyerProperty(config, kind, "Street", "");
@@ -6672,12 +6657,31 @@ public class WebUiServer {
         String advisorBic = parseAffiliatePaymentField(affiliate, "bic");
         String advisorAccountHolder = parseAffiliatePaymentField(affiliate, "account_holder");
         if (advisorAccountHolder.isBlank()) advisorAccountHolder = advisorName;
+        // GoAffPro kennt nur ein Sammelfeld. Steht dort eine Umsatzsteuer-ID, muss der Beleg sie
+        // auch so benennen - "Steuernummer: DE449899715" wäre schlicht falsch beschriftet.
+        boolean advisorHasVatId = looksLikeVatId(tax);
+        String advisorTaxLabel = advisorHasVatId ? "USt-IdNr" : "Steuernummer";
+        String advisorVatId = advisorHasVatId ? normalizeVatId(tax) : "";
+        // Ohne Wert gar keine Zeile - eine Beschriftung ohne Inhalt sieht nach einem Fehler aus.
+        String advisorTaxLine = tax.isBlank() ? "" : advisorTaxLabel + ": " + escapeHtmlEmail(tax);
 
         return template
+                .replace("{{advisorTaxLine}}", advisorTaxLine)
+                .replace("{{taxNote}}", taxTreatment.documentNote.isBlank() ? ""
+                        : "<div>" + escapeHtmlEmail(taxTreatment.documentNote) + "</div>")
                 .replace("{{advisorName}}", escapeHtmlEmail(advisorName))
                 .replace("{{advisorAddress}}", escapeHtmlEmail(advisorAddress))
                 .replace("{{advisorEmail}}", escapeHtmlEmail(advisorEmail))
                 .replace("{{advisorPhone}}", escapeHtmlEmail(advisorPhone))
+                .replace("{{advisorTaxLabel}}", escapeHtmlEmail(advisorTaxLabel))
+                .replace("{{advisorVatId}}", escapeHtmlEmail(advisorVatId))
+                .replace("{{issuerContactName}}", escapeHtmlEmail(buyerProperty(config, kind, "ContactName", "Buchhaltung")))
+                .replace("{{issuerContactEmail}}", escapeHtmlEmail(buyerProperty(config, kind, "ContactEmail", "buchhaltung@sr-gmbh.de")))
+                .replace("{{issuerPublicEmail}}", escapeHtmlEmail(buyerProperty(config, kind, "PublicEmail", "info@vemmina.de")))
+                .replace("{{issuerRegister}}", escapeHtmlEmail(buyerProperty(config, kind, "Register",
+                        "Handelsregister bei Amtsgericht Gießen: HRB 12366")))
+                .replace("{{issuerManagement}}", escapeHtmlEmail(buyerProperty(config, kind, "Management",
+                        "Vertreten durch die Geschäftsleitung: M.Sc. Hans Nicolas Lünzer, Joachim Rücker")))
                 .replace("{{advisorTaxNumber}}", escapeHtmlEmail(tax))
                 .replace("{{advisorIban}}", escapeHtmlEmail(advisorIban))
                 .replace("{{advisorBic}}", escapeHtmlEmail(advisorBic))
@@ -6836,6 +6840,8 @@ public class WebUiServer {
                         <div style="margin-top:8px;font-weight:700;">Gutschriftausstellerin (Leistungsempf&auml;ngerin)</div>
                         <div>USt-IdNr: {{buyerVatId}}</div>
                         <div>Steuernummer: {{buyerTaxNumber}}</div>
+                        <div style="margin-top:8px;">{{issuerContactName}}</div>
+                        <div>{{issuerContactEmail}}</div>
                       </td>
                     </tr>
                   </table>
@@ -6852,7 +6858,7 @@ public class WebUiServer {
                         <div style="margin-top:8px;" class="muted">Gutschriftempf&auml;ngerin (Leistungserbringerin)</div>
                         <div class="muted">E-Mail: {{advisorEmail}}</div>
                         <div class="muted">Telefon: {{advisorPhone}}</div>
-                        <div class="muted">Steuernummer: {{advisorTaxNumber}}</div>
+                        <div class="muted">{{advisorTaxLine}}</div>
                       </td>
                       <td style="vertical-align:top;width:42%;">
                         <table style="width:100%;font-size:10px;">
@@ -6870,28 +6876,36 @@ public class WebUiServer {
                   <table style="width:100%;font-size:10px;margin-bottom:34px;">
                     <thead>
                       <tr class="rule">
-                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:48px;">Pos</th>
-                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;">Beschreibung</th>
-                        <th style="text-align:right;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:140px;">Betrag</th>
+                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:34px;">Pos</th>
+                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:86px;">Nummer</th>
+                        <th style="text-align:left;padding:8px 8px;border-bottom:1px solid #d6dbe2;">Artikel</th>
+                        <th style="text-align:right;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:58px;">Anzahl</th>
+                        <th style="text-align:right;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:96px;">Preis</th>
+                        <th style="text-align:right;padding:8px 8px;border-bottom:1px solid #d6dbe2;width:104px;">Summe</th>
                       </tr>
                     </thead>
                     <tbody>
                       <tr>
                         <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">1</td>
-                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">Vermittlungsprovision - Provisionszeitraum {{periodLabel}}</td>
-                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">{{amount}} ({{currency}})</td>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">{{paymentId}}</td>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;">Vermittlungsprovision Provisionszeitraum {{periodLabel}}</td>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">1,00</td>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">{{amount}}</td>
+                        <td style="padding:9px 8px;border-bottom:1px solid #e5e7eb;text-align:right;">{{amount}}</td>
                       </tr>
                     </tbody>
                   </table>
 
-                  <table style="width:42%;margin-left:58%;font-size:10px;margin-bottom:28px;">
+                  <table style="width:46%;margin-left:54%;font-size:10px;margin-bottom:28px;">
+                    <tr><td style="padding:4px 0;">Gesamt netto</td><td style="padding:4px 0;text-align:right;">{{amount}}</td></tr>
                     <tr><td style="padding:4px 0;">Zwischensumme (netto)</td><td style="padding:4px 0;text-align:right;">{{amount}}</td></tr>
                     <tr><td style="padding:4px 0;">{{vatLine}}</td><td style="padding:4px 0;text-align:right;">{{vatAmount}}</td></tr>
-                    <tr><td style="padding:4px 0;border-top:1px solid #d6dbe2;">Gesamtsumme</td><td style="padding:4px 0;border-top:1px solid #d6dbe2;text-align:right;">{{grossAmount}}</td></tr>
-                    <tr><td style="padding:5px 0;font-weight:700;">Auszahlungsbetrag</td><td style="padding:5px 0;text-align:right;font-weight:700;">{{grossAmount}}</td></tr>
+                    <tr><td style="padding:5px 0;border-top:1px solid #d6dbe2;font-weight:700;">Gesamtsumme</td><td style="padding:5px 0;border-top:1px solid #d6dbe2;text-align:right;font-weight:700;">{{grossAmount}}</td></tr>
+                    <tr><td style="padding:5px 0;">Auszahlungsbetrag</td><td style="padding:5px 0;text-align:right;">{{grossAmount}}</td></tr>
                   </table>
 
                   <div style="margin-bottom:20px;">
+                    {{taxNote}}
                     <div>Gutschrift gem&auml;&szlig; &sect; 14 Abs. 2 Satz 5 UStG.</div>
                     <div>Bitte pr&uuml;fen Sie diese Gutschrift. Die Gutschrift verliert ihre Wirkung als Rechnung, soweit ihr widersprochen wird.</div>
                   </div>
@@ -6906,8 +6920,10 @@ public class WebUiServer {
                   <div style="margin-top:42px;border-top:1px solid #d6dbe2;padding-top:10px;text-align:center;font-size:9px;line-height:1.45;" class="muted">
                     <div>{{buyerCompanyName}}</div>
                     <div>{{buyerAddress}}</div>
-                    <div>USt-IdNr: {{buyerVatId}}</div>
-                    <div>Steuernummer: {{buyerTaxNumber}}</div>
+                    <div>{{issuerPublicEmail}}</div>
+                    <div>USt-IdNr: {{buyerVatId}} &middot; Steuernummer: {{buyerTaxNumber}}</div>
+                    <div>{{issuerRegister}}</div>
+                    <div>{{issuerManagement}}</div>
                   </div>
                 </body>
                 </html>
@@ -7034,7 +7050,8 @@ public class WebUiServer {
     }
 
     private static String euroStatic(double value) {
-        return String.format(java.util.Locale.GERMANY, "%.2f €", value);
+        // Mit Tausenderpunkt wie in den übrigen Rechnungen des Hauses: 2.527,56 €
+        return String.format(java.util.Locale.GERMANY, "%,.2f €", value);
     }
 
     private static String euroPdf(double value) {
@@ -7293,9 +7310,15 @@ public class WebUiServer {
         }
     }
 
-    /** Firmen-/Gegenparteidaten je Dokumentart: Key-Präfix + Suffix ergibt den bestehenden Config-Key. */
+    /**
+     * Firmen-/Gegenparteidaten je Dokumentart: Key-Präfix + Suffix ergibt den bestehenden Config-Key.
+     *
+     * Ein gesetzter, aber leerer Wert zählt wie ein fehlender. Vorher griff der Vorgabewert nur
+     * bei null, sodass ein "eInvoiceBuyerName=" in der Konfiguration den Briefkopf namenlos liess.
+     */
     private static String buyerProperty(Properties config, DocumentKind kind, String suffix, String fallback) {
-        return Objects.toString(config.getProperty(kind.buyerKeyPrefix + suffix), fallback).trim();
+        String value = Objects.toString(config.getProperty(kind.buyerKeyPrefix + suffix), "").trim();
+        return value.isBlank() ? Objects.toString(fallback, "").trim() : value;
     }
 
     private static String documentProviderName(Properties config, DocumentKind kind) {
@@ -7430,20 +7453,35 @@ public class WebUiServer {
         return date.atStartOfDay(BERLIN_ZONE).toInstant();
     }
 
-    /** Ergebnis der Stichtagsprüfung. mixed == true bedeutet: kein Dokument, keine Nummer. */
-    private record DocumentKindDecision(DocumentKind kind, boolean mixed, String source,
+    /**
+     * Ergebnis der Stichtagsprüfung. Die Zähler beschreiben, wie sich die Provisionen des
+     * Zahllaufs auf die Zeit vor und ab dem Stichtag verteilen - rein informativ, sie
+     * beeinflussen die Dokumentart nicht.
+     */
+    private record DocumentKindDecision(DocumentKind kind, String source,
                                         int beforeCutoffCount, int fromCutoffCount,
                                         double beforeCutoffAmount, double fromCutoffAmount) {
     }
 
+    /**
+     * Maßgeblich ist das Auszahlungsdatum des Zahllaufs (payment.created_at), nicht das
+     * Entstehungsdatum der einzelnen Provision.
+     *
+     * Bis September 2026 entschieden hier die transactions[].created_at. Das widersprach der
+     * fachlichen Regel ("Provisionen, die ausgezahlt wurden ab dem Stichtag"): eine Auszahlung
+     * im Februar 2026 über Provisionen aus 2025 ergab eine Rechnung, obwohl für denselben
+     * Zahllauf bereits Gutschriften ausgestellt waren. Zudem konnte ein Zahllauf beide Seiten
+     * des Stichtags berühren und wurde dann blockiert - mit einem einzigen Auszahlungsdatum
+     * je Zahllauf kann dieser Fall nicht mehr auftreten.
+     */
     private static DocumentKindDecision resolveDocumentKind(JsonNode payment, Properties config) {
         Instant cutoff = resolveRechnungCutoffInstant(config);
-        JsonNode transactions = payment != null ? payment.get("transactions") : null;
 
         int before = 0;
         int from = 0;
         double beforeSum = 0.0;
         double fromSum = 0.0;
+        JsonNode transactions = payment != null ? payment.get("transactions") : null;
         if (transactions != null && transactions.isArray()) {
             for (JsonNode tx : transactions) {
                 Instant ts;
@@ -7463,23 +7501,12 @@ public class WebUiServer {
             }
         }
 
-        if (before > 0 && from > 0) {
-            return new DocumentKindDecision(null, true, "transactions", before, from, beforeSum, fromSum);
-        }
-        if (before > 0) {
-            return new DocumentKindDecision(DocumentKind.RECHNUNG, false, "transactions", before, 0, beforeSum, 0.0);
-        }
-        if (from > 0) {
-            return new DocumentKindDecision(DocumentKind.GUTSCHRIFT, false, "transactions", 0, from, 0.0, fromSum);
-        }
-
-        // Kein auswertbares Transaktionsdatum -> Rückfall auf das Zahllauf-Datum.
         try {
             Instant paid = OffsetDateTime.parse(asText(payment, "created_at")).toInstant();
             DocumentKind kind = paid.isBefore(cutoff) ? DocumentKind.RECHNUNG : DocumentKind.GUTSCHRIFT;
-            return new DocumentKindDecision(kind, false, "paymentCreatedAt", 0, 0, 0.0, 0.0);
+            return new DocumentKindDecision(kind, "paymentCreatedAt", before, from, beforeSum, fromSum);
         } catch (Exception ignored) {
-            return new DocumentKindDecision(DocumentKind.GUTSCHRIFT, false, "default", 0, 0, 0.0, 0.0);
+            return new DocumentKindDecision(DocumentKind.GUTSCHRIFT, "default", before, from, beforeSum, fromSum);
         }
     }
 
@@ -7507,8 +7534,91 @@ public class WebUiServer {
         return generateNextDocumentNumber(config, DocumentKind.GUTSCHRIFT);
     }
 
-    private static double calculateVat(double netAmount, boolean isKleinunternehmer) {
-        return isKleinunternehmer ? 0.0 : netAmount * 0.19;
+    /**
+     * Steuerliche Behandlung der Provision, abgeleitet aus der Umsatzsteuer-ID der Beraterin.
+     *
+     * GoAffPro hat kein eigenes USt-ID-Feld - tax_identification_number ist ein Sammelfeld, in dem
+     * Steuernummern, Steuer-IDs und Umsatzsteuer-IDs nebeneinander stehen. Eine Steuernummer hat
+     * jede steuerpflichtige Person und sagt nichts über Umsatzsteuerpflicht aus; entscheidend ist
+     * allein eine Umsatzsteuer-ID (Ländercode + Ziffern).
+     */
+    enum TaxTreatment {
+        KLEINUNTERNEHMER("E", "0", 0.0, "Umsatzsteuer (0%)",
+                "Steuerbefreiung gem. § 19 UStG (Kleinunternehmerregelung)",
+                "Gem. § 19 UStG wird keine Umsatzsteuer ausgewiesen."),
+        // Wortlaut wie in den übrigen Rechnungen des Hauses, damit die Belege gleich aussehen.
+        STANDARD("S", "19", 0.19, "Umsatzsteuer (19,0%)", "", ""),
+        REVERSE_CHARGE("AE", "0", 0.0, "Umsatzsteuer (0%)",
+                "Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge)",
+                "Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge).");
+
+        final String zugferdCategoryCode;
+        final String zugferdRatePercent;
+        final double rate;
+        /** Kurze Beschriftung im Summenblock - lange Sätze sprengen dort die Spaltenbreite. */
+        final String totalsLabel;
+        final String exemptionReason;
+        /** Rechtlicher Hinweis unter dem Beleg, leer beim Regelsatz. */
+        final String documentNote;
+
+        TaxTreatment(String zugferdCategoryCode, String zugferdRatePercent, double rate,
+                     String totalsLabel, String exemptionReason, String documentNote) {
+            this.zugferdCategoryCode = zugferdCategoryCode;
+            this.zugferdRatePercent = zugferdRatePercent;
+            this.rate = rate;
+            this.totalsLabel = totalsLabel;
+            this.exemptionReason = exemptionReason;
+            this.documentNote = documentNote;
+        }
+
+        boolean chargesVat() {
+            return rate > 0.0;
+        }
+    }
+
+    /** Vereinheitlicht Schreibweisen: Leerzeichen, Punkte, Binde- und Schrägstriche fallen weg. */
+    static String normalizeVatId(String raw) {
+        return Objects.toString(raw, "").replaceAll("[\\s.\\-/]", "").toUpperCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * Tolerant mit Absicht: Ländercode plus mindestens zwei Zeichen. Eine formal fehlerhafte
+     * Umsatzsteuer-ID soll trotzdem als solche behandelt werden - auffallen soll sie in der
+     * Stammdaten-Validierung, nicht dadurch, dass die Steuer stillschweigend entfällt.
+     */
+    static boolean looksLikeVatId(String raw) {
+        return normalizeVatId(raw).matches("[A-Z]{2}[0-9A-Z]{2,13}");
+    }
+
+    /** Streng, ausschliesslich für die Validierungsanzeige: länderspezifische Länge. */
+    static boolean isStructurallyValidVatId(String raw) {
+        String value = normalizeVatId(raw);
+        if (!looksLikeVatId(value)) return false;
+        String rest = value.substring(2);
+        // Nur die Länder, die hier tatsächlich vorkommen, werden genau geprüft. Für alle anderen
+        // bleibt es bei einer groben Längenprüfung - eine falsch-negative Warnung wäre schlimmer
+        // als keine, weil sie die Pflege der Stammdaten in die Irre führt.
+        return switch (value.substring(0, 2)) {
+            case "DE" -> rest.matches("\\d{9}");
+            case "LU" -> rest.matches("\\d{8}");
+            case "AT" -> rest.matches("U\\d{8}");
+            case "BE" -> rest.matches("\\d{10}");
+            case "NL" -> rest.matches("\\d{9}B\\d{2}");
+            default -> rest.matches("[0-9A-Z]{2,13}");
+        };
+    }
+
+    static TaxTreatment resolveTaxTreatment(JsonNode affiliate) {
+        if (affiliate == null) return TaxTreatment.KLEINUNTERNEHMER;
+        String vatId = normalizeVatId(asText(affiliate, "tax_identification_number"));
+        if (!looksLikeVatId(vatId)) return TaxTreatment.KLEINUNTERNEHMER;
+        // Deutsche Beraterinnen rechnen mit 19 %; eine ID aus einem anderen Land bedeutet eine
+        // Leistung ins EU-Ausland und damit den Übergang der Steuerschuld.
+        return vatId.startsWith("DE") ? TaxTreatment.STANDARD : TaxTreatment.REVERSE_CHARGE;
+    }
+
+    private static double calculateVat(double netAmount, TaxTreatment treatment) {
+        return netAmount * (treatment == null ? 0.0 : treatment.rate);
     }
 
     private static final String[][] SECRET_ENV_MAPPINGS = {

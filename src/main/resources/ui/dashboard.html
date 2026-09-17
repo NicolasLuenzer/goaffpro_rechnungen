@@ -1234,7 +1234,7 @@
               <col style="width:68px" /><col style="width:110px" /><col style="width:150px" /><col style="width:100px" /><col style="width:155px" /><col style="width:42px" /><col style="width:88px" /><col style="width:80px" /><col style="width:155px" /><col style="width:95px" /><col style="width:75px" /><col style="width:70px" /><col style="width:70px" /><col style="width:162px" />
             </colgroup>
             <thead>
-              <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th title="Umsatzsteuernummer">USt-Nr.</th><th>IBAN</th><th>Kontoinhaber</th><th>IBAN korrekt</th><th title="Es hängt ein Dokument an der Beraterin, dessen Titel oder Dateiname das Wort &quot;Vertrag&quot; enthält">Vertrag</th><th>Status</th><th>Aktion</th></tr>
+              <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th title="Steuernummer oder Umsatzsteuer-ID. Nur eine Umsatzsteuer-ID löst den Steuerausweis auf der Gutschrift aus.">Steuer-Nr. / USt-ID</th><th>IBAN</th><th>Kontoinhaber</th><th>IBAN korrekt</th><th title="Es hängt ein Dokument an der Beraterin, dessen Titel oder Dateiname das Wort &quot;Vertrag&quot; enthält">Vertrag</th><th>Status</th><th>Aktion</th></tr>
             </thead>
             <tbody id="validationBody"></tbody>
           </table>
@@ -2623,7 +2623,7 @@
         const historyHtml = !logs.length
           ? '<span class="mail-log-badge none">nicht versendet</span>'
           : `<span class="mail-log-badge sent">${logs.length} gesendet</span> <button type="button" class="secondary reminder-log-btn" data-advisor-id="${escapeHtml(String(r.id || ''))}">anzeigen</button><div class="settings-hint">letzte: ${escapeHtml(last.toEmail || '')} (${escapeHtml(last.sentAt || '')})</div>`;
-        return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderValidationCell(r.taxNumber)}${renderValidationCell(r.iban)}${renderValidationCell(r.ibanOwner)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderContractCell(r)}${renderValidationCell(r.status)}<td><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="settings-hint">${escapeHtml(missing.join(', ') || 'keine fehlenden Felder')}</div><div class="settings-hint">${historyHtml}</div></td></tr>`;
+        return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderTaxNumberCell(r)}${renderValidationCell(r.iban)}${renderValidationCell(r.ibanOwner)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderContractCell(r)}${renderValidationCell(r.status)}<td><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="settings-hint">${escapeHtml(missing.join(', ') || 'keine fehlenden Felder')}</div><div class="settings-hint">${historyHtml}</div></td></tr>`;
       }).join('');
       if (!rows.length) {
         // updateEmptyTablesVisibility blendet eine leere Tabelle samt Kopfzeile aus - dann waere
@@ -3134,7 +3134,7 @@
       const root = document.getElementById('mailLogModalRoot');
       if (!root) return;
       const rows = mailLogByPayment.get(String(paymentId || '')) || [];
-      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Versandhistorie Payment ${escapeHtml(paymentId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Beleg</th><th>Betreff</th><th>Anhänge</th></tr></thead><tbody>${rows.map(r => { const pdfLink = r.pdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.pdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.pdfFile || 'PDF')}</a>` : escapeHtml(r.pdfFile || '-'); const jsonLink = r.jsonPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.jsonPath)}" target="_blank" rel="noopener">${escapeHtml(r.jsonFile || 'JSON')}</a>` : escapeHtml(r.jsonFile || '-'); const zugferdLink = r.zugferdPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.zugferdPath)}" target="_blank" rel="noopener">${escapeHtml(r.zugferdFile || 'ZUGFeRD')}</a>` : escapeHtml(r.zugferdFile || '-'); const einvPdfLink = r.eInvoiceViewPdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.eInvoiceViewPdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.eInvoiceViewPdfFile || 'E-Gutschrift-PDF')}</a>` : escapeHtml(r.eInvoiceViewPdfFile || '-'); const documentCell = r.documentNumber ? `${r.documentKind === 'rechnung' ? 'Rechnung' : 'Gutschrift'} ${escapeHtml(r.documentNumber)}${r.documentKindOverridden === 'true' ? ' <span class="text-warn" title="Dokumentart wurde bei gemischtem Zahllauf manuell gewählt.">⚠</span>' : ''}` : '-'; return `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${documentCell}</td><td>${escapeHtml(r.subject || '')}</td><td>${pdfLink} | ${jsonLink} | ${zugferdLink} | ${einvPdfLink}</td></tr>`; }).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
+      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card"><div class="toolbar" style="justify-content:space-between;"><h3 style="margin:0;">Versandhistorie Payment ${escapeHtml(paymentId || '')}</h3><button id="closeMailLogModalBtn" type="button" class="secondary">Schließen</button></div>${rows.length ? `<table><thead><tr><th>Zeit</th><th>An</th><th>Modus</th><th>Beleg</th><th>Betreff</th><th>Anhänge</th></tr></thead><tbody>${rows.map(r => { const pdfLink = r.pdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.pdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.pdfFile || 'PDF')}</a>` : escapeHtml(r.pdfFile || '-'); const jsonLink = r.jsonPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.jsonPath)}" target="_blank" rel="noopener">${escapeHtml(r.jsonFile || 'JSON')}</a>` : escapeHtml(r.jsonFile || '-'); const zugferdLink = r.zugferdPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.zugferdPath)}" target="_blank" rel="noopener">${escapeHtml(r.zugferdFile || 'ZUGFeRD')}</a>` : escapeHtml(r.zugferdFile || '-'); const einvPdfLink = r.eInvoiceViewPdfPath ? `<a href="${API_BASE}/api/mail-log/download?path=${encodeURIComponent(r.eInvoiceViewPdfPath)}" target="_blank" rel="noopener">${escapeHtml(r.eInvoiceViewPdfFile || 'E-Gutschrift-PDF')}</a>` : escapeHtml(r.eInvoiceViewPdfFile || '-'); const documentCell = r.documentNumber ? `${r.documentKind === 'rechnung' ? 'Rechnung' : 'Gutschrift'} ${escapeHtml(r.documentNumber)}` : '-'; return `<tr><td>${escapeHtml(r.sentAt || '')}</td><td>${escapeHtml(r.toEmail || '')}</td><td>${escapeHtml(r.recipientMode || '')}</td><td>${documentCell}</td><td>${escapeHtml(r.subject || '')}</td><td>${pdfLink} | ${jsonLink} | ${zugferdLink} | ${einvPdfLink}</td></tr>`; }).join('')}</tbody></table>` : '<p class="status">Keine Versanddaten vorhanden.</p>'}</div></div>`;
       const close = () => { root.innerHTML = ''; };
       document.getElementById('closeMailLogModalBtn')?.addEventListener('click', close);
       root.querySelector('.mail-log-modal')?.addEventListener('click', (evt) => { if (evt.target.classList.contains('mail-log-modal')) close(); });
@@ -4032,7 +4032,9 @@
 
       const createdFiles = [];
       const failed = [];
-      const mixed = [];
+      // Zahlläufe, deren Provisionen aus der Zeit vor dem Stichtag stammen, obwohl erst danach
+      // ausgezahlt wurde. Rein informativ - der Beleg wird trotzdem erzeugt.
+      const straddling = [];
       const counts = { gutschrift: 0, rechnung: 0 };
 
       for (let i = 0; i < paymentIds.length; i++) {
@@ -4041,26 +4043,27 @@
         try {
           const data = await postInvoiceDetailsExport(paymentId);
           if (data.documentKind && counts[data.documentKind] !== undefined) counts[data.documentKind]++;
+          if (Number(data.beforeCutoffCount) > 0 && Number(data.fromCutoffCount) > 0) {
+            straddling.push({ paymentId, data });
+          }
           if (data.file) createdFiles.push(data.file);
           if (data.jsonFile) createdFiles.push(data.jsonFile);
           if (data.zugferdFile) createdFiles.push(data.zugferdFile);
           if (data.eInvoiceViewPdfFile) createdFiles.push(data.eInvoiceViewPdfFile);
         } catch (error) {
-          if (error.code === 'MIXED_PERIOD') mixed.push({ paymentId, details: error.details || {} });
-          else failed.push({ paymentId, message: error.message });
+          failed.push({ paymentId, message: error.message });
         }
       }
 
-      renderInvoiceExportResult(filesBox, createdFiles, failed, mixed);
+      renderInvoiceExportResult(filesBox, createdFiles, failed, straddling);
 
       const summary = describeCreatedDocuments(counts, createdFiles.length);
-      const mixedSuffix = mixed.length > 0 ? `, ${mixed.length} gemischte(r) Zahllauf/Zahlläufe offen` : '';
       if (failed.length === 0) {
-        status.textContent = `${summary}${mixedSuffix}.`;
+        status.textContent = `${summary}.`;
       } else if (createdFiles.length === 0) {
-        status.textContent = `Keine Belege erstellt. Fehler bei ${failed.length} Payment-ID(s)${mixedSuffix}.`;
+        status.textContent = `Keine Belege erstellt. Fehler bei ${failed.length} Payment-ID(s).`;
       } else {
-        status.textContent = `${summary}, ${failed.length} Fehler${mixedSuffix}.`;
+        status.textContent = `${summary}, ${failed.length} Fehler.`;
       }
     }
 
@@ -4072,7 +4075,7 @@
       return `${parts.join(' und ')} erstellt`;
     }
 
-    function renderInvoiceExportResult(filesBox, createdFiles, failed, mixed) {
+    function renderInvoiceExportResult(filesBox, createdFiles, failed, straddling) {
       if (!filesBox) return;
       const okHtml = createdFiles.length > 0
         ? `<strong>Exportierte Dateien (PDF, JSON, ZUGFeRD):</strong><br>${createdFiles.map(f => `<code>${escapeHtml(String(f))}</code>`).join('<br>')}`
@@ -4080,25 +4083,19 @@
       const failHtml = failed.length > 0
         ? `<br><br><strong>Fehler:</strong><br>${failed.map(f => `<code>${escapeHtml(String(f.paymentId))}</code>: ${escapeHtml(String(f.message))}`).join('<br>')}`
         : '';
-      const mixedHtml = mixed.length > 0
-        ? `<br><br><strong class="text-warn">⚠ Gemischte Zahlläufe (kein Beleg erzeugt, keine Belegnummer vergeben): ${mixed.length}</strong><br>`
-          + mixed.map(m => {
-              const d = m.details || {};
-              return `<code>${escapeHtml(String(m.paymentId))}</code> · ${escapeHtml(String(d.periodLabel || '-'))}`
-                + ` · vor Stichtag: ${d.beforeCutoffCount ?? 0} / ${formatEuroAmount(d.beforeCutoffAmount)}`
-                + ` · ab Stichtag: ${d.fromCutoffCount ?? 0} / ${formatEuroAmount(d.fromCutoffAmount)}`
-                + ` <button type="button" class="secondary mixed-decide-btn" data-payment-id="${escapeHtml(String(m.paymentId))}">Entscheiden</button>`;
+      // Hinweis statt Blockade: die Dokumentart steht über das Auszahlungsdatum fest, aber es
+      // hilft zu wissen, dass der Beleg Provisionen von vor dem Stichtag abrechnet.
+      const straddleList = Array.isArray(straddling) ? straddling : [];
+      const straddleHtml = straddleList.length > 0
+        ? `<br><br><strong>Hinweis: ${straddleList.length} Beleg(e) rechnen Provisionen von vor dem Stichtag ab</strong><br>`
+          + straddleList.map(m => {
+              const d = m.data || {};
+              return `<code>${escapeHtml(String(m.paymentId))}</code> · ${escapeHtml(String(d.documentKindLabel || 'Beleg'))} ${escapeHtml(String(d.documentNumber || ''))}`
+                + ` · vor Stichtag ${escapeHtml(String(d.cutoffDate || ''))}: ${d.beforeCutoffCount ?? 0} Provision(en)`
+                + ` · ab Stichtag: ${d.fromCutoffCount ?? 0}`;
             }).join('<br>')
         : '';
-      filesBox.innerHTML = `${okHtml}${failHtml}${mixedHtml}`;
-      filesBox.querySelectorAll('.mixed-decide-btn').forEach(btn => {
-        const paymentId = btn.dataset.paymentId;
-        const entry = mixed.find(m => String(m.paymentId) === String(paymentId));
-        btn.addEventListener('click', async () => {
-          const choice = await askMixedPeriodDecision(entry ? entry.details : { paymentId });
-          if (choice) await loadInvoiceDetailsPdf(paymentId, choice);
-        });
-      });
+      filesBox.innerHTML = `${okHtml}${failHtml}${straddleHtml}`;
     }
 
     function formatEuroAmount(value) {
@@ -4107,74 +4104,35 @@
       return n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
     }
 
-    async function postInvoiceDetailsExport(paymentId, documentKind) {
-      const payload = {
+    // Die Dokumentart leitet der Server allein aus dem Auszahlungsdatum ab; es gibt bewusst
+    // keinen manuellen Schalter. Die Stellschraube ist der Stichtag in den Einstellungen.
+    async function postInvoiceDetailsExport(paymentId) {
+      return apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
         paymentId,
         includeEInvoiceArtifacts: !!document.getElementById('includeEInvoiceArtifacts')?.checked
-      };
-      // documentKind wird serverseitig NUR bei gemischten Zahlläufen ausgewertet.
-      if (documentKind) payload.documentKind = documentKind;
-      return apiPost('/api/provisionen-goaffpro/invoice-details-pdf', payload);
-    }
-
-    /** Dreiwertige Entscheidung bei gemischtem Zahllauf: Gutschrift / Rechnung / Abbruch. */
-    function askMixedPeriodDecision(details) {
-      return new Promise(resolve => {
-        const root = document.getElementById('mailLogModalRoot');
-        if (!root) { resolve(null); return; }
-        const d = details || {};
-        root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card">
-          <h3 style="margin:0 0 8px 0;">Gemischter Zahllauf – bitte entscheiden</h3>
-          <p class="status">Payment-ID <strong>${escapeHtml(String(d.paymentId || '-'))}</strong>, Zeitraum ${escapeHtml(String(d.periodLabel || '-'))}.
-            Der Zahllauf enthält Provisionen vor <strong>und</strong> ab dem Stichtag ${escapeHtml(String(d.cutoffDate || '2026-01-01'))}.
-            Es wurde noch <strong>kein Beleg</strong> erzeugt und <strong>keine Belegnummer</strong> vergeben.</p>
-          <table><thead><tr><th>Bereich</th><th>Transaktionen</th><th>Summe</th></tr></thead><tbody>
-            <tr><td>vor Stichtag (Altfall → Rechnung)</td><td>${d.beforeCutoffCount ?? 0}</td><td>${formatEuroAmount(d.beforeCutoffAmount)}</td></tr>
-            <tr><td>ab Stichtag (→ Gutschrift)</td><td>${d.fromCutoffCount ?? 0}</td><td>${formatEuroAmount(d.fromCutoffAmount)}</td></tr>
-          </tbody></table>
-          <div class="toolbar" style="margin-top:12px;">
-            <button id="mixedChooseGutschrift" type="button">Als Gutschrift erstellen</button>
-            <button id="mixedChooseRechnung" type="button" class="secondary">Als Rechnung erstellen (Altfall)</button>
-            <button id="mixedCancel" type="button" class="secondary">Abbrechen</button>
-          </div>
-          <div class="settings-hint">Die Entscheidung wird im Versandprotokoll vermerkt.</div>
-        </div></div>`;
-        const close = value => { root.innerHTML = ''; resolve(value); };
-        document.getElementById('mixedChooseGutschrift')?.addEventListener('click', () => close('gutschrift'));
-        document.getElementById('mixedChooseRechnung')?.addEventListener('click', () => close('rechnung'));
-        document.getElementById('mixedCancel')?.addEventListener('click', () => close(null));
       });
     }
 
-    async function loadInvoiceDetailsPdf(paymentId, documentKind) {
+    async function loadInvoiceDetailsPdf(paymentId) {
       const status = document.getElementById('pollStatus');
       try {
-        if (!documentKind && shouldSendEmails() && getEmailRecipientMode() === 'advisor') {
+        if (shouldSendEmails() && getEmailRecipientMode() === 'advisor') {
           const confirmed = window.confirm('Die E-Mail wird an die Beraterinnen-Adresse gesendet. Möchtest du fortfahren?');
           if (!confirmed) {
             status.textContent = 'Aktion abgebrochen.';
             return;
           }
         }
-        let data;
-        try {
-          data = await postInvoiceDetailsExport(paymentId, documentKind);
-        } catch (error) {
-          if (error.code !== 'MIXED_PERIOD') throw error;
-          const choice = await askMixedPeriodDecision(error.details || { paymentId });
-          if (!choice) {
-            status.textContent = 'Abgebrochen – es wurde kein Beleg erzeugt und keine Belegnummer vergeben.';
-            return;
-          }
-          data = await postInvoiceDetailsExport(paymentId, choice);
-        }
+        const data = await postInvoiceDetailsExport(paymentId);
         await loadMailLog();
         renderTable();
         const label = `${data.documentKindLabel || 'Beleg'} ${data.documentNumber || ''}`.trim();
         const hints = [];
-        if (data.documentKind === 'rechnung') hints.push('Altfall vor Stichtag');
-        if (data.documentKindSource === 'paymentCreatedAt') hints.push('Dokumentart aus dem Zahllauf-Datum abgeleitet');
-        if (data.documentKindOverridden) hints.push('Dokumentart manuell gewählt');
+        if (data.documentKind === 'rechnung') hints.push('Altfall: vor dem Stichtag ausgezahlt');
+        // Der interessante Fall: nach dem Stichtag ausgezahlt, Provisionen aber von davor.
+        if (Number(data.beforeCutoffCount) > 0 && Number(data.fromCutoffCount) > 0) {
+          hints.push(`enthält ${data.beforeCutoffCount} Provision(en) von vor dem Stichtag`);
+        }
         const hintText = hints.length ? ` (${hints.join('; ')})` : '';
         status.textContent = data.opened
           ? `${label} erstellt und geöffnet: ${data.file}${hintText}`
@@ -4201,6 +4159,25 @@
       const text = escapeHtml(value || '');
       const emptyClass = String(value || '').trim() === '' ? ' class="validation-empty-cell"' : '';
       return `<td${emptyClass}>${text}</td>`;
+    }
+
+    /**
+     * GoAffPro hat nur ein Sammelfeld fuer Steuernummer und Umsatzsteuer-ID. Sieht der Wert nach
+     * einer USt-ID aus, entscheidet er ueber den Steuerausweis auf der Gutschrift - dann muss eine
+     * formal fehlerhafte ID hier auffallen, statt still eine falsche Steuer auszuloesen.
+     */
+    function renderTaxNumberCell(row) {
+        const value = String((row && row.taxNumber) || '').trim();
+        const kind = String((row && row.vatTreatment) || '');
+        if (!value) return `<td class="validation-empty-cell"></td>`;
+        switch (String((row && row.taxNumberKind) || '')) {
+          case 'ustid-ungueltig':
+            return `<td class="text-error" title="Sieht aus wie eine Umsatzsteuer-ID, hat aber kein gültiges Format. Es wird trotzdem Umsatzsteuer ausgewiesen – bitte prüfen.">⚠ ${escapeHtml(value)}</td>`;
+          case 'ustid':
+            return `<td title="Gültige Umsatzsteuer-ID${kind === 'REVERSE_CHARGE' ? ' aus dem EU-Ausland – Reverse Charge' : ' – 19 % werden ausgewiesen'}">${escapeHtml(value)}</td>`;
+          default:
+            return `<td class="settings-hint" title="Steuernummer, keine Umsatzsteuer-ID – es wird keine Umsatzsteuer ausgewiesen">${escapeHtml(value)}</td>`;
+        }
     }
 
     /**

@@ -35,10 +35,26 @@ class GutschriftTextTest {
         return (String) m.invoke(null, args);
     }
 
+    /** Die Bestandstests sprechen weiter in "Kleinunternehmerin ja/nein"; intern ist es ein Enum. */
+    static Class<?> taxClass() throws Exception {
+        return Class.forName("WebUiServer$TaxTreatment");
+    }
+
+    static Object taxTreatment(String name) throws Exception {
+        for (Object constant : taxClass().getEnumConstants()) {
+            if (((Enum<?>) constant).name().equals(name)) return constant;
+        }
+        throw new IllegalArgumentException("Unbekannte TaxTreatment-Konstante: " + name);
+    }
+
+    static Object taxTreatment(boolean isKlein) throws Exception {
+        return taxTreatment(isKlein ? "KLEINUNTERNEHMER" : "STANDARD");
+    }
+
     private static String invokeCalculateVat(double net, boolean isKlein) throws Exception {
-        Method m = WebUiServer.class.getDeclaredMethod("calculateVat", double.class, boolean.class);
+        Method m = WebUiServer.class.getDeclaredMethod("calculateVat", double.class, taxClass());
         m.setAccessible(true);
-        return m.invoke(null, net, isKlein).toString();
+        return m.invoke(null, net, taxTreatment(isKlein)).toString();
     }
 
     private static String invokeRenderEInvoicePdfViewHtml(String template, JsonNode payment, JsonNode affiliate,
@@ -47,9 +63,9 @@ class GutschriftTextTest {
         Method m = WebUiServer.class.getDeclaredMethod(
                 "renderEInvoicePdfViewHtml",
                 String.class, JsonNode.class, JsonNode.class, Properties.class,
-                String.class, String.class, boolean.class);
+                String.class, String.class, taxClass());
         m.setAccessible(true);
-        return (String) m.invoke(null, template, payment, affiliate, config, gutschriftNr, periodLabel, isKlein);
+        return (String) m.invoke(null, template, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment(isKlein));
     }
 
     private static void invokeCreateEInvoicePdf(Path pdf, Path xml, JsonNode payment, JsonNode affiliate,
@@ -58,9 +74,9 @@ class GutschriftTextTest {
         Method m = WebUiServer.class.getDeclaredMethod(
                 "createEInvoicePdfWithEmbeddedXml",
                 Path.class, Path.class, JsonNode.class, JsonNode.class, Properties.class,
-                String.class, String.class, boolean.class);
+                String.class, String.class, taxClass());
         m.setAccessible(true);
-        m.invoke(null, pdf, xml, payment, affiliate, config, gutschriftNr, periodLabel, isKlein);
+        m.invoke(null, pdf, xml, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment(isKlein));
     }
 
     private static boolean hasImageXObject(PDDocument document) throws Exception {
@@ -249,7 +265,8 @@ class GutschriftTextTest {
         assertTrue(text.contains("Gutschriftempf\u00e4ngerin (Leistungserbringerin)"),
                 "Die Beraterin muss als Gutschriftempfängerin beschriftet sein");
         assertTrue(text.contains("1,13"), "Beträge müssen im PDF erscheinen");
-        assertTrue(text.contains("EUR"), "Die Währung muss im PDF erscheinen");
+        // Beträge tragen das €-Zeichen wie in den übrigen Rechnungen des Hauses, nicht "EUR".
+        assertTrue(text.contains("€"), "Die Währung muss im PDF erscheinen");
         assertTrue(hasLogoImage, "Das Standard-PDF muss das lokal eingebettete Logo rendern");
         assertFalse(text.contains("{{"), "Das erzeugte PDF darf keine rohen Template-Platzhalter enthalten");
         assertFalse(text.contains("?"), "Das erzeugte PDF darf keine Ersatz-Fragezeichen enthalten");
@@ -285,7 +302,7 @@ class GutschriftTextTest {
                 payment, affiliate, config, "GS-2026-0001", "01.01.2026 bis 31.01.2026", false);
 
         assertTrue(rendered.contains("GS-2026-0001"));
-        assertTrue(rendered.contains("Umsatzsteuer (19 %)"));
+        assertTrue(rendered.contains("Umsatzsteuer (19,0%)"), "Wortlaut wie in den übrigen Rechnungen des Hauses");
         assertTrue(rendered.contains("23,46"));
         assertTrue(rendered.contains("146,91"));
         assertTrue(rendered.contains("123,45"));
