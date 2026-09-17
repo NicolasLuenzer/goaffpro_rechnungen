@@ -6853,7 +6853,7 @@ public class WebUiServer {
                 .replace("{{issuerRegister}}", escapeHtmlEmail(buyerProperty(config, kind, "Register",
                         "Handelsregister bei Amtsgericht Gießen: HRB 12366")))
                 .replace("{{issuerManagement}}", escapeHtmlEmail(buyerProperty(config, kind, "Management",
-                        "Vertreten durch die Geschäftsleitung: M.Sc. Hans Nicolas Lünzer, Joachim Rücker")))
+                        "Vertreten durch die Geschäftsleitung: M.Sc. Hans Nicolas Lünzer, Joachim Röcker")))
                 .replace("{{advisorTaxNumber}}", escapeHtmlEmail(tax))
                 .replace("{{advisorIban}}", escapeHtmlEmail(advisorIban))
                 .replace("{{advisorBic}}", escapeHtmlEmail(advisorBic))
@@ -7098,7 +7098,7 @@ public class WebUiServer {
                     <div>{{buyerCompanyName}}</div>
                     <div>{{buyerAddress}}</div>
                     <div>{{issuerPublicEmail}}</div>
-                    <div>USt-IdNr: {{buyerVatId}} &middot; Steuernummer: {{buyerTaxNumber}}</div>
+                    <div>USt-IdNr: {{buyerVatId}}</div>
                     <div>{{issuerRegister}}</div>
                     <div>{{issuerManagement}}</div>
                   </div>
