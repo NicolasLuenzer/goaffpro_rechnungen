@@ -156,6 +156,20 @@
     .msg-group.warn { border-color:var(--clr-warn-border); background:var(--clr-warn-bg); color:var(--clr-warn); }
     .msg-group.info { border-color:var(--clr-info-border); background:var(--clr-info-bg); color:var(--clr-info); }
     .msg-group.ok { border-color:var(--clr-success-border); background:var(--clr-success-bg); color:var(--clr-success); font-weight:600; }
+    /* Beraterinnen-Akte: Auswahl links, Akte rechts. Unter 768px stapeln beide (siehe @media). */
+    .akte-layout { display:grid; grid-template-columns:minmax(260px,320px) minmax(0,1fr); gap:16px; align-items:start; }
+    .akte-list-pane { border:1px solid var(--clr-border); border-radius:var(--radius-md); background:var(--clr-surface); padding:12px; }
+    .akte-list { max-height:min(70vh,700px); overflow-y:auto; }
+    .akte-detail-pane { min-width:0; }
+    .akte-entry { display:block; width:100%; text-align:left; border:1px solid transparent; border-radius:var(--radius-sm); padding:7px 9px; background:none; cursor:pointer; font-size:var(--fs-body); color:var(--clr-text); }
+    .akte-entry:hover { background:var(--clr-sidebar-hover); }
+    .akte-entry.selected { background:var(--clr-sidebar-active); border-color:var(--clr-border-strong); font-weight:600; }
+    .akte-entry .akte-entry-sub { display:block; color:var(--clr-muted); font-size:var(--fs-sm); font-weight:400; margin-top:1px; }
+    .akte-entry.orphan .akte-entry-name { color:var(--clr-muted); font-style:italic; }
+    .akte-section { margin-top:18px; }
+    .akte-section-head { display:flex; align-items:baseline; gap:8px; margin-bottom:6px; font-weight:700; }
+    .akte-section-count { color:var(--clr-muted); font-weight:400; font-size:var(--fs-sm); }
+    .akte-empty { color:var(--clr-muted); font-size:var(--fs-sm); padding:6px 0; }
     /* Beantwortet die erste Frage beim Oeffnen: laeuft gerade etwas, ja oder nein. */
     .sync-live-card { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin:12px 0; padding:16px 18px; border:1px solid var(--clr-border); border-radius:var(--radius-md); background:var(--clr-surface); box-shadow:var(--shadow-sm); }
     .sync-live-dot { width:13px; height:13px; border-radius:50%; flex:none; background:var(--clr-muted); }
@@ -429,6 +443,8 @@
 
       /* KPI grid: single column */
       .kpi-grid { grid-template-columns: 1fr; }
+      .akte-layout { grid-template-columns: 1fr; }
+      .akte-list { max-height: 260px; }
 
       /* Tables: horizontal scroll wrapper */
       table { display: block; overflow-x: auto; }
@@ -1096,6 +1112,29 @@
       panel.id = 'sync-panel';
       panel.innerHTML = `
         <h2>GoAffPro Sync</h2>
+        <div class="validation-subtabs">
+          <button type="button" class="validation-subtab active" data-akte-target="sync-overview-section">Sync &amp; Diagnose</button>
+          <button type="button" class="validation-subtab" data-akte-target="sync-akte-section">Beraterinnen-Akte</button>
+        </div>
+        <div id="sync-akte-section" class="validation-section">
+          <p class="status" id="akteDataSource">Datenbestand wird geladen ...</p>
+          <div class="akte-layout">
+            <div class="akte-list-pane">
+              <input id="akteSearch" type="text" placeholder="Suche nach Name, E-Mail, Ref-Code oder ID..." style="width:100%;margin-bottom:8px;" />
+              <p class="settings-hint" id="akteListStatus">Noch nicht geladen.</p>
+              <div class="akte-list" id="akteList"></div>
+            </div>
+            <div class="akte-detail-pane">
+              <div class="toolbar">
+                <button id="aktePrevBtn" class="secondary" type="button">&larr; Zurück</button>
+                <button id="akteNextBtn" class="secondary" type="button">Weiter &rarr;</button>
+                <span class="settings-hint" id="aktePosition"></span>
+              </div>
+              <div id="akteDetail"></div>
+            </div>
+          </div>
+        </div>
+        <div id="sync-overview-section" class="validation-section active">
         <div class="toolbar">
           <button id="syncRefreshBtn" class="secondary" type="button">Status aktualisieren</button>
           <button id="syncInitialBtn" class="secondary" type="button">Initialsync starten</button>
@@ -1197,6 +1236,7 @@
             <button id="backupImportApplyBtn" class="danger" type="button" disabled>Jetzt importieren und alles ersetzen</button>
           </div>
         </div>
+        </div>
       `;
       panels.appendChild(panel);
     }
@@ -1256,6 +1296,273 @@
         </div>
       `;
       panels.appendChild(panel);
+    }
+
+    // ── Beraterinnen-Akte ─────────────────────────────────────────────────────
+
+    const akteState = { rows: [], filtered: [], selectedId: null, detail: null };
+
+    const AKTE_SECTIONS = [
+      { key: 'payments', titel: 'Auszahlungen', spalten: [
+          ['Datum', r => formatSyncTimestamp(r.created_at)],
+          ['Betrag', r => formatEuroAmount(akteNumber(r.amount))],
+          ['Methode', r => r.payment_method || ''],
+          ['Konto', r => (r.payment_details && r.payment_details.account_number) || ''],
+          ['Transaktionen', r => (r.transactions || []).length]
+        ] },
+      { key: 'rewards', titel: 'Provisionen', spalten: [
+          ['Datum', r => formatSyncTimestamp(r.created_at)],
+          ['Art', r => r.type || ''],
+          ['Betrag', r => formatEuroAmount(akteNumber(r.amount))],
+          ['Status', r => r.status || '']
+        ] },
+      { key: 'transactions', titel: 'Transaktionskonto', spalten: [
+          ['Datum', r => formatSyncTimestamp(r.created_at)],
+          ['Ereignis', r => r.event_type || ''],
+          ['Bezug', r => `${r.entity_type || ''} ${r.entity_id || ''}`.trim()],
+          ['Betrag', r => formatEuroAmount(akteNumber(r.amount))],
+          // is_paid ist KEIN Ja/Nein, sondern die Payment-ID der deckenden Auszahlung.
+          ['Ausgezahlt mit', r => Number(r.is_paid) > 0 ? String(r.is_paid) : 'offen'],
+          ['Saldo danach', r => formatEuroAmount(akteNumber(r.endingBalance))]
+        ] },
+      { key: 'orders', titel: 'Bestellungen', spalten: [
+          ['Datum', r => formatSyncTimestamp(r.created_at)],
+          ['Nummer', r => r.number || ''],
+          ['Kundin', r => (r.customer && r.customer.name) || ''],
+          ['Summe', r => formatEuroAmount(akteNumber(r.total))],
+          ['Status', r => r.status || ''],
+          ['Herkunft', r => r.conversion_source || ''],
+          ['Positionen', r => (r.line_items || []).length]
+        ] },
+      { key: 'showcases', titel: 'Partys', spalten: [
+          ['Start', r => formatSyncTimestamp(r.starts_at)],
+          ['Ende', r => formatSyncTimestamp(r.ends_at)],
+          ['Gastgeberin', r => (r.config && r.config.hostName) || r.hostName || ''],
+          ['Bestellungen', r => (r.orders && r.orders.num_orders) || 0],
+          ['Umsatz', r => formatEuroAmount(akteNumber(r.orders && r.orders.total))],
+          ['Code', r => (r.customerDiscount && r.customerDiscount.code) || '']
+        ] },
+      { key: 'connections', titel: 'Kundenzuordnungen', spalten: [
+          ['Datum', r => formatSyncTimestamp(r.created_at)],
+          ['Läuft ab', r => formatSyncTimestamp(r.expires_at)],
+          ['Kundin', r => (r.customer && r.customer.name) || ''],
+          ['E-Mail', r => (r.customer && r.customer.email) || ''],
+          ['Neukundin', r => (r.customer && r.customer.is_new_customer) ? 'ja' : 'nein']
+        ] }
+    ];
+
+    /** Beträge kommen als String mit bis zu 6 Nachkommastellen ODER als Zahl, teils negativ. */
+    function akteNumber(value) {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : 0;
+    }
+
+    async function loadAkteList() {
+      const status = document.getElementById('akteListStatus');
+      const quelle = document.getElementById('akteDataSource');
+      if (status) status.textContent = 'Lade Beraterinnen ...';
+      try {
+        const data = await apiGet('/api/sync/akte/list');
+        akteState.rows = Array.isArray(data.rows) ? data.rows : [];
+        const ds = data.dataSource || {};
+        if (quelle) {
+          // Der Bestand kann Monate alt sein - das darf nicht stillschweigend als aktuell gelten.
+          quelle.textContent = `Datenbestand aus dem Sync · Stand: ${formatSyncTimestamp(ds.lastSyncAt)} · Syncstatus: ${ds.syncState || 'unbekannt'}`;
+        }
+        renderAkteList();
+        if (akteState.rows.length && !akteState.selectedId) selectAkte(akteState.rows[0].id);
+      } catch (error) {
+        if (status) status.textContent = `Fehler beim Laden: ${error.message}`;
+      }
+    }
+
+    function renderAkteList() {
+      const box = document.getElementById('akteList');
+      const status = document.getElementById('akteListStatus');
+      if (!box) return;
+      const needle = String(document.getElementById('akteSearch')?.value || '').trim().toLowerCase();
+      akteState.filtered = needle
+        ? akteState.rows.filter(r => `${r.name} ${r.email} ${r.refCode} ${r.id}`.toLowerCase().includes(needle))
+        : akteState.rows;
+      box.innerHTML = akteState.filtered.map(r => {
+        const c = r.counts || {};
+        const teile = [];
+        if (c.transactions) teile.push(`${c.transactions} Tx`);
+        if (c.orders) teile.push(`${c.orders} Best.`);
+        if (c.payments) teile.push(`${c.payments} Ausz.`);
+        return `<button type="button" class="akte-entry${r.id === akteState.selectedId ? ' selected' : ''}${r.orphan ? ' orphan' : ''}" data-akte-id="${escapeHtml(String(r.id))}">
+            <span class="akte-entry-name">${escapeHtml(r.name || r.id)}</span>
+            <span class="akte-entry-sub">${escapeHtml(teile.join(' · ') || 'keine Daten')}</span>
+          </button>`;
+      }).join('') || '<p class="akte-empty">Keine Beraterin gefunden.</p>';
+      box.querySelectorAll('.akte-entry').forEach(btn =>
+        btn.addEventListener('click', () => selectAkte(btn.dataset.akteId)));
+      if (status) {
+        status.textContent = akteState.filtered.length === akteState.rows.length
+          ? `${akteState.rows.length} Beraterinnen`
+          : `${akteState.filtered.length} von ${akteState.rows.length} Beraterinnen`;
+      }
+    }
+
+    async function selectAkte(affiliateId) {
+      if (!affiliateId) return;
+      akteState.selectedId = String(affiliateId);
+      renderAkteList();
+      const detail = document.getElementById('akteDetail');
+      if (detail) detail.innerHTML = '<p class="status">Lade Akte ...</p>';
+      updateAktePosition();
+      try {
+        const data = await apiGet(`/api/sync/akte?id=${encodeURIComponent(akteState.selectedId)}&limit=100`);
+        akteState.detail = data;
+        renderAkteDetail(data);
+      } catch (error) {
+        if (detail) detail.innerHTML = `<p class="warning-banner">Akte nicht lesbar: ${escapeHtml(error.message)}</p>`;
+      }
+    }
+
+    function updateAktePosition() {
+      const pos = document.getElementById('aktePosition');
+      if (!pos) return;
+      const i = akteState.filtered.findIndex(r => r.id === akteState.selectedId);
+      pos.textContent = i < 0 ? '' : `${i + 1} von ${akteState.filtered.length}`;
+      document.getElementById('aktePrevBtn').disabled = i <= 0;
+      document.getElementById('akteNextBtn').disabled = i < 0 || i >= akteState.filtered.length - 1;
+    }
+
+    function stepAkte(delta) {
+      const i = akteState.filtered.findIndex(r => r.id === akteState.selectedId);
+      const next = akteState.filtered[i + delta];
+      if (next) selectAkte(next.id);
+    }
+
+    function renderAkteDetail(data) {
+      const box = document.getElementById('akteDetail');
+      if (!box) return;
+      const a = data.affiliate || {};
+      const s = data.sections || {};
+      const pending = (s.payments_pending && s.payments_pending.rows && s.payments_pending.rows[0]) || {};
+      const umsatz = ((s.orders && s.orders.rows) || []).reduce((sum, o) => sum + akteNumber(o.total), 0);
+      const ausgezahlt = ((s.payments && s.payments.rows) || []).reduce((sum, p) => sum + akteNumber(p.amount), 0);
+
+      const kpis = [
+        ['Bestellungen', (s.orders && s.orders.total) || 0],
+        ['Umsatz (geladen)', formatEuroAmount(umsatz)],
+        ['Auszahlungen', (s.payments && s.payments.total) || 0],
+        ['Ausgezahlt (geladen)', formatEuroAmount(ausgezahlt)],
+        ['Offener Saldo', formatEuroAmount(akteNumber(pending.pending))],
+        ['Klicks', (s.traffic && s.traffic.total) || 0]
+      ];
+
+      const stamm = [
+        ['E-Mail', a.email], ['Telefon', a.phone], ['Ref-Code', a.ref_code],
+        ['Adresse', [a.address_1, a.address_2, [a.zip, a.city].filter(Boolean).join(' '), a.country].filter(Boolean).join(', ')],
+        ['Geburtsdatum', a.date_of_birth], ['Firma', a.company_name],
+        ['Kontoinhaberin', a.payment_details && a.payment_details.account_name],
+        ['IBAN', a.payment_details && a.payment_details.account_number],
+        ['Provisionsmodell', a.commission ? `${a.commission.amount ?? ''} ${a.commission.type ?? ''} auf ${a.commission.on ?? ''}`.trim() : ''],
+        ['Mitglied seit', formatSyncTimestamp(a.created_at)], ['Letzter Login', formatSyncTimestamp(a.last_login)]
+      ].filter(([, v]) => String(v ?? '').trim() !== '');
+
+      const mlm = data.mlm || {};
+      const downline = mlm.downline || [];
+
+      box.innerHTML = `
+        <div class="sync-status-card">
+          <div class="sync-status-head">
+            <div>
+              <strong style="font-size:16px;">${escapeHtml(a.name || '(Beraterin nicht mehr vorhanden)')}</strong>
+              <div class="settings-hint">Affiliate-ID ${escapeHtml(String(akteState.selectedId))}${a.ref_code ? ' · Ref-Code ' + escapeHtml(a.ref_code) : ''}${
+                a.name ? '' : ' · Die Stammdaten wurden gelöscht, die Bewegungsdaten liegen noch vor.'}</div>
+            </div>
+            <span class="risk-badge ${a.status === 'approved' ? 'risk-ok' : (a.status === 'blocked' ? 'risk-review' : 'risk-hint')}">${escapeHtml(a.status || 'unbekannt')}</span>
+          </div>
+        </div>
+        <div class="kpi-grid">${kpis.map(([k, v]) =>
+          `<div class="kpi-card"><div class="kpi-label">${escapeHtml(k)}</div><div class="kpi-value">${escapeHtml(String(v))}</div></div>`).join('')}</div>
+
+        <div class="akte-section">
+          <div class="akte-section-head">Stammdaten</div>
+          <div class="party-detail-grid">${stamm.map(([k, v]) =>
+            `<div class="party-detail-card"><div class="settings-hint">${escapeHtml(k)}</div><div>${escapeHtml(String(v))}</div></div>`).join('')}</div>
+        </div>
+
+        <div class="akte-section">
+          <div class="akte-section-head">Netzwerk</div>
+          <div class="party-detail-grid">
+            <div class="party-detail-card"><div class="settings-hint">Upline</div><div>${
+              mlm.uplineId ? `<button type="button" class="secondary akte-jump" data-akte-id="${escapeHtml(String(mlm.uplineId))}">${escapeHtml(mlm.uplineName || mlm.uplineId)}</button>` : 'keine'}</div></div>
+            <div class="party-detail-card"><div class="settings-hint">Direkte Downline (${downline.length})</div><div>${
+              downline.length ? downline.map(d => `<button type="button" class="secondary akte-jump" data-akte-id="${escapeHtml(String(d.id))}" style="margin:2px 2px 0 0;">${escapeHtml(d.name)}</button>`).join('') : 'keine'}</div></div>
+          </div>
+        </div>
+
+        ${AKTE_SECTIONS.map(def => akteTableHtml(def, s[def.key])).join('')}
+
+        <div class="akte-section">
+          <div class="akte-section-head">Gutscheincodes <span class="akte-section-count">${(s.coupons && s.coupons.total) || 0}</span></div>
+          ${((s.coupons && s.coupons.rows) || []).length
+            ? `<div class="pill-list">${s.coupons.rows.map(c => `<span class="pill">${escapeHtml(c.code || '')} · ${escapeHtml(String(c.discount_value ?? ''))} ${escapeHtml(c.discount_type || '')}</span>`).join('')}</div>`
+            : '<p class="akte-empty">Keine Gutscheincodes hinterlegt.</p>'}
+        </div>
+      `;
+
+      box.querySelectorAll('.akte-jump').forEach(btn =>
+        btn.addEventListener('click', () => selectAkte(btn.dataset.akteId)));
+      box.querySelectorAll('.akte-raw').forEach(btn =>
+        btn.addEventListener('click', () => openAkteRawModal(btn.dataset.akteType, Number(btn.dataset.akteIndex))));
+      box.querySelectorAll('table').forEach(t => { ensureResizableColumns(t); applyTableFilterAndSort(t); });
+      updateAktePosition();
+    }
+
+    function akteTableHtml(def, section) {
+      const rows = (section && section.rows) || [];
+      const total = (section && section.total) || 0;
+      const kopf = `<div class="akte-section-head">${escapeHtml(def.titel)} <span class="akte-section-count">${total}${
+        section && section.truncated ? ` (erste ${rows.length} angezeigt)` : ''}</span></div>`;
+      if (!rows.length) {
+        return `<div class="akte-section">${kopf}<p class="akte-empty">Keine Daten vorhanden.</p></div>`;
+      }
+      return `<div class="akte-section">${kopf}<div class="table-scroll"><table>
+        <thead><tr>${def.spalten.map(([k]) => `<th>${escapeHtml(k)}</th>`).join('')}<th data-nosort="true" data-nofilter="true">Rohdaten</th></tr></thead>
+        <tbody>${rows.map((r, i) => `<tr>${def.spalten.map(([, fn]) => {
+          let v = '';
+          try { v = fn(r); } catch (e) { v = ''; }
+          return `<td>${escapeHtml(String(v ?? ''))}</td>`;
+        }).join('')}<td><button type="button" class="secondary akte-raw" data-akte-type="${escapeHtml(def.key)}" data-akte-index="${i}">JSON</button></td></tr>`).join('')}</tbody>
+      </table></div></div>`;
+    }
+
+    /** Rohdaten eines Datensatzes - nach dem Muster der Versandhistorie. */
+    function openAkteRawModal(entityType, index) {
+      const root = document.getElementById('mailLogModalRoot');
+      const section = akteState.detail && akteState.detail.sections && akteState.detail.sections[entityType];
+      const row = section && section.rows && section.rows[index];
+      if (!root || !row) return;
+      root.innerHTML = `<div class="mail-log-modal"><div class="mail-log-modal-card">
+        <div class="toolbar" style="justify-content:space-between;">
+          <h3 style="margin:0;">Rohdaten · ${escapeHtml(entityType)}</h3>
+          <button id="closeAkteRawBtn" type="button" class="secondary">Schließen</button>
+        </div>
+        <pre style="white-space:pre-wrap;word-break:break-word;font-size:12px;">${escapeHtml(JSON.stringify(row, null, 2))}</pre>
+      </div></div>`;
+      const close = () => { root.innerHTML = ''; };
+      document.getElementById('closeAkteRawBtn')?.addEventListener('click', close);
+      root.querySelector('.mail-log-modal')?.addEventListener('click', e => { if (e.target.classList.contains('mail-log-modal')) close(); });
+    }
+
+    // Gleiche Mechanik wie bei den Validierungen: die Sektionen werden per Selektor gefunden,
+    // nicht über eine hartkodierte ID-Liste.
+    function wireAkteSubtabs() {
+      document.querySelectorAll('[data-akte-target]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('[data-akte-target]').forEach(b => b.classList.toggle('active', b === btn));
+          const target = btn.dataset.akteTarget;
+          ['sync-overview-section', 'sync-akte-section'].forEach(id => {
+            document.getElementById(id)?.classList.toggle('active', id === target);
+          });
+          if (target === 'sync-akte-section' && !akteState.rows.length) loadAkteList();
+        });
+      });
     }
 
     function wireValidationSubtabs() {
@@ -2167,15 +2474,6 @@
     let backupPollTimer = null;
     let backupUploadToken = null;
 
-    function formatBytes(bytes) {
-      const n = Number(bytes || 0);
-      if (!Number.isFinite(n) || n <= 0) return '0 B';
-      const units = ['B', 'KB', 'MB', 'GB'];
-      let v = n, i = 0;
-      while (v >= 1024 && i < units.length - 1) { v /= 1024; i++; }
-      return `${v.toLocaleString('de-DE', { maximumFractionDigits: i === 0 ? 0 : 1 })} ${units[i]}`;
-    }
-
     async function loadBackupStatus() {
       try {
         const data = await apiGet('/api/backup/status');
@@ -3036,11 +3334,14 @@
     function rowKey(row) { return `${row.paymentId}|${row.belegdatum}|${row.amount}`; }
 
 
+    // Einzige Definition. Es gab hier lange zwei gleichnamige Funktionen; die spätere überschrieb
+    // die frühere stillschweigend. Diese Fassung vereint beide: leer bleibt leer, formatiert wird
+    // mit Tausenderpunkt wie auf den Belegen.
     function formatEuroAmount(raw) {
       if (raw === null || raw === undefined || raw === '') return '';
       const value = Number(raw);
-      if (Number.isNaN(value)) return `${raw} €`;
-      return `${value.toFixed(2).replace('.', ',')} €`;
+      if (!Number.isFinite(value)) return `${raw} €`;
+      return value.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
     }
 
     function escapeHtml(text) {
@@ -4098,11 +4399,6 @@
       filesBox.innerHTML = `${okHtml}${failHtml}${straddleHtml}`;
     }
 
-    function formatEuroAmount(value) {
-      const n = Number(value);
-      if (!Number.isFinite(n)) return '-';
-      return n.toLocaleString('de-DE', { style: 'currency', currency: 'EUR' });
-    }
 
     // Die Dokumentart leitet der Server allein aus dem Auszahlungsdatum ab; es gibt bewusst
     // keinen manuellen Schalter. Die Stellschraube ist der Stichtag in den Einstellungen.
@@ -4626,6 +4922,17 @@
         if (syncDiagnosticsRunBtn) syncDiagnosticsRunBtn.addEventListener('click', startSyncDiagnostics);
         if (syncDiagnosticsRefreshBtn) syncDiagnosticsRefreshBtn.addEventListener('click', loadSyncDiagnostics);
         document.getElementById('filterOnlyApproved')?.addEventListener('change', renderValidationTable);
+        wireAkteSubtabs();
+        document.getElementById('akteSearch')?.addEventListener('input', () => { renderAkteList(); updateAktePosition(); });
+        document.getElementById('aktePrevBtn')?.addEventListener('click', () => stepAkte(-1));
+        document.getElementById('akteNextBtn')?.addEventListener('click', () => stepAkte(1));
+        // Pfeiltasten blättern, solange die Akte sichtbar ist und kein Eingabefeld den Fokus hat.
+        document.addEventListener('keydown', e => {
+          if (!document.getElementById('sync-akte-section')?.classList.contains('active')) return;
+          if (['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName)) return;
+          if (e.key === 'ArrowLeft') stepAkte(-1);
+          if (e.key === 'ArrowRight') stepAkte(1);
+        });
         document.getElementById('syncLogRefreshBtn')?.addEventListener('click', loadSyncLog);
         document.getElementById('syncLogCopyBtn')?.addEventListener('click', copySyncLog);
         document.getElementById('syncLogFilter')?.addEventListener('change', loadSyncLog);

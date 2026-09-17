@@ -206,6 +206,8 @@ public class WebUiServer {
         server.createContext("/api/sync/inventory", new GoAffProSyncInventoryHandler());
         server.createContext("/api/sync/runs", new GoAffProSyncRunsHandler());
         server.createContext("/api/sync/log", new GoAffProSyncLogHandler());
+        server.createContext("/api/sync/akte/list", new GoAffProAkteListHandler());
+        server.createContext("/api/sync/akte", new GoAffProAkteHandler());
         server.createContext("/api/sync/run", new GoAffProSyncRunHandler());
         server.createContext("/api/sync/diagnostics/run", new GoAffProSyncDiagnosticsRunHandler());
         server.createContext("/api/sync/diagnostics/latest", new GoAffProSyncDiagnosticsLatestHandler());
@@ -1233,6 +1235,60 @@ public class WebUiServer {
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
+        }
+    }
+
+    /** Auswahlliste der Beraterinnen-Akte: alle Beraterinnen mit ihren Datensatzzahlen. */
+    private static class GoAffProAkteListHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(
+                        GOAFFPRO_SYNC_SERVICE.akteList(loadConfigWithUiSettings())));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    /** Alle Sync-Daten einer einzelnen Beraterin. */
+    private static class GoAffProAkteHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                Map<String, String> query = parseQueryParams(exchange.getRequestURI());
+                int limit = intParam(query.get("limit"), 100);
+                int offset = intParam(query.get("offset"), 0);
+                sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(
+                        GOAFFPRO_SYNC_SERVICE.akte(loadConfigWithUiSettings(),
+                                Objects.toString(query.get("id"), "").trim(), limit, offset)));
+            } catch (Exception e) {
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static int intParam(String raw, int fallback) {
+        try {
+            return Integer.parseInt(Objects.toString(raw, "").trim());
+        } catch (Exception ignored) {
+            return fallback;
         }
     }
 

@@ -609,6 +609,225 @@ public class GoAffProSyncService {
         }
     }
 
+    // ── Beraterinnen-Akte ───────────────────────────────────────────────────────
+
+    /**
+     * Entitätstypen der Akte und der JSON-Pfad, über den sie an einer Beraterin hängen.
+     *
+     * connections trägt KEIN Top-Level-affiliate_id, sondern nur ein verschachteltes
+     * affiliate.id - ohne diesen Sonderfall fiele der Typ lautlos aus der Akte.
+     */
+    private static final Map<String, String> AKTE_TYPES = new LinkedHashMap<>(Map.of(
+            "payments", "$.affiliate_id",
+            "rewards", "$.affiliate_id",
+            "transactions", "$.affiliate_id",
+            "orders", "$.affiliate_id",
+            "showcases", "$.affiliate_id",
+            "connections", "$.affiliate.id",
+            "traffic", "$.affiliate_id",
+            "coupons", "$.affiliate_id",
+            "payments_pending", "$.affiliate_id"));
+
+    /** Wie viele Zeilen je Typ höchstens ausgeliefert werden; ein Konto hat bis zu 1018 Transaktionen. */
+    private static final int AKTE_DEFAULT_LIMIT = 100;
+    private static final int AKTE_MAX_LIMIT = 1000;
+
+    /**
+     * Liste für die Auswahlspalte: alle Beraterinnen mit ihren Datensatzzahlen je Typ.
+     *
+     * Bewusst zwei Abfragen über den gesamten Bestand statt 230 Einzelabfragen - ein Vollscan über
+     * 16.000 Zeilen dauert Millisekunden, 230 Einzelabfragen nicht.
+     */
+    public Map<String, Object> akteList(Properties config) throws Exception {
+        Map<String, Object> payload = new LinkedHashMap<>();
+        Path db = resolveDbPath(config);
+        payload.put("dbPath", db.toString());
+        payload.put("dataSource", dataSourceInfo(config, "affiliates"));
+        if (!Files.exists(db)) {
+            payload.put("rows", List.of());
+            return payload;
+        }
+        initDatabase(db);
+        try (Connection connection = connect(db)) {
+            Map<String, Map<String, Integer>> countsByAffiliate = new LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : AKTE_TYPES.entrySet()) {
+                try (PreparedStatement ps = connection.prepareStatement(
+                        "SELECT json_extract(raw_json, '" + entry.getValue() + "') AS aff, COUNT(*) AS n"
+                                + " FROM sync_entities WHERE entity_type=? AND state='active' AND aff IS NOT NULL GROUP BY aff");
+                     ResultSet rs = queryWith(ps, entry.getKey())) {
+                    while (rs.next()) {
+                        countsByAffiliate
+                                .computeIfAbsent(rs.getString("aff"), k -> new LinkedHashMap<>())
+                                .put(entry.getKey(), rs.getInt("n"));
+                    }
+                }
+            }
+
+            List<Map<String, Object>> rows = new ArrayList<>();
+            Set<String> known = new LinkedHashSet<>();
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT external_id, raw_json FROM sync_entities WHERE entity_type='affiliates' AND state='active'");
+                 ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String id = rs.getString("external_id");
+                    known.add(id);
+                    JsonNode a = MAPPER.readTree(rs.getString("raw_json"));
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("id", id);
+                    row.put("name", a.path("name").asText(""));
+                    row.put("email", a.path("email").asText(""));
+                    row.put("refCode", a.path("ref_code").asText(""));
+                    row.put("status", a.path("status").asText(""));
+                    row.put("counts", countsByAffiliate.getOrDefault(id, Map.of()));
+                    row.put("orphan", false);
+                    rows.add(row);
+                }
+            }
+            // Datensätze ohne Beraterin: im Bestand liegen Transaktionen und Auszahlungen zu
+            // gelöschten Affiliates. Sie kommentarlos zu verschlucken würde Beträge verstecken.
+            for (Map.Entry<String, Map<String, Integer>> entry : countsByAffiliate.entrySet()) {
+                if (known.contains(entry.getKey())) continue;
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("id", entry.getKey());
+                row.put("name", "(nicht mehr vorhanden)");
+                row.put("email", "");
+                row.put("refCode", "");
+                row.put("status", "geloescht");
+                row.put("counts", entry.getValue());
+                row.put("orphan", true);
+                rows.add(row);
+            }
+            rows.sort((a, b) -> {
+                int byOrphan = Boolean.compare((Boolean) a.get("orphan"), (Boolean) b.get("orphan"));
+                if (byOrphan != 0) return byOrphan;
+                return Objects.toString(a.get("name"), "").compareToIgnoreCase(Objects.toString(b.get("name"), ""));
+            });
+            payload.put("rows", rows);
+            payload.put("total", rows.size());
+            return payload;
+        }
+    }
+
+    private static ResultSet queryWith(PreparedStatement ps, String value) throws Exception {
+        ps.setString(1, value);
+        return ps.executeQuery();
+    }
+
+    /** Alle Daten einer Beraterin. Grosse Typen werden seitenweise geliefert. */
+    public Map<String, Object> akte(Properties config, String affiliateId, int limit, int offset) throws Exception {
+        int capped = Math.max(1, Math.min(AKTE_MAX_LIMIT, limit <= 0 ? AKTE_DEFAULT_LIMIT : limit));
+        int from = Math.max(0, offset);
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("affiliateId", affiliateId);
+        payload.put("limit", capped);
+        payload.put("offset", from);
+        payload.put("dataSource", dataSourceInfo(config, "affiliates"));
+        Path db = resolveDbPath(config);
+        if (affiliateId == null || affiliateId.isBlank() || !Files.exists(db)) {
+            payload.put("affiliate", MAPPER.createObjectNode());
+            payload.put("sections", Map.of());
+            return payload;
+        }
+        initDatabase(db);
+        try (Connection connection = connect(db)) {
+            payload.put("affiliate", singleEntity(connection, "affiliates", affiliateId));
+            payload.put("mlm", mlmPosition(connection, affiliateId));
+
+            Map<String, Object> sections = new LinkedHashMap<>();
+            for (Map.Entry<String, String> entry : AKTE_TYPES.entrySet()) {
+                sections.put(entry.getKey(), akteSection(connection, entry.getKey(), entry.getValue(),
+                        affiliateId, capped, from));
+            }
+            payload.put("sections", sections);
+            return payload;
+        }
+    }
+
+    private static JsonNode singleEntity(Connection connection, String entityType, String externalId) throws Exception {
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT raw_json FROM sync_entities WHERE entity_type=? AND external_id=?")) {
+            ps.setString(1, entityType);
+            ps.setString(2, externalId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) return MAPPER.readTree(rs.getString(1));
+            }
+        }
+        return MAPPER.createObjectNode();
+    }
+
+    private static Map<String, Object> akteSection(Connection connection, String entityType, String jsonPath,
+                                                   String affiliateId, int limit, int offset) throws Exception {
+        Map<String, Object> section = new LinkedHashMap<>();
+        section.put("entityType", entityType);
+        section.put("displayName", displayNameForType(entityType));
+        String where = " FROM sync_entities WHERE entity_type=? AND state='active'"
+                + " AND CAST(json_extract(raw_json, '" + jsonPath + "') AS TEXT) = ?";
+        int total = 0;
+        try (PreparedStatement ps = connection.prepareStatement("SELECT COUNT(*)" + where)) {
+            ps.setString(1, entityType);
+            ps.setString(2, affiliateId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) total = rs.getInt(1);
+            }
+        }
+        section.put("total", total);
+        List<JsonNode> rows = new ArrayList<>();
+        if (total > 0) {
+            // remote_created_at spiegelt created_at aus dem JSON - damit sortiert die Datenbank,
+            // ohne dass jede Zeile geparst werden muss. Neueste zuerst.
+            try (PreparedStatement ps = connection.prepareStatement(
+                    "SELECT raw_json" + where + " ORDER BY remote_created_at DESC, external_id DESC LIMIT ? OFFSET ?")) {
+                ps.setString(1, entityType);
+                ps.setString(2, affiliateId);
+                ps.setInt(3, limit);
+                ps.setInt(4, offset);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) rows.add(MAPPER.readTree(rs.getString(1)));
+                }
+            }
+        }
+        section.put("rows", rows);
+        section.put("truncated", total > rows.size() + offset);
+        return section;
+    }
+
+    /** Up- und Downline aus mlm_tree. affiliates.parent_id ist redundant und bleibt ungenutzt. */
+    private static Map<String, Object> mlmPosition(Connection connection, String affiliateId) throws Exception {
+        Map<String, Object> mlm = new LinkedHashMap<>();
+        String upline = "";
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT json_extract(raw_json,'$.parent') FROM sync_entities WHERE entity_type='mlm_tree' AND external_id=?")) {
+            ps.setString(1, affiliateId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) upline = Objects.toString(rs.getString(1), "");
+            }
+        }
+        mlm.put("uplineId", upline);
+        mlm.put("uplineName", upline.isBlank() ? "" : affiliateName(connection, upline));
+
+        List<Map<String, String>> downline = new ArrayList<>();
+        try (PreparedStatement ps = connection.prepareStatement(
+                "SELECT external_id FROM sync_entities WHERE entity_type='mlm_tree'"
+                        + " AND CAST(json_extract(raw_json,'$.parent') AS TEXT) = ?")) {
+            ps.setString(1, affiliateId);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String id = rs.getString(1);
+                    downline.add(Map.of("id", id, "name", affiliateName(connection, id)));
+                }
+            }
+        }
+        downline.sort((a, b) -> Objects.toString(a.get("name"), "").compareToIgnoreCase(Objects.toString(b.get("name"), "")));
+        mlm.put("downline", downline);
+        return mlm;
+    }
+
+    private static String affiliateName(Connection connection, String affiliateId) throws Exception {
+        JsonNode node = singleEntity(connection, "affiliates", affiliateId);
+        String name = node.path("name").asText("");
+        return name.isBlank() ? "(nicht mehr vorhanden)" : name;
+    }
+
     public Map<String, Object> inventory(Properties config) throws Exception {
         Path db = resolveDbPath(config);
         Map<String, Object> payload = new LinkedHashMap<>();
