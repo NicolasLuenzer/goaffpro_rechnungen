@@ -4432,6 +4432,12 @@
         if (Number(data.beforeCutoffCount) > 0 && Number(data.fromCutoffCount) > 0) {
           hints.push(`enthält ${data.beforeCutoffCount} Provision(en) von vor dem Stichtag`);
         }
+        // Stornierte Provisionen aus der Code-Phase stehen nicht auf der Gutschrift.
+        const hidden = Number(data.hiddenBeforeStartCount) || 0;
+        if (hidden > 0) {
+          const start = String(data.gutschriftTransactionStartDate || '').split('-').reverse().join('.');
+          hints.push(`${hidden} stornierte ${hidden === 1 ? 'Buchung' : 'Buchungen'} vor dem ${start} ausgeblendet`);
+        }
         const hintText = hints.length ? ` (${hints.join('; ')})` : '';
         status.textContent = data.opened
           ? `${label} erstellt und geöffnet: ${data.file}${hintText}`

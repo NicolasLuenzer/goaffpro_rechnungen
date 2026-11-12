@@ -1,6 +1,8 @@
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
@@ -4453,13 +4455,38 @@ public class WebUiServer {
                 String advisorFolderToken = affiliate != null ? asText(affiliate, "name") : "ohne-beraterin";
                 Path runExportDir = exportDir.resolve("export_" + sanitizeFilename(belegFolder + "_" + paymentId + "_" + advisorFolderToken));
 
-                // Zeitraum und Dokumentart ZUERST bestimmen (rein lesend). Erst danach darf eine
-                // Belegnummer gezogen werden – generateNextDocumentNumber persistiert sofort.
-                String periodLabel = buildPaymentPeriodLabel(payment);
+                // Dokumentart, Bereinigung und Zeitraum ZUERST bestimmen (rein lesend). Erst danach
+                // darf eine Belegnummer gezogen werden – generateNextDocumentNumber persistiert sofort.
                 DocumentKindDecision decision = resolveDocumentKind(payment, config);
                 // Die Dokumentart wird allein aus dem Auszahlungsdatum abgeleitet; ein mitgesendetes
                 // documentKind wird bewusst ignoriert. Die Stellschraube ist der Stichtag.
                 DocumentKind kind = decision.kind();
+
+                // Gutschriften führen keine stornierten Provisionen aus der Zeit vor dem Start der
+                // S+R-Provisionen. Alles Weitere - Provisionsnachweis, JSON-Anhang, ZUGFeRD,
+                // Gutschrift, Mail - arbeitet mit dem bereinigten Zahllauf.
+                JsonNode docPayment = payment;
+                JsonNode docResponse = response;
+                int hiddenBeforeStart = 0;
+                if (kind == DocumentKind.GUTSCHRIFT) {
+                    StartDateSplit startSplit = splitBeforeGutschriftStart(payment, config);
+                    String blockReason = gutschriftStartBlockReason(startSplit, paymentId, config);
+                    if (blockReason != null) {
+                        sendResponse(exchange, 409, "application/json",
+                                "{\"error\":\"" + escapeJson(blockReason) + "\",\"code\":\"vor-provisionsstart\"}");
+                        return;
+                    }
+                    hiddenBeforeStart = startSplit.hiddenCount();
+                    if (hiddenBeforeStart > 0) {
+                        docPayment = startSplit.visiblePayment();
+                        ObjectNode cleanedResponse = response.deepCopy();
+                        cleanedResponse.set("payments", OBJECT_MAPPER.createArrayNode().add(docPayment));
+                        docResponse = cleanedResponse;
+                        // Die Info-Zähler sollen beschreiben, was der Beleg tatsächlich enthält.
+                        decision = resolveDocumentKind(docPayment, config);
+                    }
+                }
+                String periodLabel = buildPaymentPeriodLabel(docPayment);
 
                 Files.createDirectories(runExportDir);
 
@@ -4474,11 +4501,15 @@ public class WebUiServer {
                         : Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
                 Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".xml") : null;
                 Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".pdf") : null;
-                createInvoiceDetailsPdf(pdfPath, response, affiliate, config, gutschriftNr, kind);
-                writeOriginalJson(jsonPath, response);
+                createInvoiceDetailsPdf(pdfPath, docResponse, affiliate, config, gutschriftNr, kind, hiddenBeforeStart);
+                writeOriginalJson(jsonPath, docResponse);
+                if (hiddenBeforeStart > 0) {
+                    // Die ungekürzte GoAffPro-Antwort bleibt im Archiv; die Mail erhält nur die bereinigte.
+                    writeOriginalJson(runExportDir.resolve(baseFilename + "_goaffpro-vollstaendig.json"), response);
+                }
                 if (eInvoiceAttachAndStoreEnabled) {
-                    createZugferdInvoiceXml(zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
-                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
+                    createZugferdInvoiceXml(zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
+                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
                 }
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
@@ -4496,7 +4527,7 @@ public class WebUiServer {
                 if (sendEmailsEnabled) {
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
                     String buyerCompanyNameForMail = buyerProperty(config, kind, "Name", kind.defaultBuyerName);
-                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, payment, affiliate, Objects.toString(config.getProperty(kind.mailTemplateKey), ""), resolveSmtpConfig(config), gutschriftNr, kind, buyerCompanyNameForMail);
+                    sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, docPayment, affiliate, Objects.toString(config.getProperty(kind.mailTemplateKey), ""), resolveSmtpConfig(config), gutschriftNr, kind, buyerCompanyNameForMail);
                     String subject = documentMailSubject(kind, gutschriftNr, periodLabel, affiliateNameForMail);
                     appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, kind, gutschriftNr);
                 }
@@ -4528,6 +4559,8 @@ public class WebUiServer {
                 payload.put("beforeCutoffCount", decision.beforeCutoffCount());
                 payload.put("fromCutoffCount", decision.fromCutoffCount());
                 payload.put("cutoffDate", rechnungCutoffDateRaw(config));
+                payload.put("hiddenBeforeStartCount", hiddenBeforeStart);
+                payload.put("gutschriftTransactionStartDate", gutschriftTransactionStartDateRaw(config));
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", pdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
@@ -4545,7 +4578,8 @@ public class WebUiServer {
             }
         }
 
-        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate, Properties config, String gutschriftNr, DocumentKind kind) throws IOException {
+        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate, Properties config, String gutschriftNr, DocumentKind kind,
+                                             int hiddenBeforeStartCount) throws IOException {
             try (PDDocument document = new PDDocument()) {
                 JsonNode payments = apiResponse.get("payments");
                 JsonNode payment = (payments != null && payments.isArray() && payments.size() > 0) ? payments.get(0) : null;
@@ -4671,7 +4705,7 @@ public class WebUiServer {
                             ? "k.A."
                             : formatDateTimeEuropeBerlin(minDate.toString()) + " bis " + formatDateTimeEuropeBerlin(maxDate.toString()) + " (Europe/Berlin)";
 
-                    List<String[]> summaryRows = List.of(
+                    List<String[]> summaryRows = new ArrayList<>(List.of(
                             new String[]{"Empfänger (Kontoinhaber)", asText(payment.path("payment_details"), "account_name")},
                             new String[]{"Zahlmethode", "SEPA (via " + asText(payment.path("payment_details"), "paid_via") + ")"},
                             new String[]{"IBAN (maskiert)", ibanMasked},
@@ -4685,7 +4719,15 @@ public class WebUiServer {
                             new String[]{"Summe Provision (gesamt)", euro(sumProvAll)},
                             new String[]{"Auszahlungsbetrag", euro(payout)},
                             new String[]{"Rundungsdifferenz (Auszahlung - Summe Provision)", euro(rounding)}
-                    );
+                    ));
+                    if (hiddenBeforeStartCount > 0) {
+                        // Erklärt die Abweichung zur Anzahl in GoAffPro. Ausgeblendet wird nur, was
+                        // sich zu 0 aufhebt - der Saldo ist deshalb immer 0,00 €.
+                        String start = gutschriftTransactionStartDate(config).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+                        summaryRows.add(new String[]{"Nicht aufgeführt (vor " + start + ")",
+                                hiddenBeforeStartCount + (hiddenBeforeStartCount == 1 ? " stornierte Buchung" : " stornierte Buchungen")
+                                        + ", Saldo " + euro(0.0)});
+                    }
 
                     cs.setNonStrokingColor(new Color(44, 52, 64));
                     for (String[] row : summaryRows) {
@@ -7879,6 +7921,139 @@ public class WebUiServer {
         } catch (Exception ignored) {
             return new DocumentKindDecision(DocumentKind.GUTSCHRIFT, "default", before, from, beforeSum, fromSum);
         }
+    }
+
+    // Start der Provisionen über S+R-Gutschriften. Vom 01.01. bis 30.09.2026 erhielten die
+    // Beraterinnen Codes statt Provision; GoAffPro hat die Provisionen trotzdem erfasst, sie wurden
+    // storniert und stehen als Buchung plus Stornobuchung in den Zahlläufen. Nicht zu verwechseln
+    // mit rechnungCutoffDate (01.01.2026), das über Rechnung oder Gutschrift entscheidet.
+    private static final String DEFAULT_GUTSCHRIFT_TRANSACTION_START_DATE = "2026-10-01";
+    /** Unterhalb eines halben Cents gilt ein Saldo als ausgeglichen. */
+    private static final double BALANCE_TOLERANCE = 0.005;
+
+    private static String gutschriftTransactionStartDateRaw(Properties config) {
+        return normalizeIsoDate(config.getProperty("gutschriftTransactionStartDate"),
+                DEFAULT_GUTSCHRIFT_TRANSACTION_START_DATE);
+    }
+
+    private static LocalDate gutschriftTransactionStartDate(Properties config) {
+        return LocalDate.parse(gutschriftTransactionStartDateRaw(config));
+    }
+
+    /**
+     * Ergebnis der Bereinigung eines Gutschrift-Zahllaufs. {@code beforeStartCount} zählt die
+     * Buchungen in Gruppen, die vor dem Start beginnen; ausgeblendet werden sie nur, wenn jede
+     * dieser Gruppen ausgeglichen ist. {@code unbalanced} nennt sonst die betroffenen
+     * Bestellungen und Belohnungen mit ihrem Restsaldo.
+     */
+    private record StartDateSplit(JsonNode visiblePayment, int beforeStartCount, double beforeStartAmount,
+                                  List<String> unbalanced) {
+        boolean balanced() {
+            return unbalanced.isEmpty();
+        }
+
+        int hiddenCount() {
+            return balanced() ? beforeStartCount : 0;
+        }
+    }
+
+    /**
+     * Blendet Buchungen vor dem Start der S+R-Provisionen aus - je Bestellung bzw. Belohnung,
+     * nicht Zeile für Zeile. Wurde eine September-Provision erst am oder nach dem Start storniert,
+     * trägt die Stornobuchung ein späteres Datum; ein reiner Datumsschnitt würde sie von ihrer
+     * Buchung trennen. Deshalb zählt der früheste Zeitpunkt der ganzen Gruppe.
+     *
+     * Ausgeblendet wird nur, was sich zu 0 aufhebt - der Auszahlungsbetrag bleibt dadurch
+     * unverändert und Gutschrift, Provisionsnachweis und ZUGFeRD-Datei passen weiter zusammen.
+     */
+    private static StartDateSplit splitBeforeGutschriftStart(JsonNode payment, Properties config) {
+        Instant start = gutschriftTransactionStartDate(config).atStartOfDay(BERLIN_ZONE).toInstant();
+        JsonNode transactions = payment != null ? payment.get("transactions") : null;
+        if (transactions == null || !transactions.isArray() || transactions.isEmpty()) {
+            return new StartDateSplit(payment, 0, 0.0, List.of());
+        }
+
+        Map<String, Instant> earliest = new HashMap<>();
+        Map<String, Double> balance = new LinkedHashMap<>();
+        Map<String, String> labels = new HashMap<>();
+        for (JsonNode tx : transactions) {
+            String key = transactionGroupKey(tx);
+            balance.merge(key, parseDoubleSafeStatic(asText(tx, "amount")), Double::sum);
+            labels.putIfAbsent(key, transactionGroupLabel(tx));
+            try {
+                Instant ts = OffsetDateTime.parse(asText(tx, "created_at")).toInstant();
+                earliest.merge(key, ts, (a, b) -> a.isBefore(b) ? a : b);
+            } catch (Exception ignored) {
+                // Undatiert: kann nicht vor dem Start liegen und bleibt sichtbar.
+            }
+        }
+
+        Set<String> beforeStart = new LinkedHashSet<>();
+        for (String key : balance.keySet()) {
+            Instant first = earliest.get(key);
+            if (first != null && first.isBefore(start)) beforeStart.add(key);
+        }
+        if (beforeStart.isEmpty()) {
+            return new StartDateSplit(payment, 0, 0.0, List.of());
+        }
+
+        double beforeStartAmount = 0.0;
+        List<String> unbalanced = new ArrayList<>();
+        for (String key : beforeStart) {
+            double saldo = balance.get(key);
+            beforeStartAmount += saldo;
+            if (Math.abs(saldo) >= BALANCE_TOLERANCE) {
+                unbalanced.add(labels.get(key) + ": " + euroStatic(saldo));
+            }
+        }
+
+        ArrayNode visible = OBJECT_MAPPER.createArrayNode();
+        int beforeStartCount = 0;
+        for (JsonNode tx : transactions) {
+            if (beforeStart.contains(transactionGroupKey(tx))) beforeStartCount++;
+            else visible.add(tx);
+        }
+        if (!unbalanced.isEmpty()) {
+            // Nichts ausblenden: Der Zahllauf bleibt, wie er ist, der Aufrufer bricht ab.
+            return new StartDateSplit(payment, beforeStartCount, beforeStartAmount, List.copyOf(unbalanced));
+        }
+        ObjectNode cleaned = payment.deepCopy();
+        cleaned.set("transactions", visible);
+        return new StartDateSplit(cleaned, beforeStartCount, beforeStartAmount, List.of());
+    }
+
+    /** Buchung, Änderung und Storno einer Provision teilen sich entity_type und entity_id. */
+    private static String transactionGroupKey(JsonNode tx) {
+        String entityId = asText(tx, "entity_id").trim();
+        return entityId.isBlank()
+                ? "tx:" + asText(tx, "tx_id")
+                : asText(tx, "entity_type") + ":" + entityId;
+    }
+
+    private static String transactionGroupLabel(JsonNode tx) {
+        String orderNumber = asText(tx.path("metadata"), "order_number").trim();
+        if ("rewards".equalsIgnoreCase(asText(tx, "entity_type"))) {
+            return "Belohnung " + asText(tx, "entity_id") + (orderNumber.isBlank() ? "" : " zu " + orderNumber);
+        }
+        return "Bestellung " + (orderNumber.isBlank() ? asText(tx, "entity_id") : orderNumber);
+    }
+
+    /** Meldung für den Abbruch, oder null, wenn die Gutschrift erstellt werden darf. */
+    private static String gutschriftStartBlockReason(StartDateSplit split, String paymentId, Properties config) {
+        String start = gutschriftTransactionStartDate(config).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+        if (!split.balanced()) {
+            List<String> all = split.unbalanced();
+            int shown = Math.min(all.size(), 10);
+            String list = String.join("; ", all.subList(0, shown)) + (all.size() > shown ? "; ..." : "");
+            return "Gutschrift nicht erstellt: Zahllauf " + paymentId + " enthält Provisionen vor dem " + start
+                    + ", die nicht vollständig storniert sind (" + list + "). Bitte in GoAffPro prüfen."
+                    + " Es wurde keine Belegnummer vergeben.";
+        }
+        if (split.hiddenCount() > 0 && split.visiblePayment().path("transactions").isEmpty()) {
+            return "Gutschrift nicht erstellt: Zahllauf " + paymentId + " enthält ausschließlich stornierte"
+                    + " Provisionen vor dem " + start + ". Es wurde keine Belegnummer vergeben.";
+        }
+        return null;
     }
 
     private static String generateNextDocumentNumber(Properties config, DocumentKind kind) throws IOException {
