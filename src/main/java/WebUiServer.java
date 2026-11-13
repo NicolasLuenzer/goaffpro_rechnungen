@@ -3,7 +3,11 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.openhtmltopdf.extend.FSSupplier;
+import com.openhtmltopdf.outputdevice.helper.BaseRendererBuilder;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
+import org.apache.pdfbox.pdmodel.PDDocumentInformation;
+import org.apache.pdfbox.pdmodel.common.PDMetadata;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
@@ -4511,7 +4515,19 @@ public class WebUiServer {
                 boolean eInvoiceAttachAndStoreEnabled = includeEInvoiceArtifactsRequest != null
                         ? includeEInvoiceArtifactsRequest
                         : Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceAttachAndStoreEnabled"), "true"));
-                Path zugferdPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".xml") : null;
+                // EN16931 verlangt bei jeder Steuerkategorie eine Steuerkennung der Leistungserbringerin
+                // (BR-S-02, BR-E-02 ...). Fehlt sie, entsteht keine XML: Eine E-Rechnung, die sicher
+                // durch die Prüfung fällt, wird nicht verschickt. Der Beleg selbst geht als PDF raus.
+                boolean sellerTaxIdPresent = hasSellerTaxIdentifier(affiliate);
+                String eInvoiceStatus = !eInvoiceAttachAndStoreEnabled ? "deaktiviert"
+                        : (sellerTaxIdPresent ? "e-rechnung" : "ohne-steuerkennung");
+                String eInvoiceMessage = "ohne-steuerkennung".equals(eInvoiceStatus)
+                        ? "E-" + kind.label + " nicht erstellt: Für "
+                          + (affiliate != null && !asText(affiliate, "name").isBlank() ? asText(affiliate, "name") : "die Beraterin")
+                          + " ist weder Steuernummer noch USt-IdNr. hinterlegt (BR-E-02). Die " + kind.label
+                          + " wurde als PDF ohne E-Rechnung erstellt."
+                        : "";
+                Path zugferdPath = "e-rechnung".equals(eInvoiceStatus) ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".xml") : null;
                 Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".pdf") : null;
                 createInvoiceDetailsPdf(pdfPath, docResponse, affiliate, config, gutschriftNr, kind, hiddenBeforeStart);
                 writeOriginalJson(jsonPath, docResponse);
@@ -4519,8 +4535,10 @@ public class WebUiServer {
                     // Die ungekürzte GoAffPro-Antwort bleibt im Archiv; die Mail erhält nur die bereinigte.
                     writeOriginalJson(runExportDir.resolve(baseFilename + "_goaffpro-vollstaendig.json"), response);
                 }
-                if (eInvoiceAttachAndStoreEnabled) {
+                if (zugferdPath != null) {
                     createZugferdInvoiceXml(zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
+                }
+                if (eInvoicePdfPath != null) {
                     createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
                 }
 
@@ -4541,7 +4559,7 @@ public class WebUiServer {
                     String buyerCompanyNameForMail = buyerProperty(config, kind, "Name", kind.defaultBuyerName);
                     sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, docPayment, affiliate, Objects.toString(config.getProperty(kind.mailTemplateKey), ""), resolveSmtpConfig(config), gutschriftNr, kind, buyerCompanyNameForMail);
                     String subject = documentMailSubject(kind, gutschriftNr, periodLabel, affiliateNameForMail);
-                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, kind, gutschriftNr);
+                    appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, kind, gutschriftNr, eInvoiceStatus);
                 }
 
                 boolean opened = false;
@@ -4571,6 +4589,8 @@ public class WebUiServer {
                 payload.put("beforeCutoffCount", decision.beforeCutoffCount());
                 payload.put("fromCutoffCount", decision.fromCutoffCount());
                 payload.put("cutoffDate", rechnungCutoffDateRaw(config));
+                payload.put("eInvoiceStatus", eInvoiceStatus);
+                payload.put("eInvoiceMessage", eInvoiceMessage);
                 payload.put("hiddenBeforeStartCount", hiddenBeforeStart);
                 payload.put("gutschriftTransactionStartDate", gutschriftTransactionStartDateRaw(config));
                 payload.put("requestUrl", detailsUrl);
@@ -5533,6 +5553,14 @@ public class WebUiServer {
         String buyerReference = asText(payment, "id");
         String buyerReferenceXml = buyerReference.isBlank() ? ""
                 : "<ram:BuyerReference>" + escapeXml(buyerReference) + "</ram:BuyerReference>";
+        // BG-14: Der Provisionszeitraum steht nicht nur im Positionstext, sondern strukturiert als
+        // Abrechnungszeitraum - aus denselben Buchungen wie der Leistungszeitraum auf dem PDF.
+        String billingPeriodXml = billingPeriodXml(payment);
+        // ApplicableHeaderTradeDelivery bleibt leer stehen: Im CII-Schema ist es Pflicht (1..1),
+        // seine Kinder sind optional. Füllen ließe es sich nur mit BT-72 (tatsächliches
+        // Lieferdatum), das es für eine Provision über einen Zeitraum nicht gibt - der Zeitraum
+        // steht korrekt in BG-14. Die Warnung PEPPOL-EN16931-R008 (leeres Element) ist damit
+        // bewusst in Kauf genommen; sie ist eine PEPPOL-Regel, kein EN16931-Fehler.
         String buyerTaxRegistration = taxRegistrationXml("VA", buyerVatId) + taxRegistrationXml("FC", buyerTaxNumber);
         String paymentTermsXml = paymentTerms.isBlank()
                 ? ""
@@ -5560,7 +5588,7 @@ public class WebUiServer {
                                           xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
                   <rsm:ExchangedDocumentContext>
                     <ram:GuidelineSpecifiedDocumentContextParameter>
-                      <ram:ID>urn:cen.eu:en16931:2017#compliant#urn:zugferd.de:2p2:basic</ram:ID>
+                      <ram:ID>{{guidelineId}}</ram:ID>
                     </ram:GuidelineSpecifiedDocumentContextParameter>
                   </rsm:ExchangedDocumentContext>
                   <rsm:ExchangedDocument>
@@ -5571,7 +5599,7 @@ public class WebUiServer {
                   <rsm:SupplyChainTradeTransaction>
                     <ram:IncludedSupplyChainTradeLineItem>
                       <ram:AssociatedDocumentLineDocument><ram:LineID>1</ram:LineID></ram:AssociatedDocumentLineDocument>
-                      <ram:SpecifiedTradeProduct><ram:Name>Vermittlungsprovision {{periodLabel}}</ram:Name></ram:SpecifiedTradeProduct>
+                      <ram:SpecifiedTradeProduct><ram:Name>Vermittlungsprovision lt. Provisionszeitraum {{periodLabel}}</ram:Name></ram:SpecifiedTradeProduct>
                       <ram:SpecifiedLineTradeAgreement>
                         <ram:NetPriceProductTradePrice><ram:ChargeAmount>{{netAmount}}</ram:ChargeAmount></ram:NetPriceProductTradePrice>
                       </ram:SpecifiedLineTradeAgreement>
@@ -5616,6 +5644,7 @@ public class WebUiServer {
                         <ram:CategoryCode>{{taxCategoryCode}}</ram:CategoryCode>
                         <ram:RateApplicablePercent>{{taxRatePercent}}</ram:RateApplicablePercent>
                       </ram:ApplicableTradeTax>
+                      {{billingPeriod}}
                       {{paymentTermsBlock}}
                       <ram:SpecifiedTradeSettlementHeaderMonetarySummation>
                         <ram:LineTotalAmount>{{netAmount}}</ram:LineTotalAmount>
@@ -5647,6 +5676,8 @@ public class WebUiServer {
                 .replace("{{buyerReference}}", buyerReferenceXml)
                 .replace("{{paymentMeans}}", paymentMeansXml)
                 .replace("{{paymentTermsBlock}}", paymentTermsXml)
+                .replace("{{billingPeriod}}", billingPeriodXml)
+                .replace("{{guidelineId}}", FACTURX_GUIDELINE_ID)
                 .replace("{{buyerName}}", escapeXml(buyerName))
                 .replace("{{buyerStreet}}", escapeXml(buyerStreet))
                 .replace("{{buyerZip}}", escapeXml(buyerZip))
@@ -5677,6 +5708,33 @@ public class WebUiServer {
             "iban", List.of("iban", "account_number"),
             "bic", List.of("bic", "branch_code"),
             "account_holder", List.of("account_holder", "account_name"));
+
+    // Profil EN16931 (Factur-X/ZUGFeRD "COMFORT"). XML-Kennung, XMP-Konformitätsstufe und Name
+    // des eingebetteten Anhangs gehören zusammen - Mustang prüft, dass sie übereinstimmen.
+    static final String FACTURX_GUIDELINE_ID = "urn:cen.eu:en16931:2017";
+    static final String FACTURX_CONFORMANCE_LEVEL = "EN 16931";
+    static final String FACTURX_FILE_NAME = "factur-x.xml";
+
+    /**
+     * Steht eine Steuernummer oder USt-IdNr. der Beraterin in den Stammdaten? Dieselbe Quelle
+     * wie die SpecifiedTaxRegistration in der XML - ein Ersatzwert wird nie gebildet.
+     */
+    static boolean hasSellerTaxIdentifier(JsonNode affiliate) {
+        return affiliate != null && !asText(affiliate, "tax_identification_number").trim().isBlank();
+    }
+
+    /** BG-14 Abrechnungszeitraum aus den Buchungen des Zahllaufs, als Berliner Kalenderdatum. */
+    private static String billingPeriodXml(JsonNode payment) {
+        TransactionDateRange range = extractTransactionDateRange(payment);
+        if (!range.hasDates()) return "";
+        DateTimeFormatter f = DateTimeFormatter.BASIC_ISO_DATE;
+        String start = range.min().atZoneSameInstant(BERLIN_ZONE).toLocalDate().format(f);
+        String end = range.max().atZoneSameInstant(BERLIN_ZONE).toLocalDate().format(f);
+        return "<ram:BillingSpecifiedPeriod>"
+                + "<ram:StartDateTime><udt:DateTimeString format=\"102\">" + start + "</udt:DateTimeString></ram:StartDateTime>"
+                + "<ram:EndDateTime><udt:DateTimeString format=\"102\">" + end + "</udt:DateTimeString></ram:EndDateTime>"
+                + "</ram:BillingSpecifiedPeriod>";
+    }
 
     /** Steuerregistrierung nur ausgeben, wenn eine Nummer vorliegt - leere IDs sind schemawidrig. */
     private static String taxRegistrationXml(String schemeId, String value) {
@@ -6154,19 +6212,21 @@ public class WebUiServer {
         MimeMultipart multipart = new MimeMultipart("mixed");
         multipart.addBodyPart(contentPart);
         multipart.addBodyPart(attachmentPart);
-        if (includeEInvoiceAttachments && zugferdPath != null && eInvoicePdfPath != null) {
+        // Die Gutschrift geht auch ohne XML mit: Fehlt der Beraterin die Steuerkennung, entsteht
+        // eine PDF-Gutschrift ohne E-Rechnung - der Beleg selbst darf dann nicht wegfallen.
+        if (includeEInvoiceAttachments && zugferdPath != null) {
             MimeBodyPart zugferdAttachmentPart = new MimeBodyPart();
             FileDataSource zugferdDs = new FileDataSource(zugferdPath.toFile());
             zugferdAttachmentPart.setDataHandler(new DataHandler(zugferdDs));
             zugferdAttachmentPart.setFileName(zugferdPath.getFileName().toString());
             zugferdAttachmentPart.setHeader("Content-Type", "application/xml; charset=UTF-8");
-
+            multipart.addBodyPart(zugferdAttachmentPart);
+        }
+        if (includeEInvoiceAttachments && eInvoicePdfPath != null) {
             MimeBodyPart eInvoiceViewAttachmentPart = new MimeBodyPart();
             FileDataSource eInvoiceViewDs = new FileDataSource(eInvoicePdfPath.toFile());
             eInvoiceViewAttachmentPart.setDataHandler(new DataHandler(eInvoiceViewDs));
             eInvoiceViewAttachmentPart.setFileName(eInvoicePdfPath.getFileName().toString());
-
-            multipart.addBodyPart(zugferdAttachmentPart);
             multipart.addBodyPart(eInvoiceViewAttachmentPart);
         }
         message.setContent(multipart);
@@ -6492,6 +6552,12 @@ public class WebUiServer {
 
     private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath,
                                            DocumentKind kind, String documentNumber) {
+        appendMailLogEntry(config, paymentId, recipientMode, toEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoiceViewPdfPath,
+                kind, documentNumber, "");
+    }
+
+    private static void appendMailLogEntry(Properties config, String paymentId, String recipientMode, String toEmail, String subject, String periodLabel, Path pdfPath, Path jsonPath, Path zugferdPath, Path eInvoiceViewPdfPath,
+                                           DocumentKind kind, String documentNumber, String eInvoiceStatus) {
         List<Map<String, String>> entries = readMailLogEntries(config);
         Map<String, String> row = new LinkedHashMap<>();
         row.put("paymentId", Objects.toString(paymentId, ""));
@@ -6509,6 +6575,7 @@ public class WebUiServer {
         row.put("zugferdPath", zugferdPath != null ? zugferdPath.toAbsolutePath().toString() : "");
         row.put("eInvoiceViewPdfFile", eInvoiceViewPdfPath != null ? eInvoiceViewPdfPath.getFileName().toString() : "");
         row.put("eInvoiceViewPdfPath", eInvoiceViewPdfPath != null ? eInvoiceViewPdfPath.toAbsolutePath().toString() : "");
+        row.put("eInvoiceStatus", Objects.toString(eInvoiceStatus, ""));
         row.put("sentAt", ZonedDateTime.now(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm:ss")));
         entries.add(0, row);
         if (entries.size() > 1000) entries = new ArrayList<>(entries.subList(0, 1000));
@@ -6900,14 +6967,17 @@ public class WebUiServer {
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             PdfRendererBuilder builder = new PdfRendererBuilder();
             builder.useFastMode();
+            configurePdfA3(builder);
             builder.withHtmlContent(xhtml, baseUri);
             builder.toStream(out);
             builder.run();
 
             try (PDDocument document = PDDocument.load(out.toByteArray())) {
-                if (xmlPath != null && Files.exists(xmlPath)) {
+                boolean withFacturX = xmlPath != null && Files.exists(xmlPath);
+                if (withFacturX) {
                     attachZugferdXmlToPdf(document, xmlPath);
                 }
+                writePdfAMetadata(document, kind.label + " " + documentNumber, withFacturX);
                 document.save(pdfPath.toFile());
             }
         } catch (Exception e) {
@@ -6926,40 +6996,166 @@ public class WebUiServer {
     }
 
 
+    // PDF/A verbietet nicht eingebettete Schriften - die Standardschriften Helvetica/Times lassen
+    // sich nicht einbetten. Liberation Sans (SIL OFL, src/main/resources/fonts) ist metrisch
+    // identisch zu Arial; das Layout bleibt gleich. Registriert auch für die generischen Familien,
+    // damit gespeicherte Designer-Vorlagen nie auf eine nicht einbettbare Schrift zurückfallen.
+    private static final String[] PDFA_FONT_FAMILIES = {
+            "Arial", "Helvetica", "Liberation Sans", "sans-serif", "SansSerif",
+            "serif", "Serif", "Times New Roman", "monospace", "Monospaced", "Courier New"};
+    private static final Map<String, byte[]> PDFA_FONT_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static byte[] pdfaFontBytes(String fileName) throws IOException {
+        byte[] cached = PDFA_FONT_CACHE.get(fileName);
+        if (cached != null) return cached;
+        try (InputStream in = WebUiServer.class.getResourceAsStream("/fonts/" + fileName)) {
+            if (in == null) throw new IOException("Schrift fehlt im Build: /fonts/" + fileName);
+            byte[] bytes = in.readAllBytes();
+            PDFA_FONT_CACHE.put(fileName, bytes);
+            return bytes;
+        }
+    }
+
+    private static void configurePdfA3(PdfRendererBuilder builder) throws IOException {
+        byte[] regular = pdfaFontBytes("LiberationSans-Regular.ttf");
+        byte[] bold = pdfaFontBytes("LiberationSans-Bold.ttf");
+        builder.usePdfAConformance(PdfRendererBuilder.PdfAConformance.PDFA_3_B);
+        // sRGB als OutputIntent - das Profil bringt Java selbst mit.
+        builder.useColorProfile(java.awt.color.ICC_Profile.getInstance(java.awt.color.ColorSpace.CS_sRGB).getData());
+        for (String family : PDFA_FONT_FAMILIES) {
+            for (BaseRendererBuilder.FontStyle style : BaseRendererBuilder.FontStyle.values()) {
+                // Kursiv gibt es nicht als eigenen Schnitt; aufrecht ist besser als nicht eingebettet.
+                builder.useFont((FSSupplier<InputStream>) () -> new java.io.ByteArrayInputStream(regular), family, 400, style, true);
+                builder.useFont((FSSupplier<InputStream>) () -> new java.io.ByteArrayInputStream(bold), family, 700, style, true);
+            }
+        }
+    }
+
+    /**
+     * Bettet die Rechnungsdaten so ein, wie Factur-X/ZUGFeRD es verlangt: als factur-x.xml mit
+     * MIME text/xml, Beziehung "Alternative" und Verweis aus dem /AF-Eintrag des Dokuments. Nur
+     * unter diesem Namen erkennen Prüfwerkzeuge wie Mustang die XML automatisch.
+     */
     private static void attachZugferdXmlToPdf(PDDocument document, Path xmlPath) throws IOException {
         byte[] xmlBytes = Files.readAllBytes(xmlPath);
-        PDComplexFileSpecification fs = new PDComplexFileSpecification();
-        fs.setFile(xmlPath.getFileName().toString());
+        java.util.Calendar now = berlinNowToSeconds();
 
+        PDEmbeddedFile ef;
         try (java.io.ByteArrayInputStream bais = new java.io.ByteArrayInputStream(xmlBytes)) {
-            PDEmbeddedFile ef = new PDEmbeddedFile(document, bais);
-            ef.setSubtype("application/xml");
-            ef.setSize(xmlBytes.length);
-            ef.setCreationDate(new java.util.GregorianCalendar());
-            ef.setModDate(new java.util.GregorianCalendar());
-            fs.setEmbeddedFile(ef);
+            ef = new PDEmbeddedFile(document, bais);
         }
+        ef.setSubtype("text/xml");
+        ef.setSize(xmlBytes.length);
+        ef.setCreationDate(now);
+        ef.setModDate(now);
 
+        PDComplexFileSpecification fs = new PDComplexFileSpecification();
+        fs.setFile(FACTURX_FILE_NAME);
+        fs.setFileUnicode(FACTURX_FILE_NAME);
+        fs.setFileDescription("Factur-X/ZUGFeRD-Rechnungsdaten (" + FACTURX_CONFORMANCE_LEVEL + ")");
+        fs.setEmbeddedFile(ef);
+        fs.setEmbeddedFileUnicode(ef);
         COSDictionary fsDict = fs.getCOSObject();
         fsDict.setName(COSName.AF_RELATIONSHIP, "Alternative");
 
         PDDocumentCatalog catalog = document.getDocumentCatalog();
         PDDocumentNameDictionary names = catalog.getNames();
         if (names == null) names = new PDDocumentNameDictionary(catalog);
-
-        PDEmbeddedFilesNameTreeNode efTree = names.getEmbeddedFiles();
-        if (efTree == null) efTree = new PDEmbeddedFilesNameTreeNode();
-
-        java.util.Map<String, PDComplexFileSpecification> map = efTree.getNames();
-        if (map == null) map = new java.util.HashMap<>();
-        map.put(xmlPath.getFileName().toString(), fs);
-        efTree.setNames(map);
+        PDEmbeddedFilesNameTreeNode efTree = new PDEmbeddedFilesNameTreeNode();
+        efTree.setNames(java.util.Map.of(FACTURX_FILE_NAME, fs));
         names.setEmbeddedFiles(efTree);
         catalog.setNames(names);
 
         COSArray afArray = new COSArray();
         afArray.add(fsDict);
         catalog.getCOSObject().setItem(COSName.AF, afArray);
+    }
+
+    /** Jetzt in Berlin, auf Sekunden gekürzt - Info-Dictionary und XMP müssen exakt übereinstimmen. */
+    private static java.util.Calendar berlinNowToSeconds() {
+        java.util.Calendar now = java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone(BERLIN_ZONE));
+        now.set(java.util.Calendar.MILLISECOND, 0);
+        return now;
+    }
+
+    /**
+     * PDF/A-3-Metadaten: Info-Dictionary und XMP mit identischen Werten. Mit eingebetteter
+     * Rechnung kommen die Factur-X-Angaben samt der für PDF/A nötigen Schemabeschreibung dazu;
+     * Dateiname und Konformitätsstufe stammen aus denselben Konstanten wie XML und Anhang.
+     */
+    static void writePdfAMetadata(PDDocument document, String title, boolean withFacturX) throws IOException {
+        java.util.Calendar now = berlinNowToSeconds();
+        String creator = "VEMMiNA Assistent";
+        String producer = "VEMMiNA Assistent (openhtmltopdf, Apache PDFBox)";
+
+        PDDocumentInformation info = new PDDocumentInformation();
+        info.setTitle(title);
+        info.setCreator(creator);
+        info.setProducer(producer);
+        info.setCreationDate(now);
+        info.setModificationDate(now);
+        document.setDocumentInformation(info);
+
+        String date = now.toInstant().atZone(BERLIN_ZONE).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        String facturX = !withFacturX ? "" : """
+                  <rdf:Description rdf:about="" xmlns:pdfaExtension="http://www.aiim.org/pdfa/ns/extension/" xmlns:pdfaSchema="http://www.aiim.org/pdfa/ns/schema#" xmlns:pdfaProperty="http://www.aiim.org/pdfa/ns/property#">
+                   <pdfaExtension:schemas>
+                    <rdf:Bag>
+                     <rdf:li rdf:parseType="Resource">
+                      <pdfaSchema:schema>Factur-X PDFA Extension Schema</pdfaSchema:schema>
+                      <pdfaSchema:namespaceURI>urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#</pdfaSchema:namespaceURI>
+                      <pdfaSchema:prefix>fx</pdfaSchema:prefix>
+                      <pdfaSchema:property>
+                       <rdf:Seq>
+                        <rdf:li rdf:parseType="Resource"><pdfaProperty:name>DocumentFileName</pdfaProperty:name><pdfaProperty:valueType>Text</pdfaProperty:valueType><pdfaProperty:category>external</pdfaProperty:category><pdfaProperty:description>The name of the embedded XML document</pdfaProperty:description></rdf:li>
+                        <rdf:li rdf:parseType="Resource"><pdfaProperty:name>DocumentType</pdfaProperty:name><pdfaProperty:valueType>Text</pdfaProperty:valueType><pdfaProperty:category>external</pdfaProperty:category><pdfaProperty:description>The type of the hybrid document in capital letters, e.g. INVOICE or ORDER</pdfaProperty:description></rdf:li>
+                        <rdf:li rdf:parseType="Resource"><pdfaProperty:name>Version</pdfaProperty:name><pdfaProperty:valueType>Text</pdfaProperty:valueType><pdfaProperty:category>external</pdfaProperty:category><pdfaProperty:description>The actual version of the standard applying to the embedded XML document</pdfaProperty:description></rdf:li>
+                        <rdf:li rdf:parseType="Resource"><pdfaProperty:name>ConformanceLevel</pdfaProperty:name><pdfaProperty:valueType>Text</pdfaProperty:valueType><pdfaProperty:category>external</pdfaProperty:category><pdfaProperty:description>The conformance level of the embedded XML document</pdfaProperty:description></rdf:li>
+                       </rdf:Seq>
+                      </pdfaSchema:property>
+                     </rdf:li>
+                    </rdf:Bag>
+                   </pdfaExtension:schemas>
+                  </rdf:Description>
+                  <rdf:Description rdf:about="" xmlns:fx="urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#">
+                   <fx:DocumentType>INVOICE</fx:DocumentType>
+                   <fx:DocumentFileName>{{fileName}}</fx:DocumentFileName>
+                   <fx:Version>1.0</fx:Version>
+                   <fx:ConformanceLevel>{{conformance}}</fx:ConformanceLevel>
+                  </rdf:Description>
+                """.replace("{{fileName}}", FACTURX_FILE_NAME).replace("{{conformance}}", FACTURX_CONFORMANCE_LEVEL);
+        String xmp = """
+                <?xpacket begin="﻿" id="W5M0MpCehiHzreSzNTczkc9d"?>
+                <x:xmpmeta xmlns:x="adobe:ns:meta/">
+                 <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+                  <rdf:Description rdf:about="" xmlns:pdfaid="http://www.aiim.org/pdfa/ns/id/">
+                   <pdfaid:part>3</pdfaid:part>
+                   <pdfaid:conformance>B</pdfaid:conformance>
+                  </rdf:Description>
+                  <rdf:Description rdf:about="" xmlns:dc="http://purl.org/dc/elements/1.1/">
+                   <dc:title><rdf:Alt><rdf:li xml:lang="x-default">{{title}}</rdf:li></rdf:Alt></dc:title>
+                  </rdf:Description>
+                  <rdf:Description rdf:about="" xmlns:xmp="http://ns.adobe.com/xap/1.0/">
+                   <xmp:CreatorTool>{{creator}}</xmp:CreatorTool>
+                   <xmp:CreateDate>{{date}}</xmp:CreateDate>
+                   <xmp:ModifyDate>{{date}}</xmp:ModifyDate>
+                  </rdf:Description>
+                  <rdf:Description rdf:about="" xmlns:pdf="http://ns.adobe.com/pdf/1.3/">
+                   <pdf:Producer>{{producer}}</pdf:Producer>
+                  </rdf:Description>
+                {{facturX}} </rdf:RDF>
+                </x:xmpmeta>
+                <?xpacket end="w"?>
+                """
+                .replace("{{title}}", escapeXml(title))
+                .replace("{{creator}}", escapeXml(creator))
+                .replace("{{producer}}", escapeXml(producer))
+                .replace("{{date}}", date)
+                .replace("{{facturX}}", facturX);
+
+        PDMetadata metadata = new PDMetadata(document);
+        metadata.importXMPMetadata(xmp.getBytes(StandardCharsets.UTF_8));
+        document.getDocumentCatalog().setMetadata(metadata);
     }
 
     private static String sanitizePdfText(String value) {
