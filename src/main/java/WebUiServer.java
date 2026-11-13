@@ -76,9 +76,12 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Properties;
 import java.util.Set;
 import java.security.MessageDigest;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 
@@ -4507,7 +4510,11 @@ public class WebUiServer {
                 Files.createDirectories(runExportDir);
 
                 String timestamp = FILE_TIMESTAMP.format(LocalDateTime.now());
-                String gutschriftNr = generateNextDocumentNumber(config, kind);
+                // Ein Zahllauf hat genau eine Stammnummer; jede erneute Erzeugung ist eine Version
+                // davon (GS-2026-0042-1, -2 ...) und verweist auf den Beleg, den sie ersetzt.
+                DocumentNumberRegistry.Issued issued = issueDocumentNumber(config, exportDir, paymentId, kind);
+                String gutschriftNr = issued.number();
+                String replacesNr = issued.replaces();
                 TaxTreatment taxTreatment = resolveTaxTreatment(affiliate);
                 String baseFilename = "provisionsnachweis_" + sanitizeFilename(gutschriftNr) + "_" + timestamp;
                 Path pdfPath = runExportDir.resolve(baseFilename + ".pdf");
@@ -4529,17 +4536,17 @@ public class WebUiServer {
                         : "";
                 Path zugferdPath = "e-rechnung".equals(eInvoiceStatus) ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".xml") : null;
                 Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".pdf") : null;
-                createInvoiceDetailsPdf(pdfPath, docResponse, affiliate, config, gutschriftNr, kind, hiddenBeforeStart);
+                createInvoiceDetailsPdf(pdfPath, docResponse, affiliate, config, gutschriftNr, replacesNr, kind, hiddenBeforeStart);
                 writeOriginalJson(jsonPath, docResponse);
                 if (hiddenBeforeStart > 0) {
                     // Die ungekürzte GoAffPro-Antwort bleibt im Archiv; die Mail erhält nur die bereinigte.
                     writeOriginalJson(runExportDir.resolve(baseFilename + "_goaffpro-vollstaendig.json"), response);
                 }
                 if (zugferdPath != null) {
-                    createZugferdInvoiceXml(zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
+                    createZugferdInvoiceXml(zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind, replacesNr);
                 }
                 if (eInvoicePdfPath != null) {
-                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
+                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind, replacesNr);
                 }
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
@@ -4583,6 +4590,8 @@ public class WebUiServer {
                 payload.put("documentKind", kind.wireValue());
                 payload.put("documentKindLabel", kind.label);
                 payload.put("documentNumber", gutschriftNr);
+                payload.put("documentVersion", issued.version());
+                payload.put("replacesDocumentNumber", replacesNr);
                 payload.put("documentKindSource", decision.source());
                 // Nur informativ: wie viele Provisionen des Zahllaufs aus der Zeit vor dem Stichtag
                 // stammen. Auf die Dokumentart wirkt das nicht, es erklärt aber den Beleginhalt.
@@ -4610,7 +4619,8 @@ public class WebUiServer {
             }
         }
 
-        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate, Properties config, String gutschriftNr, DocumentKind kind,
+        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate, Properties config, String gutschriftNr,
+                                             String replacesNr, DocumentKind kind,
                                              int hiddenBeforeStartCount) throws IOException {
             try (PDDocument document = new PDDocument()) {
                 JsonNode payments = apiResponse.get("payments");
@@ -4723,6 +4733,17 @@ public class WebUiServer {
                     cs.showText("Zahllauf-ID: " + asText(payment, "id") + "   |   Affiliate-ID: " + asText(payment, "affiliate_id"));
                     cs.endText();
                     y -= 18;
+
+                    if (replacesNr != null && !replacesNr.isBlank()) {
+                        cs.beginText();
+                        cs.setFont(PDType1Font.HELVETICA_BOLD, 11);
+                        cs.setNonStrokingColor(new Color(176, 72, 24));
+                        cs.newLineAtOffset(x, y);
+                        cs.showText(replacesDocumentLabel(kind) + " " + replacesNr);
+                        cs.endText();
+                        cs.setNonStrokingColor(new Color(44, 52, 64));
+                        y -= 18;
+                    }
 
                     cs.beginText();
                     cs.setFont(PDType1Font.HELVETICA, 11);
@@ -5469,6 +5490,16 @@ public class WebUiServer {
     private static void createZugferdInvoiceXml(Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
                                                 String documentNumber, String periodLabel, TaxTreatment taxTreatment,
                                                 DocumentKind kind) throws IOException {
+        createZugferdInvoiceXml(xmlPath, payment, affiliate, config, documentNumber, periodLabel, taxTreatment, kind, "");
+    }
+
+    private static void createZugferdInvoiceXml(Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
+                                                String documentNumber, String periodLabel, TaxTreatment taxTreatment,
+                                                DocumentKind kind, String replacesDocumentNumber) throws IOException {
+        // BT-25: Eine neue Version verweist auf den Beleg, den sie ersetzt.
+        String invoiceReferencedDocumentXml = replacesDocumentNumber == null || replacesDocumentNumber.isBlank() ? ""
+                : "<ram:InvoiceReferencedDocument><ram:IssuerAssignedID>" + escapeXml(replacesDocumentNumber)
+                  + "</ram:IssuerAssignedID></ram:InvoiceReferencedDocument>";
         boolean enabled = Boolean.parseBoolean(Objects.toString(config.getProperty("eInvoiceEnabled"), "true"));
         if (!enabled) {
             Files.writeString(xmlPath, "<!-- ZUGFeRD/E-" + kind.label + " deaktiviert -->", StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
@@ -5653,11 +5684,13 @@ public class WebUiServer {
                         <ram:GrandTotalAmount>{{grossAmount}}</ram:GrandTotalAmount>
                         <ram:DuePayableAmount>{{grossAmount}}</ram:DuePayableAmount>
                       </ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+                      {{invoiceReferencedDocument}}
                     </ram:ApplicableHeaderTradeSettlement>
                   </rsm:SupplyChainTradeTransaction>
                 </rsm:CrossIndustryInvoice>
                 """;
-        xml = xml.replace("{{typeCode}}", kind.zugferdTypeCode)
+        xml = xml.replace("{{invoiceReferencedDocument}}", invoiceReferencedDocumentXml)
+                .replace("{{typeCode}}", kind.zugferdTypeCode)
                 .replace("{{gutschriftNr}}", escapeXml(documentNumber))
                 .replace("{{issueDate}}", escapeXml(issueDate))
                 .replace("{{periodLabel}}", escapeXml(periodLabel))
@@ -6635,12 +6668,18 @@ public class WebUiServer {
     private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
                                                          String gutschriftNr, String periodLabel, TaxTreatment taxTreatment,
                                                          DocumentKind kind) throws IOException {
+        createEInvoicePdfWithEmbeddedXml(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind, "");
+    }
+
+    private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
+                                                         String gutschriftNr, String periodLabel, TaxTreatment taxTreatment,
+                                                         DocumentKind kind, String replacesDocumentNumber) throws IOException {
         // Der handgezeichnete PDFBox-Pfad unten kennt nur die Gutschrift: er liest fest
         // eInvoiceBuyer*, druckt "Gutschriftempfängerin" und den § 14-Widerspruchshinweis. Eine
         // Altfall-Rechnung käme dort mit falschem Aussteller UND falschem Rechtstext heraus -
         // deshalb gilt die Umschalt-Property ausschließlich für Gutschriften.
         if (kind == DocumentKind.RECHNUNG || !Boolean.getBoolean("goaffpro.legacyEInvoicePdfRenderer")) {
-            createEInvoicePdfFromHtmlTemplate(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind);
+            createEInvoicePdfFromHtmlTemplate(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind, replacesDocumentNumber);
             return;
         }
 
@@ -6956,9 +6995,10 @@ public class WebUiServer {
 
     private static void createEInvoicePdfFromHtmlTemplate(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
                                                          String documentNumber, String periodLabel, TaxTreatment taxTreatment,
-                                                         DocumentKind kind) throws IOException {
+                                                         DocumentKind kind, String replacesDocumentNumber) throws IOException {
         String template = documentPdfTemplateHtml(config, kind);
         String renderedHtml = renderEInvoicePdfViewHtml(template, payment, affiliate, config, documentNumber, periodLabel, taxTreatment, kind);
+        renderedHtml = insertReplacesDocumentRow(renderedHtml, documentNumber, replacesDocumentNumber, kind);
         String xhtml = normalizeHtmlForPdf(renderedHtml);
         String baseUri = pdfPath.toAbsolutePath().getParent() == null
                 ? Paths.get(".").toAbsolutePath().toUri().toString()
@@ -6983,6 +7023,29 @@ public class WebUiServer {
         } catch (Exception e) {
             throw new IOException("E-Gutschrift-PDF konnte nicht aus der gespeicherten HTML-Vorlage gerendert werden: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Setzt bei einer neuen Version "Ersetzt Gutschrift <Vorgänger>" direkt unter die Nummernzeile.
+     * Die Zeile wird aus der Nummernzeile geklont, damit sie in jeder (auch individuell
+     * gespeicherten) Vorlage dasselbe Layout hat. Ohne Nummernzeile steht der Hinweis oben im Body.
+     */
+    private static String insertReplacesDocumentRow(String html, String documentNumber, String replaces, DocumentKind kind) {
+        if (html == null || replaces == null || replaces.isBlank()) return html;
+        Document document = Jsoup.parse(html);
+        String label = replacesDocumentLabel(kind);
+        for (Element row : document.select("tr")) {
+            var cells = row.select("> td");
+            if (cells.size() < 2 || !documentNumber.equals(cells.last().text().trim())) continue;
+            Element clone = row.clone();
+            var cloneCells = clone.select("> td");
+            cloneCells.first().text(label);
+            cloneCells.last().text(replaces);
+            row.after(clone);
+            return document.outerHtml();
+        }
+        document.body().prependElement("div").text(label + " Nr. " + replaces);
+        return document.outerHtml();
     }
 
     private static String normalizeHtmlForPdf(String html) {
@@ -8287,6 +8350,70 @@ public class WebUiServer {
         }
     }
     // ══════════════ LEGACY-RECHNUNG ─ END ══════════════
+
+    private static final Pattern DOCUMENT_NUMBER_PATTERN = Pattern.compile("(GS|RE)-(\\d{4})-(\\d{4,})");
+
+    /** Vergibt Stammnummer oder nächste Version für den Zahllauf (siehe DocumentNumberRegistry). */
+    private static DocumentNumberRegistry.Issued issueDocumentNumber(Properties config, Path exportDir, String paymentId,
+                                                                    DocumentKind kind) throws Exception {
+        synchronized (CONFIG_LOCK) {
+            return DocumentNumberRegistry.issue(GoAffProSyncService.resolveDbPath(config), paymentId, kind.wireValue(),
+                    () -> findExistingDocumentNumbers(config, exportDir, paymentId, kind),
+                    () -> generateNextDocumentNumber(config, kind));
+        }
+    }
+
+    /**
+     * Belege, die vor Einführung des Registers für diesen Zahllauf erzeugt wurden: aus den
+     * Export-Ordnern (export_<datum>_<paymentId>_<name>) und dem Versandprotokoll.
+     * Früheste Nummer = Stammnummer, größte = zuletzt vergebener Beleg.
+     */
+    private static Optional<DocumentNumberRegistry.Existing> findExistingDocumentNumbers(Properties config, Path exportDir,
+                                                                                         String paymentId, DocumentKind kind) {
+        Set<String> numbers = new LinkedHashSet<>();
+        if (exportDir != null && Files.isDirectory(exportDir)) {
+            Pattern folder = Pattern.compile("^export_[^_]+_" + Pattern.quote(sanitizeFilename(paymentId)) + "_.*");
+            try (var dirs = Files.list(exportDir)) {
+                for (Path dir : dirs.filter(Files::isDirectory).toList()) {
+                    if (!folder.matcher(dir.getFileName().toString()).matches()) continue;
+                    try (var files = Files.list(dir)) {
+                        files.forEach(f -> collectDocumentNumbers(f.getFileName().toString(), numbers));
+                    }
+                }
+            } catch (IOException ignored) {
+            }
+        }
+        for (Map<String, String> entry : readMailLogEntries(config)) {
+            if (!paymentId.equals(Objects.toString(entry.get("paymentId"), "").trim())) continue;
+            String number = Objects.toString(entry.get("documentNumber"), "").trim();
+            if (!number.isBlank()) collectDocumentNumbers(number, numbers);
+            else {
+                collectDocumentNumbers(Objects.toString(entry.get("pdfFile"), ""), numbers);
+                collectDocumentNumbers(Objects.toString(entry.get("subject"), ""), numbers);
+            }
+        }
+        List<String> sorted = numbers.stream()
+                .filter(n -> n.startsWith(kind.numberPrefix + "-"))
+                .sorted(java.util.Comparator.comparingLong(WebUiServer::documentNumberSortKey))
+                .toList();
+        if (sorted.isEmpty()) return Optional.empty();
+        return Optional.of(new DocumentNumberRegistry.Existing(sorted.get(0), sorted.get(sorted.size() - 1)));
+    }
+
+    private static void collectDocumentNumbers(String text, Set<String> target) {
+        Matcher m = DOCUMENT_NUMBER_PATTERN.matcher(Objects.toString(text, ""));
+        while (m.find()) target.add(m.group());
+    }
+
+    private static long documentNumberSortKey(String number) {
+        Matcher m = DOCUMENT_NUMBER_PATTERN.matcher(number);
+        if (!m.find()) return Long.MAX_VALUE;
+        return Long.parseLong(m.group(2)) * 1_000_000_000L + Long.parseLong(m.group(3));
+    }
+
+    private static String replacesDocumentLabel(DocumentKind kind) {
+        return "Ersetzt " + kind.label;
+    }
 
     private static String generateNextGutschriftNumber(Properties config) throws IOException {
         return generateNextDocumentNumber(config, DocumentKind.GUTSCHRIFT);
