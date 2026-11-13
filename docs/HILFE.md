@@ -37,6 +37,9 @@ Die Navigation ist bewusst flach aufgebaut: **Rechnungsservice**, **Validierunge
 ## 3) Einstellungen
 
 - **GoAffPro API-Key**
+  - Wird aus Sicherheitsgründen nie angezeigt; das Feld zeigt nur, ob ein Schlüssel hinterlegt ist.
+  - Leer lassen und speichern: Der bisherige Schlüssel bleibt erhalten. Ein neuer Schlüssel wird einfach eingetragen und gespeichert.
+  - Kommt der Schlüssel aus der Umgebungsvariable `GOAFFPRO_API_KEY` (z. B. `.env`), ist das Feld gesperrt; geändert wird er dann dort.
 - **Export-Zielordner**
 - **E-Mail-Konfiguration**
   - Kontakt-E-Mail

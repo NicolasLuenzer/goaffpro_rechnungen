@@ -35,7 +35,7 @@
               - generic [ref=e277]: "GoAffPro API-Key:"
               - textbox "GoAffPro API-Key:" [ref=e278]:
                 - /placeholder: API-Key
-                - text: 91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845
+                - text: <entfernt>
             - generic [ref=e280]: "Editierbare Zahlläufe (chronologisch):"
             - generic [ref=e281]:
               - generic [ref=e282]:

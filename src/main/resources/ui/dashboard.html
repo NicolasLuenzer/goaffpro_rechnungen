@@ -750,7 +750,7 @@
                   <h3>GoAffPro & Zahlläufe</h3>
                   <div class="toolbar">
                     <label for="goaffproAPIKey">GoAffPro API-Key:</label>
-                    <input id="goaffproAPIKey" type="password" placeholder="API-Key" />
+                    <input id="goaffproAPIKey" type="password" placeholder="API-Key" autocomplete="new-password" style="min-width:260px" />
                   </div>
                   <div class="toolbar"><label>Editierbare Zahlläufe (chronologisch):</label></div>
                   <div id="commissionHistoryEditor" class="pill-list"></div>
@@ -3661,7 +3661,6 @@
 
 
     async function loadSettings() {
-      const goaffproAPIKeyInput = document.getElementById('goaffproAPIKey');
       const contactEmailInput = document.getElementById('contactEmail');
       const smtpHostInput = document.getElementById('smtpHost');
       const smtpPortInput = document.getElementById('smtpPort');
@@ -3692,7 +3691,7 @@
       const syncDbPathHint = document.getElementById('goaffproSyncDbPathHint');
       try {
         const data = await apiGet('/api/settings');
-        if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || '';
+        applyGoaffproApiKeyState(data);
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || '';
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || '';
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || '587';
@@ -3807,6 +3806,8 @@
       if (!status || !select) return;
       try {
         const beforeSnapshot = settingsSnapshot || buildSettingsSnapshot();
+        // Das Schlüsselfeld wird nach dem Speichern geleert, ein neuer Schlüssel zählt trotzdem als Änderung.
+        const goaffproApiKeySubmitted = !!(goaffproAPIKeyInput && goaffproAPIKeyInput.value.trim());
         const data = await apiPost('/api/settings', {
           lastImportedComission: select.value,
           goaffproAPIKey: goaffproAPIKeyInput ? goaffproAPIKeyInput.value : '',
@@ -3864,7 +3865,7 @@
           legacyBuyerTaxNumber: document.getElementById('legacyBuyerTaxNumber')?.value || '',
           legacyNachweisFirmenname: document.getElementById('legacyNachweisFirmenname')?.value || ''
         });
-        if (goaffproAPIKeyInput) goaffproAPIKeyInput.value = data.goaffproAPIKey || goaffproAPIKeyInput.value;
+        applyGoaffproApiKeyState(data);
         if (contactEmailInput) contactEmailInput.value = data.contactEmail || contactEmailInput.value;
         if (smtpHostInput) smtpHostInput.value = data.smtpHost || smtpHostInput.value;
         if (smtpPortInput) smtpPortInput.value = data.smtpPort || smtpPortInput.value || '587';
@@ -3938,7 +3939,7 @@
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
         const afterSnapshot = buildSettingsSnapshot();
-        const changed = JSON.stringify(beforeSnapshot) !== JSON.stringify(afterSnapshot);
+        const changed = goaffproApiKeySubmitted || JSON.stringify(beforeSnapshot) !== JSON.stringify(afterSnapshot);
         settingsSnapshot = afterSnapshot;
         updateSaveButtonState();
         status.textContent = changed
@@ -4137,6 +4138,20 @@
       } catch (error) {
         if (status) status.textContent = `Fehler beim Erinnerungsversand: ${error.message}`;
       }
+    }
+
+    // Der Server liefert den GoAffPro-Schlüssel nie aus, nur ob einer hinterlegt ist. Das Feld
+    // bleibt deshalb leer; leer gespeichert bleibt der bisherige Schlüssel erhalten.
+    function applyGoaffproApiKeyState(data) {
+      const input = document.getElementById('goaffproAPIKey');
+      if (!input || !data) return;
+      input.value = '';
+      const fromEnv = data.goaffproApiKeyFromEnv === true;
+      // GOAFFPRO_API_KEY hat Vorrang - eine Eingabe hier würde nicht gespeichert.
+      input.disabled = fromEnv;
+      input.placeholder = fromEnv
+        ? 'kommt aus GOAFFPRO_API_KEY'
+        : (data.hasGoaffproApiKey === true ? 'hinterlegt (leer lassen zum Beibehalten)' : 'fehlt – bitte eintragen');
     }
 
     function buildSettingsSnapshot() {

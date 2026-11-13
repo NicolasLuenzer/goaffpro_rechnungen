@@ -316,7 +316,11 @@ public class WebUiServer {
     private static final String DEFAULT_PDF_EXPORT_PATH =
             System.getenv().getOrDefault("PDF_EXPORT_PATH", "C:\\Users\\nluenzer\\Downloads\\goaffpro");
     private static final String UI_SETTINGS_FILENAME = "goaffpro_ui_settings.properties";
-    private static final String DEFAULT_GOAFFPRO_API_KEY = "91bdb6e219f5b9ffeff929077b4badd5d7a26c235c672e20285885835683b845";
+    // Der GoAffPro-Schlüssel steht bewusst nicht im Code: Er kommt aus GOAFFPRO_API_KEY (Umgebung
+    // oder .env) oder aus goaffproAPIKey in den Einstellungen. Fehlt beides, wird nicht angefragt.
+    private static final String GOAFFPRO_API_KEY_MISSING_MESSAGE =
+            "GoAffPro-API-Schlüssel fehlt - bitte in den Einstellungen oder als GOAFFPRO_API_KEY hinterlegen";
+    private static volatile boolean goaffproSyncSchedulerMissingKeyLogged = false;
     private static final List<String> DEFAULT_COMMISSION_HISTORY = List.of("2103705", "2167905", "2190357", "2230376", "2336836", "2421355", "2497986", "2565325");
     private static final BuildInfo BUILD_INFO = detectBuildInfo();
     private static final String APP_VERSION = BUILD_INFO.version();
@@ -443,7 +447,16 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = resolveGoaffproApiKey(config);
+                if (apiKey.isEmpty()) {
+                    // Nur einmal melden, sonst steht die Zeile jede Minute im Log.
+                    if (!goaffproSyncSchedulerMissingKeyLogged) {
+                        System.err.println("GoAffPro Sync Scheduler: " + GOAFFPRO_API_KEY_MISSING_MESSAGE);
+                        goaffproSyncSchedulerMissingKeyLogged = true;
+                    }
+                    return;
+                }
+                goaffproSyncSchedulerMissingKeyLogged = false;
                 if (GOAFFPRO_SYNC_SERVICE.shouldRunNightly(config)) {
                     GOAFFPRO_SYNC_SERVICE.startAsync(config, apiKey, "deep");
                 } else if (GOAFFPRO_SYNC_SERVICE.shouldRunHourly(config)) {
@@ -648,7 +661,7 @@ public class WebUiServer {
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
 
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = requireGoaffproApiKey(config);
                 String requestedCommission = asText(body, "sinceId").trim();
                 String activeLastImportedComission = requestedCommission.isBlank()
                         ? Objects.toString(config.getProperty("lastImportedComission"), "0").trim()
@@ -760,7 +773,6 @@ public class WebUiServer {
 
                 String exportDir = Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH);
                 String activeCommission = Objects.toString(config.getProperty("lastImportedComission"), "0").trim();
-                String goaffproAPIKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 String smtpHost = Objects.toString(config.getProperty("smtpHost"), "").trim();
                 String smtpPort = Objects.toString(config.getProperty("smtpPort"), "587").trim();
@@ -823,7 +835,7 @@ public class WebUiServer {
                 payload.put("pdfExportPath", exportDir);
                 payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 payload.put("lastImportedComission", activeCommission);
-                payload.put("goaffproAPIKey", goaffproAPIKey);
+                putGoaffproApiKeyStatus(payload, config);
                 payload.put("contactEmail", contactEmail);
                 payload.put("smtpHost", smtpHost);
                 payload.put("smtpPort", smtpPort);
@@ -1057,7 +1069,7 @@ public class WebUiServer {
                     payload.put("pdfExportPath", Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH));
                     payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                     payload.put("lastImportedComission", Objects.toString(config.getProperty("lastImportedComission"), "0"));
-                    payload.put("goaffproAPIKey", getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY));
+                    putGoaffproApiKeyStatus(payload, config);
                     payload.put("contactEmail", Objects.toString(config.getProperty("contactEmail"), ""));
                     payload.put("smtpHost", Objects.toString(config.getProperty("smtpHost"), ""));
                     payload.put("smtpPort", Objects.toString(config.getProperty("smtpPort"), "587"));
@@ -1178,7 +1190,7 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = requireGoaffproApiKey(config);
 
                 String latestUrl = "https://api.goaffpro.com/v1/admin/payments?created_at_min=2025-12-18T07%3A48%3A36.000Z&fields=id,created_at";
                 JsonNode root = requestJson(latestUrl, apiKey);
@@ -1289,7 +1301,7 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = requireGoaffproApiKey(config);
 
                 rebuildCommissionHistoryFromPayments(config, apiKey);
                 persistSettings(config);
@@ -1322,7 +1334,7 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = requireGoaffproApiKey(config);
 
                 List<Map<String, String>> rows = fetchAdvisorValidationRows(apiKey);
                 Map<String, Object> payload = new LinkedHashMap<>();
@@ -1350,7 +1362,7 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = requireGoaffproApiKey(config);
 
                 List<Map<String, String>> rows = fetchAdvisorTreeValidationRows(apiKey);
                 Map<String, Object> payload = new LinkedHashMap<>();
@@ -1871,7 +1883,7 @@ public class WebUiServer {
                 JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
                 String mode = asText(body, "mode").trim();
                 Properties config = loadConfigWithUiSettings();
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = requireGoaffproApiKey(config);
                 Map<String, Object> payload = GOAFFPRO_SYNC_SERVICE.startAsync(config, apiKey, mode);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
@@ -1902,7 +1914,7 @@ public class WebUiServer {
                     }
                 }
                 Properties config = loadConfigWithUiSettings();
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = requireGoaffproApiKey(config);
                 Map<String, Object> payload = GOAFFPRO_SYNC_SERVICE.startDiagnosticsAsync(config, apiKey, endpoints);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
@@ -2016,7 +2028,7 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = requireGoaffproApiKey(config);
 
                 String paymentsUrl = "https://api.goaffpro.com/v1/admin/payments?since_id=" + sinceId
                         + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
@@ -2332,7 +2344,7 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = requireGoaffproApiKey(config);
 
                 JsonNode advisor = fetchAffiliatesById(apiKey, List.of(advisorId)).get(advisorId);
 
@@ -2470,7 +2482,7 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = resolveGoaffproApiKey(config);
 
                 JsonNode showcaseRoot;
                 JsonNode orderRoot;
@@ -2516,7 +2528,7 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = resolveGoaffproApiKey(config);
 
                 List<JsonNode> allOrders = new ArrayList<>();
                 Set<String> limitedWeeks = new LinkedHashSet<>();
@@ -2579,7 +2591,7 @@ public class WebUiServer {
                 Properties config = loadConfig();
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = resolveGoaffproApiKey(config);
 
                 List<JsonNode> allOrders = new ArrayList<>();
                 Set<String> limitedWeeks = new LinkedHashSet<>();
@@ -2702,7 +2714,7 @@ public class WebUiServer {
         LocalDate monthStart = YearMonth.from(periods.currentEnd()).atDay(1);
         LocalDate fetchFrom = periods.secondPreviousStart().isBefore(monthStart) ? periods.secondPreviousStart() : monthStart;
         Set<String> limitedWeeks = new LinkedHashSet<>();
-        String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+        String apiKey = resolveGoaffproApiKey(config);
         List<JsonNode> allOrders = hasSyncedData(config, "orders")
                 ? jsonArrayToList(loadSyncedRoot(config, "orders", "orders").get("orders"))
                 : fetchGoaffproNewCustomerOrders(apiKey, fetchFrom, periods.currentEnd(), limitedWeeks);
@@ -4427,7 +4439,7 @@ public class WebUiServer {
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
 
-                String apiKey = getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY).trim();
+                String apiKey = requireGoaffproApiKey(config);
                 String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?id=" + paymentId
                         + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
                 JsonNode response = requestJson(detailsUrl, apiKey);
@@ -7575,6 +7587,10 @@ public class WebUiServer {
     }
 
     private static JsonNode requestJson(String apiUrl, String apiKey) throws Exception {
+        // Auch Pfade, die sonst synchronisierte Daten nutzen, dürfen GoAffPro nie ohne Schlüssel anfragen.
+        if (apiKey == null || apiKey.isBlank()) {
+            throw new IllegalStateException(GOAFFPRO_API_KEY_MISSING_MESSAGE);
+        }
         URL url = new URL(apiUrl);
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("GET");
@@ -8204,6 +8220,30 @@ public class WebUiServer {
         return config.getProperty(configKey, defaultValue);
     }
 
+    /** GoAffPro-Schlüssel aus Umgebung/.env oder Einstellungen; leer, wenn keiner hinterlegt ist. */
+    private static String resolveGoaffproApiKey(Properties config) {
+        return Objects.toString(getSecretOrConfig(config, "GOAFFPRO_API_KEY", "goaffproAPIKey", ""), "").trim();
+    }
+
+    /**
+     * Einstellungs-Antworten melden nur, ob ein GoAffPro-Schlüssel hinterlegt ist und ob er aus
+     * GOAFFPRO_API_KEY kommt - nie den Schlüssel selbst. Die API hat keine Anmeldung.
+     */
+    private static void putGoaffproApiKeyStatus(Map<String, Object> payload, Properties config) {
+        String envValue = getEnv("GOAFFPRO_API_KEY");
+        payload.put("hasGoaffproApiKey", !resolveGoaffproApiKey(config).isEmpty());
+        payload.put("goaffproApiKeyFromEnv", envValue != null && !envValue.isBlank());
+    }
+
+    /** Für Endpunkte, die GoAffPro anfragen: ohne Schlüssel mit klarer Meldung abbrechen. */
+    private static String requireGoaffproApiKey(Properties config) {
+        String apiKey = resolveGoaffproApiKey(config);
+        if (apiKey.isEmpty()) {
+            throw new IllegalStateException(GOAFFPRO_API_KEY_MISSING_MESSAGE);
+        }
+        return apiKey;
+    }
+
     private static Path resolveSettingsDirectory(Properties config) {
         String configured = Objects.toString(config.getProperty("pdfExportPath"), "").trim();
         String path = configured.isEmpty() ? DEFAULT_PDF_EXPORT_PATH : configured;
@@ -8240,7 +8280,7 @@ public class WebUiServer {
         Properties ui = new Properties();
         ui.setProperty("pdfExportPath", Objects.toString(source.getProperty("pdfExportPath"), directory.toString()));
         ui.setProperty("lastImportedComission", Objects.toString(source.getProperty("lastImportedComission"), "0"));
-        ui.setProperty("goaffproAPIKey", Objects.toString(source.getProperty("goaffproAPIKey"), DEFAULT_GOAFFPRO_API_KEY));
+        ui.setProperty("goaffproAPIKey", Objects.toString(source.getProperty("goaffproAPIKey"), ""));
         ui.setProperty("contactEmail", Objects.toString(source.getProperty("contactEmail"), ""));
         ui.setProperty("smtpHost", Objects.toString(source.getProperty("smtpHost"), ""));
         ui.setProperty("smtpPort", Objects.toString(source.getProperty("smtpPort"), "587"));
@@ -8452,9 +8492,6 @@ public class WebUiServer {
         String emailRecipientMode = Objects.toString(config.getProperty("emailRecipientMode"), "contact").trim();
         if (!"advisor".equals(emailRecipientMode)) {
             config.setProperty("emailRecipientMode", "contact");
-        }
-        if (Objects.toString(config.getProperty("goaffproAPIKey"), "").isBlank()) {
-            config.setProperty("goaffproAPIKey", DEFAULT_GOAFFPRO_API_KEY);
         }
         config.setProperty("leaderWeeklyMailSchedulerEnabled",
                 Objects.toString(config.getProperty("leaderWeeklyMailSchedulerEnabled"), "false").trim().isBlank()
