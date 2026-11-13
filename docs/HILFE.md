@@ -2,7 +2,7 @@
 
 Diese Dokumentation beschreibt die wichtigsten Funktionen der Anwendung **VEMMiNA Assistent**.
 
-Die Navigation ist bewusst flach aufgebaut: **Rechnungsservice**, **Validierungen** und **Auswertungen** stehen direkt in der Sidebar. Die **Hilfe** ist über den Button im Kopfbereich erreichbar. Eine zusätzliche VEMMiNA-Obergruppe wird nicht mehr angezeigt.
+Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierungen**, **Auswertungen** und **GoAffPro Sync** stehen direkt in der Sidebar. Die **Hilfe** ist über den Button im Kopfbereich erreichbar. Eine zusätzliche VEMMiNA-Obergruppe wird nicht mehr angezeigt.
 
 ## 1) Hauptfunktionen im Arbeitsbereich
 
@@ -14,8 +14,9 @@ Die Navigation ist bewusst flach aufgebaut: **Rechnungsservice**, **Validierunge
   - Beeinflusst den Startpunkt (`sinceId`) für das Polling.
 - **Neusten Zahllauf hinzufügen**
   - Ermittelt den neuesten Zahllauf aus GoAffPro und ergänzt ihn in die Historie.
-- **Rechnungsdetails für selektierte Zeilen exportieren**
-  - Erstellt Rechnungsdetails-PDFs (und JSON) für markierte Zeilen.
+- **Gutschrift & Provisionsübersicht exportieren**
+  - Erstellt für die markierten Zeilen Gutschrift (bzw. bei Altfällen Rechnung), Provisionsnachweis und JSON.
+  - Mit hinterlegter Steuernummer oder USt-IdNr. der Beraterin wird die Gutschrift als E-Gutschrift (Factur-X/ZUGFeRD) erzeugt, sonst als PDF ohne E-Rechnung.
   - Kann optional E-Mails versenden.
 - **Filterfeld**
   - Filtert die Tabelle nach Name, Land, Steuernummer, Belegdatum usw.
@@ -59,22 +60,23 @@ Die Navigation ist bewusst flach aufgebaut: **Rechnungsservice**, **Validierunge
 
 ## 4a) Altfälle bis 31.12.2025 (Gutschrift oder Rechnung)
 
-Die Dokumentart wird **automatisch aus dem Provisionsdatum** abgeleitet — es gibt bewusst keinen
-manuellen Schalter:
+Die Dokumentart wird **automatisch aus dem Auszahlungsdatum des Zahllaufs** abgeleitet — es gibt
+bewusst keinen manuellen Schalter:
 
-- Transaktionen **vor** dem Stichtag (Standard: 01.01.2026, Europe/Berlin) → **Rechnung**
-  gegen die **VEMMiNA Qualitäts- Haushaltsprodukte GmbH**, eigener Nummernkreis `RE-JJJJ-NNNN`,
-  ZUGFeRD-TypeCode 380, ohne §-14-Gutschrifts- und Widerspruchshinweise.
-- Transaktionen **ab** dem Stichtag → **Gutschrift** gegen die **S+R Linear Technology GmbH**,
-  Nummernkreis `GS-JJJJ-NNNN`, TypeCode 389, mit §-14-Hinweisen (unverändertes Verhalten).
+- Zahlläufe, die **vor** dem Stichtag ausgezahlt wurden (Standard: 01.01.2026, Europe/Berlin) →
+  **Rechnung** gegen die **VEMMiNA Qualitäts- Haushaltsprodukte GmbH**, eigener Nummernkreis
+  `RE-JJJJ-NNNN`, ZUGFeRD-TypeCode 380, ohne §-14-Gutschrifts- und Widerspruchshinweise.
+- Zahlläufe, die **ab** dem Stichtag ausgezahlt wurden → **Gutschrift** gegen die
+  **S+R Linear Technology GmbH**, Nummernkreis `GS-JJJJ-NNNN`, TypeCode 389, mit §-14-Hinweisen.
 
-Grundlage ist `payment.transactions[].created_at`. Fehlen alle Transaktionsdaten, entscheidet
-das Zahllauf-Datum; fehlt auch das, wird als sicherer Rückfall eine Gutschrift erstellt.
+Grundlage ist `payment.created_at`, nicht das Datum der einzelnen Provisionen. Da jeder Zahllauf
+genau ein Auszahlungsdatum hat, kann er nicht auf beiden Seiten des Stichtags liegen. Fehlt das
+Datum, wird als sicherer Rückfall eine Gutschrift erstellt.
 
-**Gemischte Zahlläufe** (Transaktionen vor *und* ab dem Stichtag) werden **nicht automatisch**
-entschieden: Der Server antwortet mit `409 MIXED_PERIOD`, es wird **kein Beleg erzeugt und keine
-Belegnummer verbraucht**. Die Oberfläche zeigt die Aufteilung nach Anzahl und Summe und lässt
-bewusst wählen. Diese manuelle Entscheidung wird im Versandprotokoll mit ⚠ vermerkt.
+**Provisionen vor dem 01.10.2026** erscheinen nicht auf Gutschriften: Vom 01.01. bis 30.09.2026
+erhielten die Beraterinnen Codes statt Provision; die in GoAffPro trotzdem erfassten und wieder
+stornierten Buchungen werden ausgeblendet. Gleichen sie sich nicht vollständig aus, wird kein Beleg
+erzeugt und die Oberfläche nennt den Grund.
 
 Einstellungen dafür: Gruppe „Altfälle bis 31.12.2025“ (Stichtag, Anschrift, USt-IdNr. und
 Steuernummer der Alt-Gesellschaft). Die Rechnungsvorlagen sind im E-Mail-Designer als

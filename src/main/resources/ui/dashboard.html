@@ -106,11 +106,61 @@
     .settings-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(520px,1fr)); gap:16px; }
     .settings-group { border:1px solid var(--clr-border); border-radius:var(--radius-md); background:var(--clr-surface); padding:16px; box-shadow: var(--shadow-sm); }
     .settings-group h3 { margin:0 0 10px; font-size:var(--fs-sub); color:var(--clr-info); font-weight:700; }
-    .settings-hint { color:var(--clr-muted); font-size:var(--fs-sm); margin-top:6px; line-height:1.5; }
+    /* overflow-wrap: lange Pfade (SQLite-Datei, Datenordner) brechen sonst nicht um und schieben
+       auf dem Handy die Seite zur Seite. */
+    .settings-hint { color:var(--clr-muted); font-size:var(--fs-sm); margin-top:6px; line-height:1.5; overflow-wrap:anywhere; }
 
     /* ── Inputs ── */
     input[type="text"], input[type="email"], input[type="number"], select { min-width: 420px; padding: 9px 12px; border: 1.5px solid var(--clr-border-strong); border-radius: var(--radius-sm); font-family: inherit; font-size: var(--fs-body); color: var(--clr-text); background: var(--clr-surface); transition: border-color .15s, box-shadow .15s; }
+    /* Dieselbe Optik für die übrigen Feldtypen - bisher blieben Passwort, Datum und Uhrzeit
+       ungestylt. Ohne die 420px-Mindestbreite: Datum und Uhrzeit wären sonst viel zu breit. */
+    input[type="password"], input[type="date"], input[type="time"], input[type="search"], input[type="tel"], input[type="url"] { padding: 9px 12px; border: 1.5px solid var(--clr-border-strong); border-radius: var(--radius-sm); font-family: inherit; font-size: var(--fs-body); color: var(--clr-text); background: var(--clr-surface); transition: border-color .15s, box-shadow .15s; box-sizing: border-box; }
+    input[type="file"] { font-family: inherit; font-size: var(--fs-sm); color: var(--clr-muted); }
+    input[type="file"]::file-selector-button { margin-right: 10px; padding: 8px 14px; border: 1.5px solid var(--clr-border-strong); border-radius: var(--radius-sm); background: var(--clr-surface-light); color: var(--clr-info); font-family: inherit; font-weight: 600; cursor: pointer; }
     input:focus, select:focus { outline: none; border-color: var(--clr-accent-1); box-shadow: 0 0 0 3px var(--clr-focus-ring); }
+
+    /* ── Formularzeilen in den Einstellungen ──
+       Beschriftung und Feld stehen als Geschwister in einer .toolbar. Mit der Mindestbreite der
+       Felder brach die Zeile so um, dass eine Beschriftung rechts neben dem VORIGEN Feld landete
+       ("PLZ:" neben der Straße). Als Raster bildet jedes Paar eine Spalte: Beschriftung oben,
+       Feld darunter - Paare können nicht mehr auseinanderbrechen. */
+    .settings-group .toolbar:has(> label[for] + :is(input, select, textarea)):not(:has(> button)) {
+      display: grid; grid-template-rows: auto auto; grid-auto-flow: column;
+      grid-auto-columns: minmax(0, 1fr); gap: 4px 14px; align-items: end;
+    }
+    .settings-group .toolbar:has(> label[for] + :is(input, select, textarea)):not(:has(> button)) > :is(input, select, textarea) {
+      min-width: 0; width: 100%; box-sizing: border-box;
+    }
+    .settings-group .toolbar:has(> label[for] + :is(input, select, textarea)):not(:has(> button)) > label {
+      font-size: var(--fs-sm); color: var(--clr-muted); font-weight: 600;
+    }
+    /* Spaltenbreiten passend zum Inhalt: Straße breit, PLZ schmal usw. */
+    .settings-group .toolbar.form-row-address { grid-template-columns: 2fr 1fr 1.5fr; }
+    .settings-group .toolbar.form-row-taxids  { grid-template-columns: 1fr 2fr 2fr; }
+    .settings-group .toolbar.form-row-bank    { grid-template-columns: 2fr 1fr; }
+    .settings-group .toolbar.form-row-host    { grid-template-columns: 3fr 1fr; }
+    .settings-savebar {
+      position: sticky; bottom: 0; z-index: 20; display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+      margin: 16px -16px -16px; padding: 12px 16px; background: var(--clr-surface);
+      border-top: 1px solid var(--clr-border); border-radius: 0 0 var(--radius-md) var(--radius-md);
+      box-shadow: 0 -6px 16px rgba(38,40,42,.06);
+    }
+    .settings-dirty-hint { color: var(--clr-warn); font-weight: 600; font-size: var(--fs-sm); }
+    .editor-color-group { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 10px; border: 1px solid var(--clr-border); border-radius: var(--radius-sm); background: var(--clr-surface-tint); white-space: nowrap; }
+    .editor-color-group label { font-size: var(--fs-sm); font-weight: 600; color: var(--clr-muted); }
+    .editor-color-group input[type="color"] { width: 36px; height: 36px; }
+    .settings-dirty-hint:empty { display: none; }
+    #backupStatusText:empty { display: none; }
+    .empty-state { display: flex; flex-direction: column; gap: 4px; align-items: center; text-align: center; padding: 36px 16px; margin: 14px 0; border: 1.5px dashed var(--clr-border-strong); border-radius: var(--radius-md); background: var(--clr-surface-tint); color: var(--clr-muted); }
+    .empty-state strong { color: var(--clr-text); }
+    .analytics-empty-hint { display: none; }
+    .analytics-not-loaded > .analytics-empty-hint { display: flex; }
+    .analytics-not-loaded > :not(.analytics-empty-hint) { display: none !important; }
+    .validation-action-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; margin-top: 4px; font-size: var(--fs-sm); }
+    .validation-action-meta .mail-log-badge { padding: 1px 8px; }
+    .validation-action-cell .validation-reminder-btn { padding: 5px 10px; font-size: var(--fs-sm); white-space: nowrap; }
+    button.mail-log-badge { font-family: inherit; cursor: pointer; line-height: inherit; }
+    button.mail-log-badge:hover { background: var(--clr-success-bg); color: var(--clr-success); box-shadow: none; transform: none; text-decoration: underline; }
 
     /* ── Buttons ── */
     button { background: var(--clr-info); color: white; border: 1.5px solid transparent; border-radius: var(--radius-sm); padding: 10px 16px; cursor: pointer; font-family: inherit; font-weight: 600; font-size: var(--fs-body); transition: all .18s ease; }
@@ -206,7 +256,15 @@
     .help-doc { white-space: pre-wrap; background:var(--clr-surface-tint); border:1px solid var(--clr-border); border-radius:var(--radius-sm); padding:16px; font-size:var(--fs-body); line-height:1.6; }
     .help-sections details { border:1px solid var(--clr-border); border-radius:var(--radius-sm); margin:8px 0; background:var(--clr-surface); }
     .help-sections summary { cursor:pointer; padding:12px 14px; font-weight:700; color:var(--clr-info); }
-    .help-sections .help-section-body { padding:0 14px 14px; white-space:pre-wrap; }
+    .help-sections .help-section-body { padding:0 14px 14px; white-space:normal; }
+    .help-doc:has(.help-sections) { white-space: normal; }
+    .help-section-body p { margin: 8px 0; }
+    .help-section-body ul, .help-section-body ol { margin: 6px 0; padding-left: 22px; }
+    .help-section-body li { margin: 3px 0; }
+    .help-section-body h4 { margin: 14px 0 6px; font-size: var(--fs-body); color: var(--clr-info); }
+    .help-section-body code { background: var(--clr-surface-light); border: 1px solid var(--clr-border); border-radius: 4px; padding: 0 4px; font-size: .92em; }
+    .help-section-body pre { background: var(--clr-surface-light); border: 1px solid var(--clr-border); border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
+    .help-section-body pre code { border: 0; padding: 0; background: none; }
 
     /* ── Advisor Link & Hover Card ── */
     .advisor-name-link { color:var(--clr-accent-2); cursor:pointer; text-decoration:underline dotted; }
@@ -226,8 +284,9 @@
     .validation-section.active { display:block; }
 
     /* ── Tree ── */
-    .tree-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
-    .tree-toggle { background: var(--clr-surface-light); color: var(--clr-info); border: 1.5px solid var(--clr-border-strong); border-radius: 4px; padding: 2px 7px; font-size: var(--fs-sm); margin-right: 6px; font-family: inherit; cursor: pointer; }
+    .tree-name { white-space: nowrap; }
+    /* 30px statt rund 20px: Mindestgröße für Klickziele (WCAG 2.5.8) */
+    .tree-toggle { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; min-height: 30px; background: var(--clr-surface-light); color: var(--clr-info); border: 1.5px solid var(--clr-border-strong); border-radius: 4px; padding: 0 6px; font-size: var(--fs-body); margin-right: 6px; font-family: inherit; cursor: pointer; vertical-align: middle; }
     .tree-indent { display:inline-block; }
 
     /* ── Table Filter Menu ── */
@@ -279,15 +338,15 @@
     /* ── KPI Cards ── */
     .kpi-grid { display:grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap:14px; margin:14px 0; }
     .kpi-card { border:1px solid var(--clr-border); border-top:4px solid var(--clr-accent-1); background:var(--clr-surface); border-radius:var(--radius-md); padding:18px; color:var(--clr-text); box-shadow: var(--shadow-sm); }
-    .kpi-card:nth-child(4n+1) { border-top-color: var(--clr-accent-1); }
-    .kpi-card:nth-child(4n+2) { border-top-color: var(--clr-accent-2); }
-    .kpi-card:nth-child(4n+3) { border-top-color: var(--clr-accent-4); }
-    .kpi-card:nth-child(4n+4) { border-top-color: var(--clr-accent-3); }
+    /* Einheitliche Akzentfarbe: Die frühere Farbrotation nach Position (grün, gelb, ...) las sich
+       wie eine Bewertung der Kennzahl, hatte aber keine Bedeutung. */
     .kpi-card b { color:var(--clr-text); }
     .kpi-card .kpi-label { font-size:var(--fs-sm); font-weight:600; letter-spacing:.08em; line-height:1.3; text-transform:uppercase; color:var(--clr-muted); }
     .kpi-card .kpi-value { font-size:22px; font-weight:700; margin-top:4px; }
     .sync-status-card { border:1px solid var(--clr-border); border-radius:var(--radius-md); background:#fff; padding:18px; box-shadow:var(--shadow-sm); }
     .sync-status-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+    .sync-status-head > div { min-width:0; }
+    .sync-status-head > .sync-state-badge { flex-shrink:0; }
     .sync-state-badge { display:inline-flex; align-items:center; padding:6px 12px; border-radius:999px; font-weight:700; font-size:var(--fs-sm); border:1px solid var(--clr-border-neutral); }
     .sync-state-badge.ok { background:var(--clr-success-bg); color:var(--clr-success); border-color:var(--clr-success-border); }
     .sync-state-badge.running { background:var(--clr-info-bg); color:var(--clr-info); border-color:var(--clr-info-border); }
@@ -441,6 +500,31 @@
 
       /* Settings grid: single column */
       .settings-grid { grid-template-columns: 1fr; }
+      /* Formularzeilen: alle Paare untereinander, Beschriftung jeweils über dem Feld */
+      .settings-group .toolbar:has(> label[for] + :is(input, select, textarea)):not(:has(> button)) {
+        grid-auto-flow: row; grid-template-rows: none; grid-template-columns: minmax(0, 1fr);
+      }
+      .settings-group .toolbar:has(> label[for] + :is(input, select, textarea)):not(:has(> button)) > label:not(:first-child) { margin-top: 8px; }
+      /* Die Leiste klebt am unteren Rand - auf dem Handy nur der Knopf, sonst frisst sie ein
+         Viertel des Bildschirms. */
+      .settings-savebar .settings-hint { display: none; }
+      .settings-savebar { padding: 10px 16px; }
+      /* minmax(0, 1fr) statt 1fr: sonst bestimmt das breiteste Element die Spalte und die
+         ganze Seite scrollt seitwärts. */
+      .settings-grid { grid-template-columns: minmax(0, 1fr); }
+      .email-designer-layout { grid-template-columns: minmax(0, 1fr); }
+      /* Inline gesetzte Mindestbreiten (z. B. 320px bei Auswahllisten) schlagen sonst die
+         Regel oben und drücken die Seite über den Bildschirmrand. */
+      .toolbar input:not([type="checkbox"]):not([type="radio"]):not([type="color"]),
+      .toolbar select { min-width: 0 !important; max-width: 100% !important; }
+      .toolbar > div { flex-wrap: wrap; }
+      code { overflow-wrap: anywhere; }
+      /* Formatierungsknöpfe bleiben eine umbrechende Reihe statt zehn Zeilen untereinander */
+      .toolbar.email-editor-toolbar { flex-direction: row; align-items: center; }
+      .toolbar.email-editor-toolbar > button { width: auto; }
+      .toolbar .editor-color-group { width: 100%; box-sizing: border-box; }
+      .toolbar .editor-color-group label { width: auto; }
+      .toolbar .editor-color-group button { width: auto; margin-left: auto; }
 
       /* KPI grid: single column */
       .kpi-grid { grid-template-columns: 1fr; }
@@ -506,7 +590,7 @@
 
   <div id="settingsOverlay" style="display:none;position:fixed;inset:0;background:var(--clr-bg);z-index:4000;overflow:auto;padding:24px;">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;background:var(--clr-surface);border-bottom:3px solid var(--clr-accent-1);border-radius:16px;padding:14px 20px;box-shadow:var(--shadow-md);">
-      <h2 style="margin:0;font-size:18px;font-weight:700;">Benutzerverwaltung</h2>
+      <h2 style="margin:0;font-size:18px;font-weight:700;">Einstellungen</h2>
       <div style="flex:1"></div>
       <button id="settingsOverlaySaveBtn" type="button">Speichern</button>
       <button id="settingsOverlayCloseBtn" class="secondary" type="button">Schließen</button>
@@ -517,7 +601,7 @@
         <label for="contactEmail">Kontakt-E-Mail:</label>
         <input id="contactEmail" type="email" placeholder="z. B. info@vemmina.com" />
       </div>
-      <div class="toolbar">
+      <div class="toolbar form-row-host">
         <label for="smtpHost">SMTP Host:</label>
         <input id="smtpHost" type="text" placeholder="smtp.example.com" />
         <label for="smtpPort">Port:</label>
@@ -720,6 +804,9 @@
             <p id="pollStatus" class="status">Noch nicht gestartet.</p>
             <div id="exportedFiles" class="files"></div>
 
+            <!-- Eigener Scroll-Container: Ohne ihn schob die breite Tabelle die ganze Seite zur
+                 Seite, und auf dem Handy waren Betrag, Versand und Aktion gar nicht erreichbar. -->
+            <div class="table-scroll">
             <table>
               <thead>
                 <tr>
@@ -741,6 +828,7 @@
               </thead>
               <tbody id="paymentsTableBody"></tbody>
             </table>
+            </div>
           </div>
 
           <div id="main-settings" class="section-panel">
@@ -770,24 +858,24 @@
                     <label for="eInvoiceBuyerName">Name:</label>
                     <input id="eInvoiceBuyerName" type="text" placeholder="S+R linear technology gmbh" />
                   </div>
-                  <div class="toolbar">
+                  <div class="toolbar form-row-address">
                     <label for="eInvoiceBuyerStreet">Straße:</label>
                     <input id="eInvoiceBuyerStreet" type="text" placeholder="Musterstraße 1" />
                     <label for="eInvoiceBuyerZip">PLZ:</label>
-                    <input id="eInvoiceBuyerZip" type="text" style="max-width:140px" />
+                    <input id="eInvoiceBuyerZip" type="text" />
                     <label for="eInvoiceBuyerCity">Ort:</label>
-                    <input id="eInvoiceBuyerCity" type="text" style="max-width:200px" />
+                    <input id="eInvoiceBuyerCity" type="text" />
                   </div>
-                  <div class="toolbar">
+                  <div class="toolbar form-row-taxids">
                     <label for="eInvoiceBuyerCountry">Land (ISO):</label>
-                    <input id="eInvoiceBuyerCountry" type="text" placeholder="DE" style="max-width:120px" />
+                    <input id="eInvoiceBuyerCountry" type="text" placeholder="DE" />
                     <label for="eInvoiceBuyerVatId">USt-IdNr:</label>
                     <input id="eInvoiceBuyerVatId" type="text" />
                     <label for="eInvoiceBuyerTaxNumber">Steuernummer:</label>
                     <input id="eInvoiceBuyerTaxNumber" type="text" />
                   </div>
                   <div class="toolbar"><strong>Zahlungsdaten der Beraterin (optional überschreibbar)</strong></div>
-                  <div class="toolbar">
+                  <div class="toolbar form-row-bank">
                     <label for="eInvoiceBankIban">IBAN:</label>
                     <input id="eInvoiceBankIban" type="text" />
                     <label for="eInvoiceBankBic">BIC:</label>
@@ -814,10 +902,11 @@
                 <div class="settings-group" id="legacyRechnungSettings">
                   <h3>Altfälle bis 31.12.2025 (Rechnungen an VEMMiNA Qualitäts- Haushaltsprodukte GmbH)</h3>
                   <div class="settings-hint">
-                    Provisionen mit einem Transaktionsdatum <strong>vor</strong> dem Stichtag werden automatisch als
+                    Zahlläufe, die <strong>vor</strong> dem Stichtag ausgezahlt wurden, werden automatisch als
                     <strong>Rechnung</strong> gegen die untenstehende Alt-Gesellschaft ausgestellt (eigener Nummernkreis
                     RE-JJJJ-NNNN, ZUGFeRD-TypeCode 380, ohne §-14-Gutschriftshinweise). Ab dem Stichtag gilt unverändert
-                    der Gutschriftsprozess. Es gibt keinen manuellen Schalter — das Provisionsdatum entscheidet.
+                    der Gutschriftsprozess. Es gibt keinen manuellen Schalter — das Auszahlungsdatum des Zahllaufs
+                    entscheidet, nicht das Datum der einzelnen Provisionen.
                   </div>
                   <div class="toolbar">
                     <label for="rechnungCutoffDate">Stichtag (ab hier Gutschrift):</label>
@@ -827,21 +916,21 @@
                     <label for="legacyBuyerName">Name:</label>
                     <input id="legacyBuyerName" type="text" placeholder="VEMMiNA Qualitäts- Haushaltsprodukte GmbH" />
                   </div>
-                  <div class="toolbar">
+                  <div class="toolbar form-row-address">
                     <label for="legacyBuyerStreet">Straße:</label>
                     <input id="legacyBuyerStreet" type="text" placeholder="Musterstraße 1" />
                     <label for="legacyBuyerZip">PLZ:</label>
-                    <input id="legacyBuyerZip" type="text" style="max-width:140px" />
+                    <input id="legacyBuyerZip" type="text" />
                     <label for="legacyBuyerCity">Ort:</label>
-                    <input id="legacyBuyerCity" type="text" style="max-width:220px" />
+                    <input id="legacyBuyerCity" type="text" />
                   </div>
-                  <div class="toolbar">
+                  <div class="toolbar form-row-taxids">
                     <label for="legacyBuyerCountry">Land (ISO):</label>
-                    <input id="legacyBuyerCountry" type="text" placeholder="DE" style="max-width:120px" />
+                    <input id="legacyBuyerCountry" type="text" placeholder="DE" />
                     <label for="legacyBuyerVatId">USt-IdNr:</label>
-                    <input id="legacyBuyerVatId" type="text" style="max-width:240px" />
+                    <input id="legacyBuyerVatId" type="text" />
                     <label for="legacyBuyerTaxNumber">Steuernummer:</label>
-                    <input id="legacyBuyerTaxNumber" type="text" style="max-width:240px" />
+                    <input id="legacyBuyerTaxNumber" type="text" />
                   </div>
                   <div class="toolbar">
                     <label for="legacyNachweisFirmenname">Firmenname im Hinweistext:</label>
@@ -867,8 +956,10 @@
                   </div>
                   <div class="toolbar">
                     <label><input id="goaffproSyncSlidingWindowEnabled" type="checkbox" checked /> Gleitendes Stunden-Budget (Calls sofort, solange Budget frei)</label>
+                  </div>
+                  <div class="toolbar">
                     <label for="goaffproSyncMinCallSpacingMs">Min. Abstand zwischen Calls (ms):</label>
-                    <input id="goaffproSyncMinCallSpacingMs" type="number" min="0" step="100" style="max-width:120px" />
+                    <input id="goaffproSyncMinCallSpacingMs" type="number" min="0" step="100" style="max-width:140px" />
                   </div>
                   <div class="toolbar">
                     <label><input id="goaffproSyncDeltaDownloadsEnabled" type="checkbox" /> Delta: Datei-Downloads prüfen</label>
@@ -877,8 +968,9 @@
                   <div class="settings-hint">Der Delta-Sync erfasst nur neu erstellte Datensätze (created_at); Änderungen und Datei-Downloads deckt der nächtliche Deep-Check ab.</div>
                   <div class="toolbar">
                     <label for="goaffproSyncMinFreeBytes">Mindestfreier Speicher (Bytes):</label>
-                    <input id="goaffproSyncMinFreeBytes" type="number" min="0" step="1048576" style="max-width:220px" />
+                    <input id="goaffproSyncMinFreeBytes" type="number" min="0" step="1048576" style="max-width:220px" aria-describedby="goaffproSyncMinFreeBytesHint" />
                   </div>
+                  <div id="goaffproSyncMinFreeBytesHint" class="settings-hint" style="margin-top:-4px"></div>
                   <div class="toolbar">
                     <label for="goaffproSyncDataPath">Lokaler Datenpfad:</label>
                     <input id="goaffproSyncDataPath" type="text" placeholder="/app/data" />
@@ -913,8 +1005,13 @@
                 </div>
 
               </div>
-              <div class="toolbar"><button id="saveSettingsBtn" class="secondary">Speichern</button></div>
-              <div class="settings-hint">Die UI-Einstellungen werden im gewählten Ordner als <code>goaffpro_ui_settings.properties</code> gespeichert.</div>
+              <!-- Klebt am unteren Rand: Die Seite ist über 3000px lang, der Speichern-Knopf war
+                   vorher nur ganz unten und als Nebenaktion gestaltet. -->
+              <div class="settings-savebar">
+                <button id="saveSettingsBtn" type="button">Einstellungen speichern</button>
+                <span id="settingsDirtyHint" class="settings-dirty-hint" aria-live="polite"></span>
+                <span class="settings-hint" style="margin:0 0 0 auto">Gespeichert wird als <code>goaffpro_ui_settings.properties</code> im gewählten Ordner.</span>
+              </div>
             </div>
           </div>
 
@@ -931,10 +1028,17 @@
                     <button type="button" class="secondary" data-editor-cmd="insertUnorderedList">• Liste</button>
                     <button type="button" class="secondary" data-editor-cmd="createLink">Link</button>
                     <button type="button" class="secondary" data-editor-cmd="removeFormat">Format löschen</button>
-                    <label style="display:flex;align-items:center;gap:6px;">Textfarbe <input id="emailTextColor" type="color" value="#1f2937"/></label>
-                    <button id="applyEmailTextColorBtn" type="button" class="secondary">anwenden</button>
-                    <label style="display:flex;align-items:center;gap:6px;">Highlight <input id="emailHighlightColor" type="color" value="#fff59d"/></label>
-                    <button id="applyEmailHighlightColorBtn" type="button" class="secondary">anwenden</button>
+                    <!-- Farbwähler und sein Knopf bilden eine Gruppe, damit der Umbruch sie nicht trennt. -->
+                    <span class="editor-color-group" role="group" aria-label="Textfarbe">
+                      <label for="emailTextColor">Textfarbe</label>
+                      <input id="emailTextColor" type="color" value="#1f2937"/>
+                      <button id="applyEmailTextColorBtn" type="button" class="secondary" aria-label="Textfarbe anwenden">anwenden</button>
+                    </span>
+                    <span class="editor-color-group" role="group" aria-label="Markierung">
+                      <label for="emailHighlightColor">Markierung</label>
+                      <input id="emailHighlightColor" type="color" value="#fff59d"/>
+                      <button id="applyEmailHighlightColorBtn" type="button" class="secondary" aria-label="Markierung anwenden">anwenden</button>
+                    </span>
                     <button id="toggleEmailHtmlModeBtn" type="button" class="secondary">HTML-Modus</button>
                     <button id="resetEmailTemplateBtn" type="button" class="secondary">Standardvorlage laden</button>
                   </div>
@@ -1010,7 +1114,13 @@
           <button type="button" class="validation-subtab" data-analytics-target="analytics-new-customers-section">Neukunden pro Woche</button>
         </div>
 
-        <div id="analytics-overview-section" class="validation-section active">
+        <!-- Bis Daten gezogen sind, stand hier ein Gerüst aus Überschriften, leeren Tabellenköpfen
+             und leeren Diagrammflächen. Stattdessen ein Hinweis, was zu tun ist. -->
+        <div id="analytics-overview-section" class="validation-section active analytics-not-loaded">
+          <div class="empty-state analytics-empty-hint">
+            <strong>Hier erscheinen KPIs, Tabellen und Diagramme.</strong>
+            <span>Oben Zahllauf und Zeitraum wählen und „Daten ziehen" klicken.</span>
+          </div>
           <div class="toolbar"><strong>Management-KPIs (30 Auswertungen)</strong></div>
           <div id="analyticsKpiGrid" class="kpi-grid"></div>
           <div class="toolbar"><strong>Zusammenfassung</strong></div>
@@ -1121,7 +1231,7 @@
           <p class="status" id="akteDataSource">Datenbestand wird geladen ...</p>
           <div class="akte-layout">
             <div class="akte-list-pane">
-              <input id="akteSearch" type="text" placeholder="Suche nach Name, E-Mail, Ref-Code oder ID..." style="width:100%;margin-bottom:8px;" />
+              <input id="akteSearch" type="text" placeholder="Name, E-Mail, Ref-Code, ID …" aria-label="Beraterinnen-Akte durchsuchen" style="width:100%;margin-bottom:8px;" />
               <p class="settings-hint" id="akteListStatus">Noch nicht geladen.</p>
               <div class="akte-list" id="akteList"></div>
             </div>
@@ -1216,7 +1326,8 @@
             Stehen sie in Umgebungsvariablen (Docker/Portainer), sind sie <em>nie</em> Teil des Archivs.
             Die Datei enthält alle Beleg- und Beraterinnendaten inklusive Bankverbindungen — bitte vertraulich behandeln.
           </div>
-          <p id="backupStatusText" class="status">Noch keine Sicherung erstellt.</p>
+          <!-- Startet leer: "Noch keine Sicherung erstellt." stand sonst über einer Liste vorhandener Sicherungen. -->
+          <p id="backupStatusText" class="status" aria-live="polite"></p>
           <div id="backupJobCard" class="sync-status-card" style="display:none"></div>
           <div id="backupArchiveList" class="pill-list"></div>
 
@@ -1257,10 +1368,10 @@
       panel.className = 'panel';
       panel.id = 'validation-panel';
       panel.innerHTML = `
-        <h2>Validierung der Stammdaten</h2>
+        <h2>Validierung</h2>
         <p class="status">Sortierung: Klick auf Spaltenkopf. Filter: Rechtsklick auf Spaltenkopf (wie Excel).</p>
         <div class="validation-subtabs">
-          <button type="button" class="validation-subtab active" data-validation-target="validation-masterdata-section">Validierung der Stammdaten</button>
+          <button type="button" class="validation-subtab active" data-validation-target="validation-masterdata-section">Stammdaten</button>
           <button type="button" class="validation-subtab" data-validation-target="validation-tree-section">Baum der Beraterinnen</button>
         </div>
         <div id="validation-masterdata-section" class="validation-section active">
@@ -1272,7 +1383,7 @@
           <div class="validation-table-wrap">
           <table id="validationMasterdataTable">
             <colgroup>
-              <col style="width:68px" /><col style="width:110px" /><col style="width:150px" /><col style="width:100px" /><col style="width:155px" /><col style="width:42px" /><col style="width:88px" /><col style="width:80px" /><col style="width:155px" /><col style="width:95px" /><col style="width:75px" /><col style="width:70px" /><col style="width:70px" /><col style="width:162px" />
+              <col style="width:68px" /><col style="width:110px" /><col style="width:150px" /><col style="width:100px" /><col style="width:155px" /><col style="width:42px" /><col style="width:88px" /><col style="width:80px" /><col style="width:155px" /><col style="width:95px" /><col style="width:75px" /><col style="width:70px" /><col style="width:70px" /><col style="width:236px" />
             </colgroup>
             <thead>
               <tr><th>ID</th><th>Name</th><th>E-Mail</th><th>Telefon</th><th>Adresse</th><th>Land</th><th>Geburtsdatum</th><th title="Steuernummer oder Umsatzsteuer-ID. Nur eine Umsatzsteuer-ID löst den Steuerausweis auf der Gutschrift aus.">Steuer-Nr. / USt-ID</th><th>IBAN</th><th>Kontoinhaber</th><th>IBAN korrekt</th><th title="Es hängt ein Dokument an der Beraterin, dessen Titel oder Dateiname das Wort &quot;Vertrag&quot; enthält">Vertrag</th><th>Status</th><th>Aktion</th></tr>
@@ -2142,7 +2253,8 @@
           // Hinweise ohne text-warn: sie sollen nicht wie Fehler aussehen.
           const hint = r.note ? `<div class="settings-hint">${escapeHtml(String(r.note)).slice(0, 160)}</div>` : '';
           const invalidInfo = Number(r.invalidEmpty || 0) > 0 ? `, ${escapeHtml(String(r.invalidEmpty || 0))} ungültig` : '';
-          return `<div class="sync-progress-item"><strong>${escapeHtml(r.displayName || r.entityType || '')}</strong><div>${escapeHtml(String(r.total || 0))} Datensätze${invalidInfo}</div><div class="sync-bar"><span style="width:${pct}%"></span></div>${warn}${hint}</div>`;
+          const total = Number(r.total || 0);
+          return `<div class="sync-progress-item"><strong>${escapeHtml(r.displayName || r.entityType || '')}</strong><div>${escapeHtml(total.toLocaleString('de-DE'))} ${total === 1 ? 'Datensatz' : 'Datensätze'}${invalidInfo}</div><div class="sync-bar"><span style="width:${pct}%"></span></div>${warn}${hint}</div>`;
         }).join('');
       }
 
@@ -2188,7 +2300,36 @@
         </tr>
       `).join('');
       renderSyncProgress(data);
+      updateSyncActionButtons(data);
       updateEmptyTablesVisibility(document);
+    }
+
+    // Bisher waren alle Knöpfe immer aktiv - auch ein rotes "Sync pausieren", während der Sync
+    // längst pausiert war. Der Server lehnt Starts bei Pause, Wartung oder laufendem Vorgang
+    // ohnehin ab; die Oberfläche zeigt das jetzt vorher an.
+    function updateSyncActionButtons(data) {
+      if (!data || typeof data.enabled !== 'boolean') return;
+      const paused = data.enabled === false;
+      const busy = !!data.busy || !!data.running;
+      const maintenance = !!data.maintenance;
+      const startReason = maintenance ? 'Wartungsmodus: Es läuft gerade eine Sicherung oder ein Import.'
+        : paused ? 'Der Sync ist pausiert - zuerst „Sync fortsetzen".'
+        : busy ? 'Es läuft bereits ein Sync oder eine Diagnose.' : '';
+      ['syncInitialBtn', 'syncDeltaBtn', 'syncDeepBtn', 'syncRetryBtn'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (!btn) return;
+        btn.disabled = !!startReason;
+        btn.title = startReason;
+      });
+      const pauseBtn = document.getElementById('syncPauseBtn');
+      const resumeBtn = document.getElementById('syncResumeBtn');
+      if (pauseBtn) { pauseBtn.disabled = paused; pauseBtn.title = paused ? 'Der Sync ist bereits pausiert.' : ''; }
+      if (resumeBtn) {
+        resumeBtn.disabled = !paused;
+        resumeBtn.title = paused ? '' : 'Der Sync läuft bereits.';
+        // Im pausierten Zustand ist Fortsetzen die naheliegende Aktion.
+        resumeBtn.classList.toggle('secondary', !paused);
+      }
     }
 
     /** Zeigt den Fehler des letzten Laufs prominent an – bisher stand er nur klein in der Läufe-Tabelle. */
@@ -2243,7 +2384,7 @@
         const parts = [];
         if (Number(run.endpointCount) > 0) parts.push(`Schritt ${Number(run.endpointIndex) || 0} von ${Number(run.endpointCount)}`);
         if (run.currentEndpoint) parts.push(String(run.currentEndpoint));
-        if (run.seen != null) parts.push(`${Number(run.seen).toLocaleString('de-DE')} Datensätze`);
+        if (run.seen != null) parts.push(`${Number(run.seen).toLocaleString('de-DE')} ${Number(run.seen) === 1 ? 'Datensatz' : 'Datensätze'}`);
         if (run.startedAt) parts.push(`gestartet ${formatSyncTimestamp(run.startedAt)}`);
         card.innerHTML = `
           <span class="sync-live-dot running"></span>
@@ -2534,8 +2675,8 @@
     function renderBackupArchives(list) {
       const box = document.getElementById('backupArchiveList');
       if (!box) return;
-      if (!list.length) { box.innerHTML = '<span class="settings-hint">Noch keine Archive vorhanden.</span>'; return; }
-      box.innerHTML = list.map(a => {
+      if (!list.length) { box.innerHTML = '<span class="settings-hint">Noch keine Sicherung vorhanden.</span>'; return; }
+      box.innerHTML = `<span class="settings-hint" style="flex-basis:100%;margin:0;">Vorhandene Sicherungen (${list.length}) – zum Herunterladen anklicken:</span>` + list.map(a => {
         const href = `${API_BASE}/api/backup/download?file=${encodeURIComponent(a.name)}`;
         return `<span class="pill"><a href="${href}">${escapeHtml(a.name)}</a> · ${escapeHtml(formatBytes(a.bytes))}</span>`;
       }).join('');
@@ -2919,10 +3060,16 @@
         const missing = collectMissingValidationFields(r);
         const logs = reminderLogByAdvisor.get(String(r.id || '')) || [];
         const last = logs[0] || {};
+        // Kompakt: Die ausgeschriebene Liste fehlender Felder und die Versandzeile machten jede
+        // Zeile rund 185px hoch. Die fehlenden Felder sind in der Zeile ohnehin rot markiert;
+        // die Liste steht im Tooltip, die Versanddetails im Protokoll hinter dem Badge.
+        const missingHtml = missing.length
+          ? `<span class="count-hover text-warn" title="${escapeHtml('Fehlt: ' + missing.join(', '))}">${missing.length} ${missing.length === 1 ? 'Feld fehlt' : 'Felder fehlen'}</span>`
+          : '<span>vollständig</span>';
         const historyHtml = !logs.length
           ? '<span class="mail-log-badge none">nicht versendet</span>'
-          : `<span class="mail-log-badge sent">${logs.length} gesendet</span> <button type="button" class="secondary reminder-log-btn" data-advisor-id="${escapeHtml(String(r.id || ''))}">anzeigen</button><div class="settings-hint">letzte: ${escapeHtml(last.toEmail || '')} (${escapeHtml(last.sentAt || '')})</div>`;
-        return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderTaxNumberCell(r)}${renderValidationCell(r.iban)}${renderValidationCell(r.ibanOwner)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderContractCell(r)}${renderValidationCell(r.status)}<td><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="settings-hint">${escapeHtml(missing.join(', ') || 'keine fehlenden Felder')}</div><div class="settings-hint">${historyHtml}</div></td></tr>`;
+          : `<button type="button" class="mail-log-badge sent reminder-log-btn" data-advisor-id="${escapeHtml(String(r.id || ''))}" title="${escapeHtml(`Letzte: ${last.toEmail || '-'} (${last.sentAt || '-'}) – Protokoll anzeigen`)}">${logs.length} gesendet</button>`;
+        return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderValidationCell(r.address)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderTaxNumberCell(r)}${renderValidationCell(r.iban)}${renderValidationCell(r.ibanOwner)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderContractCell(r)}${renderValidationCell(r.status)}<td class="validation-action-cell"><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="validation-action-meta">${missingHtml}${historyHtml}</div></td></tr>`;
       }).join('');
       if (!rows.length) {
         // updateEmptyTablesVisibility blendet eine leere Tabelle samt Kopfzeile aus - dann waere
@@ -3004,7 +3151,9 @@
         const children = validationTreeChildrenByParent.get(id) || [];
         const isExpanded = validationTreeExpanded.has(id);
         const indentPx = Math.max(0, level) * 18;
-        const toggleBtn = children.length ? `<button type="button" class="tree-toggle" data-node-id="${escapeHtml(id)}">${isExpanded ? '▾' : '▸'}</button>` : '<span class="tree-indent" style="width:26px"></span>';
+        const toggleBtn = children.length
+          ? `<button type="button" class="tree-toggle" data-node-id="${escapeHtml(id)}" aria-expanded="${isExpanded}" aria-label="${isExpanded ? 'Zuklappen' : 'Aufklappen'}: ${escapeHtml(row.name || id)}">${isExpanded ? '▾' : '▸'}</button>`
+          : '<span class="tree-indent" style="width:36px"></span>';
         rows.push(`<tr><td>${escapeHtml(row.id || '')}</td><td>${escapeHtml(row.parentId || '')}</td><td>${escapeHtml(row.level || '0')}</td><td class="tree-name"><span class="tree-indent" style="width:${indentPx}px"></span>${toggleBtn}${escapeHtml(row.name || '')}</td><td>${escapeHtml(row.email || '')}</td><td>${escapeHtml(row.status || '')}</td><td>${escapeHtml(row.childrenCount || String(children.length))}</td></tr>`);
         if (children.length && isExpanded) children.forEach(childId => appendNode(childId, level + 1));
       };
@@ -3084,7 +3233,82 @@
         return { title: (title || `Abschnitt ${idx + 1}`).trim(), body };
       });
       const intro = first.replace(/^#.*\n?/, '').trim();
-      box.innerHTML = `<div class="help-sections">${intro ? `<div class="help-section-body">${escapeHtml(intro)}</div>` : ''}${sections.map((section, i) => `<details ${i < 2 ? 'open' : ''}><summary>${escapeHtml(section.title)}</summary><div class="help-section-body">${escapeHtml(section.body)}</div></details>`).join('')}</div>`;
+      box.innerHTML = `<div class="help-sections">${intro ? `<div class="help-section-body">${renderHelpMarkdown(intro)}</div>` : ''}${sections.map((section, i) => `<details ${i < 2 ? 'open' : ''}><summary>${renderHelpInline(section.title)}</summary><div class="help-section-body">${renderHelpMarkdown(section.body)}</div></details>`).join('')}</div>`;
+    }
+
+    // Kleiner Markdown-Renderer für die Hilfe: Bisher stand dort Rohtext mit Sternchen und
+    // Backticks. Alles wird zuerst escaped; erst danach entstehen die wenigen erlaubten Tags.
+    function renderHelpInline(text) {
+      return escapeHtml(String(text || ''))
+        .replace(/`([^`]+)`/g, '<code>$1</code>')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    }
+
+    function renderHelpMarkdown(text) {
+      const lines = String(text || '').replace(/\r/g, '').split('\n');
+      let html = '';
+      let paragraph = [];
+      const listStack = []; // { type: 'ul'|'ol', indent }
+      let inCode = false;
+      let code = [];
+      const flushParagraph = () => {
+        if (paragraph.length) { html += `<p>${renderHelpInline(paragraph.join(' '))}</p>`; paragraph = []; }
+      };
+      const closeLists = (toIndent = -1) => {
+        while (listStack.length && listStack[listStack.length - 1].indent > toIndent) {
+          html += `</li></${listStack.pop().type}>`;
+        }
+      };
+      for (const raw of lines) {
+        if (/^\s*```/.test(raw)) {
+          if (inCode) { html += `<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`; code = []; inCode = false; }
+          else { flushParagraph(); closeLists(); inCode = true; }
+          continue;
+        }
+        if (inCode) { code.push(raw); continue; }
+        if (!raw.trim()) { flushParagraph(); continue; }
+        const heading = /^(#{3,6})\s+(.*)$/.exec(raw);
+        if (heading) {
+          flushParagraph(); closeLists();
+          html += `<h4>${renderHelpInline(heading[2])}</h4>`;
+          continue;
+        }
+        const item = /^(\s*)([-*]|\d+[.)])\s+(.*)$/.exec(raw);
+        if (item) {
+          flushParagraph();
+          const indent = item[1].length;
+          const type = /\d/.test(item[2]) ? 'ol' : 'ul';
+          const top = listStack[listStack.length - 1];
+          if (!top || indent > top.indent) {
+            html += `<${type}><li>`;
+            listStack.push({ type, indent });
+          } else {
+            closeLists(indent);
+            const current = listStack[listStack.length - 1];
+            if (current && current.indent === indent && current.type === type) {
+              html += '</li><li>';
+            } else {
+              if (current && current.indent === indent) html += `</li></${listStack.pop().type}>`;
+              html += `<${type}><li>`;
+              listStack.push({ type, indent });
+            }
+          }
+          html += renderHelpInline(item[3]);
+          continue;
+        }
+        if (listStack.length && /^\s+/.test(raw)) {
+          // Fortsetzungszeile eines Listenpunkts
+          html += ' ' + renderHelpInline(raw.trim());
+          continue;
+        }
+        closeLists();
+        paragraph.push(raw.trim());
+      }
+      if (inCode) html += `<pre><code>${escapeHtml(code.join('\n'))}</code></pre>`;
+      flushParagraph();
+      closeLists();
+      return html;
     }
 
     async function loadHelpDocumentation() {
@@ -3582,7 +3806,11 @@
 
       const pillHtml = (value) => {
         const label = (historyLabels && historyLabels[value]) || value;
-        return `<span class="pill">${label}<button type="button" data-remove-commission="${value}">x</button></span>`;
+        // Bezeichnung escapen und dem Löschknopf einen Namen geben - ein nacktes "x" sagt
+        // Screenreadern nicht, welcher Zahllauf entfernt wird.
+        const safeLabel = escapeHtml(String(label));
+        const safeValue = escapeHtml(String(value));
+        return `<span class="pill">${safeLabel}<button type="button" data-remove-commission="${safeValue}" aria-label="Zahllauf ${safeLabel} entfernen" title="Zahllauf entfernen">×</button></span>`;
       };
 
       if (showAll) {
@@ -4227,7 +4455,24 @@
       btn.classList.toggle('save-btn-idle', !hasChanges);
       btn.classList.toggle('save-btn-dirty', hasChanges);
       btn.title = hasChanges ? 'Es gibt ungespeicherte Änderungen.' : 'Keine Änderungen seit dem letzten Speichern.';
+      const dirtyHint = document.getElementById('settingsDirtyHint');
+      if (dirtyHint) dirtyHint.textContent = hasChanges ? 'Ungespeicherte Änderungen' : '';
+      updateMinFreeBytesHint();
       updateLeaderWeeklyProductionButtonState();
+    }
+
+    // Byte-Zahlen wie 536870912 liest niemand - daneben steht die Größe in MB/GB.
+    function updateMinFreeBytesHint() {
+      const input = document.getElementById('goaffproSyncMinFreeBytes');
+      const hint = document.getElementById('goaffproSyncMinFreeBytesHint');
+      if (!input || !hint) return;
+      const bytes = Number(input.value);
+      if (!input.value.trim() || !Number.isFinite(bytes) || bytes < 0) { hint.textContent = ''; return; }
+      const gb = bytes / 1024 ** 3;
+      const text = gb >= 1
+        ? `${gb.toLocaleString('de-DE', { maximumFractionDigits: 2 })} GB`
+        : `${(bytes / 1024 ** 2).toLocaleString('de-DE', { maximumFractionDigits: 1 })} MB`;
+      hint.textContent = `≈ ${text}. Ist weniger frei, startet der Sync nicht.`;
     }
 
     function updateLeaderWeeklyProductionButtonState() {
@@ -4576,6 +4821,8 @@
 
     function renderAnalytics(data) {
       analyticsLastPayload = data || null;
+      const overviewSection = document.getElementById('analytics-overview-section');
+      if (overviewSection) overviewSection.classList.toggle('analytics-not-loaded', !data);
       const summaryBody = document.getElementById('analyticsSummaryBody');
       const advisorBody = document.getElementById('analyticsAdvisorBody');
       const leaderBody = document.getElementById('analyticsLeaderBody');
@@ -4784,22 +5031,37 @@
       }
     }
 
+    // Eigenes Flag statt pollIntervalId: Das Intervall entsteht erst nach dem ersten Abruf. Ein
+    // Klick auf "Polling stoppen" währenddessen startete bisher einen zweiten Poller; das erste
+    // Intervall lief verwaist weiter und der Knopf blieb rot.
+    let pollingActive = false;
+    let pollingRun = 0;
+
     async function togglePolling() {
       const status = document.getElementById('pollStatus');
-      if (pollIntervalId) {
-        window.clearInterval(pollIntervalId);
+      if (pollingActive) {
+        pollingActive = false;
+        if (pollIntervalId) window.clearInterval(pollIntervalId);
         pollIntervalId = null;
         setPollingButtonState(false);
         status.textContent = 'Polling gestoppt.';
         return;
       }
 
+      pollingActive = true;
+      const run = ++pollingRun;
       tableState.rows = [];
       tableState.selected = new Set();
       renderTable();
       setPollingButtonState(true);
       status.textContent = 'Polling läuft...';
       await pollOnce();
+      if (run !== pollingRun) return; // inzwischen gestoppt und neu gestartet: der neue Lauf übernimmt
+      if (!pollingActive) {
+        // Während des ersten Abrufs gestoppt - kein Intervall anlegen.
+        status.textContent = 'Polling gestoppt.';
+        return;
+      }
       pollIntervalId = window.setInterval(pollOnce, 60000);
     }
 
