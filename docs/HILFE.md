@@ -87,6 +87,27 @@ Rechnungsnummer und Rechnungsdatum tragen den **Ausstellungstag** (der Zähler s
 zurück; eine Rückdatierung würde doppelte Nummern erzeugen). Leistungszeitraum und
 Auszahlungsdatum werden im Dokument separat ausgewiesen.
 
+## 4b) Erneute Erzeugung: Versionen statt neuer Nummer
+
+Jeder Zahllauf bekommt genau **eine** Belegnummer (Stammnummer). Wird der Beleg für denselben
+Zahllauf noch einmal erzeugt – etwa weil sich die Daten in GoAffPro geändert haben –, zieht er
+keine neue fortlaufende Nummer, sondern eine **Version** der Stammnummer:
+
+`GS-2026-0042` → `GS-2026-0042-1` → `GS-2026-0042-2` …
+
+- Jede Version nennt den Beleg, den sie ersetzt: im Gutschrift-PDF und im Provisionsnachweis als
+  Zeile „Ersetzt Gutschrift …“, in der E-Gutschrift (ZUGFeRD) als Verweis auf den Vorgängerbeleg
+  (BT-25). Ersetzt wird immer der unmittelbar vorherige Beleg: `-1` ersetzt die Stammnummer, `-2`
+  ersetzt `-1`.
+- Die Statuszeile zeigt nach dem Erzeugen „(ersetzt …)“.
+- Altfall-Rechnungen werden genauso versioniert (`RE-2025-0003-1`).
+- **Belege aus der Zeit vor dieser Funktion:** Kennt das Register einen Zahllauf noch nicht, sucht
+  das Programm in den Export-Ordnern und im Versandprotokoll nach bereits vergebenen Nummern. Die
+  früheste wird zur Stammnummer, die nächste Erzeugung bekommt `-1` und ersetzt die zuletzt
+  vergebene alte Nummer.
+- Die Zuordnung Zahllauf → Stammnummer liegt in der GoAffPro-Datenbank (Tabelle
+  `document_numbers`) und ist damit Teil jeder Datensicherung.
+
 ## 5) E-Mail-Text und Versandverhalten
 
 - E-Mail-Anrede wird personalisiert (wenn Name vorhanden).

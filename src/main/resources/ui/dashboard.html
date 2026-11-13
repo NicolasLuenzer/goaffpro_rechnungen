@@ -4694,6 +4694,8 @@
         renderTable();
         const label = `${data.documentKindLabel || 'Beleg'} ${data.documentNumber || ''}`.trim();
         const hints = [];
+        // Erneut erzeugt: neue Version derselben Nummer, die den vorherigen Beleg ersetzt.
+        if (data.replacesDocumentNumber) hints.push(`ersetzt ${data.replacesDocumentNumber}`);
         if (data.documentKind === 'rechnung') hints.push('Altfall: vor dem Stichtag ausgezahlt');
         // Der interessante Fall: nach dem Stichtag ausgezahlt, Provisionen aber von davor.
         if (Number(data.beforeCutoffCount) > 0 && Number(data.fromCutoffCount) > 0) {
