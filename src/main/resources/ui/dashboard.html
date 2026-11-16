@@ -799,7 +799,7 @@
             <div class="toolbar">
               <label><input id="emailRecipientContact" name="emailRecipientMode" type="radio" value="contact" checked /> Versand: an Kontakt-E-Mail</label>
               <label class="recipient-advisor-label"><input id="emailRecipientAdvisor" name="emailRecipientMode" type="radio" value="advisor" /> Versand: an Beraterinnen-E-Mail</label>
-              <label title="Wenn deaktiviert, werden nur Provisionsübersicht-PDF + JSON erzeugt/versendet."><input id="includeEInvoiceArtifacts" type="checkbox" checked /> E-Gutschrift (ZUGFeRD + Gutschrift-PDF) mitschicken & ablegen</label>
+              <label title="Die Provisionsübersicht steht als Anlage im Gutschrift-PDF. Wenn deaktiviert, entsteht nur die Provisionsübersicht als eigenes PDF (plus JSON-Ablage)."><input id="includeEInvoiceArtifacts" type="checkbox" checked /> E-Gutschrift (ZUGFeRD + Gutschrift-PDF) mitschicken & ablegen</label>
             </div>
             <p id="pollStatus" class="status">Noch nicht gestartet.</p>
             <div id="exportedFiles" class="files"></div>
@@ -4620,7 +4620,8 @@
           if (data.file) createdFiles.push(data.file);
           if (data.jsonFile) createdFiles.push(data.jsonFile);
           if (data.zugferdFile) createdFiles.push(data.zugferdFile);
-          if (data.eInvoiceViewPdfFile) createdFiles.push(data.eInvoiceViewPdfFile);
+          // Mit Anlage ist das Gutschrift-PDF zugleich die Hauptdatei - nicht doppelt aufführen.
+          if (data.eInvoiceViewPdfFile && data.eInvoiceViewPdfFile !== data.file) createdFiles.push(data.eInvoiceViewPdfFile);
         } catch (error) {
           failed.push({ paymentId, message: error.message });
         }
@@ -4712,7 +4713,7 @@
         const hintText = hints.length ? ` (${hints.join('; ')})` : '';
         status.textContent = data.opened
           ? `${label} erstellt und geöffnet: ${data.file}${hintText}`
-          : `${label} erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.zugferdFile ? ' | ' + data.zugferdFile : ''}${data.eInvoiceViewPdfFile ? ' | ' + data.eInvoiceViewPdfFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}${hintText}`;
+          : `${label} erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.zugferdFile ? ' | ' + data.zugferdFile : ''}${data.eInvoiceViewPdfFile && data.eInvoiceViewPdfFile !== data.file ? ' | ' + data.eInvoiceViewPdfFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}${hintText}`;
       } catch (error) {
         status.textContent = `Fehler bei der Belegerstellung: ${error.message}`;
       }

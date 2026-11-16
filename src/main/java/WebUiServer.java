@@ -4517,7 +4517,6 @@ public class WebUiServer {
                 String replacesNr = issued.replaces();
                 TaxTreatment taxTreatment = resolveTaxTreatment(affiliate);
                 String baseFilename = "provisionsnachweis_" + sanitizeFilename(gutschriftNr) + "_" + timestamp;
-                Path pdfPath = runExportDir.resolve(baseFilename + ".pdf");
                 Path jsonPath = runExportDir.resolve(baseFilename + ".json");
                 boolean eInvoiceAttachAndStoreEnabled = includeEInvoiceArtifactsRequest != null
                         ? includeEInvoiceArtifactsRequest
@@ -4536,7 +4535,14 @@ public class WebUiServer {
                         : "";
                 Path zugferdPath = "e-rechnung".equals(eInvoiceStatus) ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".xml") : null;
                 Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".pdf") : null;
-                createInvoiceDetailsPdf(pdfPath, docResponse, affiliate, config, gutschriftNr, replacesNr, kind, hiddenBeforeStart);
+                // Die Provisionsübersicht steht als Anlage im Gutschrift-PDF. Ein eigenes PDF gibt es
+                // nur noch, wenn kein Gutschrift-PDF entsteht oder der alte Renderer sie nicht kennt.
+                CommissionOverview overview = buildCommissionOverview(docResponse, affiliate, config, gutschriftNr, replacesNr, kind, hiddenBeforeStart);
+                boolean overviewInDocumentPdf = eInvoicePdfPath != null && !usesLegacyEInvoiceRenderer(kind);
+                Path pdfPath = overviewInDocumentPdf ? null : runExportDir.resolve(baseFilename + ".pdf");
+                if (pdfPath != null) {
+                    createCommissionOverviewPdf(pdfPath, overview);
+                }
                 writeOriginalJson(jsonPath, docResponse);
                 if (hiddenBeforeStart > 0) {
                     // Die ungekürzte GoAffPro-Antwort bleibt im Archiv; die Mail erhält nur die bereinigte.
@@ -4546,8 +4552,11 @@ public class WebUiServer {
                     createZugferdInvoiceXml(zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind, replacesNr);
                 }
                 if (eInvoicePdfPath != null) {
-                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind, replacesNr);
+                    createEInvoicePdfWithEmbeddedXml(eInvoicePdfPath, zugferdPath, docPayment, affiliate, config, gutschriftNr, periodLabel, taxTreatment,
+                            kind, replacesNr, overviewInDocumentPdf ? overview : null);
                 }
+                // Das Haupt-PDF: die Gutschrift (mit Anlage), sonst die eigenständige Übersicht.
+                Path mainPdfPath = eInvoicePdfPath != null ? eInvoicePdfPath : pdfPath;
 
                 String contactEmail = Objects.toString(config.getProperty("contactEmail"), "").trim();
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
@@ -4573,7 +4582,7 @@ public class WebUiServer {
                 String openMessage = "";
                 try {
                     if (Desktop.isDesktopSupported()) {
-                        Desktop.getDesktop().open(pdfPath.toFile());
+                        Desktop.getDesktop().open(mainPdfPath.toFile());
                         opened = true;
                     } else {
                         openMessage = "Automatisches Öffnen nicht unterstützt.";
@@ -4603,7 +4612,7 @@ public class WebUiServer {
                 payload.put("hiddenBeforeStartCount", hiddenBeforeStart);
                 payload.put("gutschriftTransactionStartDate", gutschriftTransactionStartDateRaw(config));
                 payload.put("requestUrl", detailsUrl);
-                payload.put("file", pdfPath.toString());
+                payload.put("file", mainPdfPath.toString());
                 payload.put("jsonFile", jsonPath.toString());
                 payload.put("zugferdFile", zugferdPath != null ? zugferdPath.toString() : "");
                 payload.put("eInvoicePdfFile", eInvoicePdfPath != null ? eInvoicePdfPath.toString() : "");
@@ -4616,444 +4625,6 @@ public class WebUiServer {
             } catch (Exception e) {
                 e.printStackTrace();
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
-            }
-        }
-
-        private void createInvoiceDetailsPdf(Path pdfPath, JsonNode apiResponse, JsonNode affiliate, Properties config, String gutschriftNr,
-                                             String replacesNr, DocumentKind kind,
-                                             int hiddenBeforeStartCount) throws IOException {
-            try (PDDocument document = new PDDocument()) {
-                JsonNode payments = apiResponse.get("payments");
-                JsonNode payment = (payments != null && payments.isArray() && payments.size() > 0) ? payments.get(0) : null;
-                String documentHash = sha256Hex(toCanonicalJson(apiResponse) + "|affiliate=" + toCanonicalJson(affiliate));
-                if (payment == null) {
-                    PDPage page = new PDPage();
-                    document.addPage(page);
-                    try (PDPageContentStream cs = new PDPageContentStream(document, page)) {
-                        cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
-                        cs.newLineAtOffset(40, 770);
-                        cs.showText("Provisionsnachweis konnte nicht erstellt werden (keine Daten)");
-                        cs.endText();
-                    }
-                document.save(pdfPath.toFile());
-                }
-
-                List<JsonNode> txList = new ArrayList<>();
-                JsonNode transactions = payment.get("transactions");
-                if (transactions != null && transactions.isArray()) {
-                    for (JsonNode tx : transactions) txList.add(tx);
-                }
-
-                int totalCount = txList.size();
-                int directCount = 0;
-                int teamCount = 0;
-                double sumOrderDirect = 0.0, sumOrderTeam = 0.0;
-                double sumBmgDirect = 0.0, sumBmgTeam = 0.0;
-                double sumProvDirect = 0.0, sumProvTeam = 0.0;
-                OffsetDateTime minDate = null, maxDate = null;
-
-                for (JsonNode tx : txList) {
-                    String entityType = asText(tx, "entity_type");
-                    double orderValue = parseDoubleSafe(asText(tx.path("metadata"), "order_value"));
-                    double bmgValue = parseDoubleSafe(asText(tx.path("metadata"), "commission_on"));
-                    double provValue = parseDoubleSafe(asText(tx, "amount"));
-
-                    if ("orders".equalsIgnoreCase(entityType)) {
-                        directCount++;
-                        sumOrderDirect += orderValue;
-                        sumBmgDirect += bmgValue;
-                        sumProvDirect += provValue;
-                    } else {
-                        teamCount++;
-                        sumOrderTeam += orderValue;
-                        sumBmgTeam += bmgValue;
-                        sumProvTeam += provValue;
-                    }
-
-                    try {
-                        OffsetDateTime dt = OffsetDateTime.parse(asText(tx, "created_at"));
-                        if (minDate == null || dt.isBefore(minDate)) minDate = dt;
-                        if (maxDate == null || dt.isAfter(maxDate)) maxDate = dt;
-                    } catch (Exception ignored) {
-                    }
-                }
-
-                double sumOrderAll = sumOrderDirect + sumOrderTeam;
-                double sumBmgAll = sumBmgDirect + sumBmgTeam;
-                double sumProvAll = sumProvDirect + sumProvTeam;
-                double payout = parseDoubleSafe(asText(payment, "amount"));
-                double rounding = payout - sumProvAll;
-
-                List<String[]> advisorRows = List.of(
-                        new String[]{"Name", affiliate != null ? asText(affiliate, "name") : ""},
-                        new String[]{"E-Mail", affiliate != null ? asText(affiliate, "email") : ""},
-                        new String[]{"Telefon", affiliate != null ? asText(affiliate, "phone") : ""},
-                        new String[]{"Unternehmen", affiliate != null ? asText(affiliate, "company_name") : ""},
-                        new String[]{"Adresse", formatAffiliateAddress(affiliate)},
-                        new String[]{"Steuernummer", affiliate != null ? asText(affiliate, "tax_identification_number") : ""},
-                        new String[]{"Referenzcode", affiliate != null ? asText(affiliate, "ref_code") : ""},
-                        new String[]{"Status", affiliate != null ? asText(affiliate, "status") : ""}
-                );
-
-                PDPage summaryPage = new PDPage();
-                document.addPage(summaryPage);
-                try (PDPageContentStream cs = new PDPageContentStream(document, summaryPage)) {
-                    float margin = 52f;
-                    float pageWidth = summaryPage.getMediaBox().getWidth();
-                    float pageHeight = summaryPage.getMediaBox().getHeight();
-                    float x = margin;
-                    float y = pageHeight - margin;
-                    float totalWidth = pageWidth - (2 * margin);
-                    float keyWidth = totalWidth * 0.30f;
-                    float valueWidth = totalWidth * 0.70f;
-
-                    String titleText = "Provisionsübersicht zur " + kind.label + " " + gutschriftNr;
-                    List<String> titleLines = wrapForPdf(titleText, 46);
-                    float titleLineHeight = 22f;
-                    float heroHeight = Math.max(62f, 18f + (titleLines.size() * titleLineHeight));
-                    cs.setNonStrokingColor(new Color(38, 93, 171));
-                    cs.addRect(x, y - heroHeight, totalWidth, heroHeight);
-                    cs.fill();
-
-                    cs.setNonStrokingColor(Color.WHITE);
-                    for (int i = 0; i < titleLines.size(); i++) {
-                        cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA_BOLD, 19);
-                        cs.newLineAtOffset(x + 14, y - 24 - (i * titleLineHeight));
-                        cs.showText(shortenForPdf(titleLines.get(i), 120));
-                        cs.endText();
-                    }
-                    y -= heroHeight + 18;
-
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA_BOLD, 11);
-                    cs.setNonStrokingColor(new Color(44, 52, 64));
-                    cs.newLineAtOffset(x, y);
-                    cs.showText("Zahllauf-ID: " + asText(payment, "id") + "   |   Affiliate-ID: " + asText(payment, "affiliate_id"));
-                    cs.endText();
-                    y -= 18;
-
-                    if (replacesNr != null && !replacesNr.isBlank()) {
-                        cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA_BOLD, 11);
-                        cs.setNonStrokingColor(new Color(176, 72, 24));
-                        cs.newLineAtOffset(x, y);
-                        cs.showText(replacesDocumentLabel(kind) + " " + replacesNr);
-                        cs.endText();
-                        cs.setNonStrokingColor(new Color(44, 52, 64));
-                        y -= 18;
-                    }
-
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA, 11);
-                    cs.newLineAtOffset(x, y);
-                    cs.showText("Auszahlungsdatum (System): " + formatDateTimeEuropeBerlin(asText(payment, "created_at")) + " (Europe/Berlin)");
-                    cs.endText();
-                    y -= 22;
-
-                    String ibanRaw = asText(payment.path("payment_details"), "account_number");
-                    String ibanMasked = maskIban(ibanRaw);
-                    String period = (minDate == null || maxDate == null)
-                            ? "k.A."
-                            : formatDateTimeEuropeBerlin(minDate.toString()) + " bis " + formatDateTimeEuropeBerlin(maxDate.toString()) + " (Europe/Berlin)";
-
-                    List<String[]> summaryRows = new ArrayList<>(List.of(
-                            new String[]{"Empfänger (Kontoinhaber)", asText(payment.path("payment_details"), "account_name")},
-                            new String[]{"Zahlmethode", "SEPA (via " + asText(payment.path("payment_details"), "paid_via") + ")"},
-                            new String[]{"IBAN (maskiert)", ibanMasked},
-                            new String[]{"BIC", asText(payment.path("payment_details"), "branch_code")},
-                            new String[]{"Zeitraum der Transaktionen", period},
-                            new String[]{"Anzahl Transaktionen im Zahllauf", String.valueOf(totalCount)},
-                            new String[]{"Davon Direkt (Order)", String.valueOf(directCount)},
-                            new String[]{"Davon Team (Reward)", String.valueOf(teamCount)},
-                            new String[]{"Summe Bestellwert* (gesamt)", euro(sumOrderAll)},
-                            new String[]{"Summe Bemessungsgrundlage (gesamt)", euro(sumBmgAll)},
-                            new String[]{"Summe Provision (gesamt)", euro(sumProvAll)},
-                            new String[]{"Auszahlungsbetrag", euro(payout)},
-                            new String[]{"Rundungsdifferenz (Auszahlung - Summe Provision)", euro(rounding)}
-                    ));
-                    if (hiddenBeforeStartCount > 0) {
-                        // Erklärt die Abweichung zur Anzahl in GoAffPro. Ausgeblendet wird nur, was
-                        // sich zu 0 aufhebt - der Saldo ist deshalb immer 0,00 €.
-                        String start = gutschriftTransactionStartDate(config).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
-                        summaryRows.add(new String[]{"Nicht aufgeführt (vor " + start + ")",
-                                hiddenBeforeStartCount + (hiddenBeforeStartCount == 1 ? " stornierte Buchung" : " stornierte Buchungen")
-                                        + ", Saldo " + euro(0.0)});
-                    }
-
-                    cs.setNonStrokingColor(new Color(44, 52, 64));
-                    for (String[] row : summaryRows) {
-                        float used = drawTableRow(cs, x, y, 18f, keyWidth, valueWidth, row[0], row[1]);
-                        y -= used;
-                    }
-
-                    y -= 16;
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA, 10);
-                    cs.newLineAtOffset(x, y);
-                    cs.showText("* Bestellwert exkl. abgezogener Rabatte (so wie im System/Export übergeben).");
-                    cs.endText();
-                    y -= 28;
-
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA_BOLD, 16);
-                    cs.setNonStrokingColor(new Color(38, 93, 171));
-                    cs.newLineAtOffset(x, y);
-                    cs.showText("Aufteilung der Provisionen");
-                    cs.endText();
-                    y -= 20;
-
-                    float x2 = x;
-                    float c1 = totalWidth * 0.22f;
-                    float c2 = totalWidth * 0.26f;
-                    float c3 = totalWidth * 0.30f;
-                    float c4 = totalWidth - (c1 + c2 + c3);
-                    float h = 20f;
-                    drawSimpleCell(cs, x2, y, c1, h, "Typ", true, new Color(235, 242, 252));
-                    drawSimpleCell(cs, x2 + c1, y, c2, h, "Summe Bestellwert*", true, new Color(235, 242, 252));
-                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, "Summe Bemessungsgrundlage", true, new Color(235, 242, 252));
-                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, "Summe Provision", true, new Color(235, 242, 252));
-                    y -= h;
-                    drawSimpleCell(cs, x2, y, c1, h, "Direkt (Order)", false, null);
-                    drawSimpleCell(cs, x2 + c1, y, c2, h, euro(sumOrderDirect), false, null);
-                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, euro(sumBmgDirect), false, null);
-                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, euro(sumProvDirect), false, null);
-                    y -= h;
-                    drawSimpleCell(cs, x2, y, c1, h, "Team (Reward)", false, new Color(247, 249, 252));
-                    drawSimpleCell(cs, x2 + c1, y, c2, h, euro(sumOrderTeam), false, new Color(247, 249, 252));
-                    drawSimpleCell(cs, x2 + c1 + c2, y, c3, h, euro(sumBmgTeam), false, new Color(247, 249, 252));
-                    drawSimpleCell(cs, x2 + c1 + c2 + c3, y, c4, h, euro(sumProvTeam), false, new Color(247, 249, 252));
-                    y -= (h + 18);
-
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA_BOLD, 14);
-                    cs.newLineAtOffset(x, y);
-                    cs.showText("Hinweise für Beraterinnen (für die eigene Nachweisführung)");
-                    cs.endText();
-                    y -= 16;
-                    String[] notes = new String[]{
-                            "• Diesen Provisionsnachweis zusammen mit dem Kontoauszug (Zahlungseingang/SEPA-Gutschrift) ablegen.",
-                            "• Falls ihr umsatzsteuerpflichtig seid: prüfen, ob die Provision netto/brutto ausgewiesen werden muss.",
-                            "• Bei Kleinunternehmerregelung (§ 19 UStG): sicherstellen, dass die " + kind.label + " korrekt ausgestellt wurde.",
-                            "• Team-/Downline-Provisionen: Referenzen im System aufbewahren und bei Bedarf nachreichen.",
-                            "• Aufbewahrung: Unterlagen nach Jahr/Monat/Zahllauf archivieren.",
-                            "• Stammdaten aktuell halten (Name/IBAN/Adresse/Steuernummer), damit Zuordnung eindeutig bleibt."
-                    };
-                    for (String n : notes) {
-                        for (String line : wrapForPdf(n, 98)) {
-                            cs.beginText();
-                            cs.setFont(PDType1Font.HELVETICA, 10);
-                            cs.newLineAtOffset(x, y);
-                            cs.showText(line);
-                            cs.endText();
-                            y -= 13;
-                        }
-                    }
-
-                    y -= 8;
-                    String nachweisFirmenname = documentProviderName(config, kind);
-                    String providerNote = "Diese Provisionsübersicht wurde von der " + nachweisFirmenname + " als Anlage zur " + kind.label + " " + gutschriftNr
-                            + (kind.selfBilling ? " gemäß § 14 UStG" : "") + " erstellt. " +
-                            "Bei Rückfragen wenden Sie sich bitte an info@vemmina.com. " +
-                            "Die zugrundeliegenden Rohdaten können bei Bedarf angefragt werden.";
-                    for (String line : wrapForPdf(providerNote, 100)) {
-                        cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA_OBLIQUE, 9);
-                        cs.setNonStrokingColor(new Color(72, 78, 85));
-                        cs.newLineAtOffset(x, y);
-                        cs.showText(line);
-                        cs.endText();
-                        y -= 12;
-                    }
-
-                    y -= 8;
-                    for (String line : wrapForPdf("Inhalts-Hash (SHA-256): " + documentHash, 100)) {
-                        cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA_OBLIQUE, 9);
-                        cs.setNonStrokingColor(new Color(72, 78, 85));
-                        cs.newLineAtOffset(x, y);
-                        cs.showText(line);
-                        cs.endText();
-                        y -= 12;
-                    }
-                }
-
-                PDPage advisorPage = new PDPage();
-                document.addPage(advisorPage);
-                try (PDPageContentStream cs = new PDPageContentStream(document, advisorPage)) {
-                    float margin = 52f;
-                    float pageWidth = advisorPage.getMediaBox().getWidth();
-                    float pageHeight = advisorPage.getMediaBox().getHeight();
-                    float x = margin;
-                    float y = pageHeight - margin;
-                    float totalWidth = pageWidth - (2 * margin);
-                    float keyWidth = totalWidth * 0.30f;
-                    float valueWidth = totalWidth * 0.70f;
-
-                    cs.setNonStrokingColor(new Color(38, 93, 171));
-                    cs.addRect(x, y - 36f, totalWidth, 36f);
-                    cs.fill();
-
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA_BOLD, 16);
-                    cs.setNonStrokingColor(Color.WHITE);
-                    cs.newLineAtOffset(x + 12, y - 22);
-                    cs.showText("Beraterin / Affiliate (Stammdaten)");
-                    cs.endText();
-                    y -= 52f;
-
-                    cs.setNonStrokingColor(new Color(44, 52, 64));
-                    for (String[] row : advisorRows) {
-                        if (row[1] == null || row[1].isBlank()) continue;
-                        float used = drawTableRow(cs, x, y, 20f, keyWidth, valueWidth, row[0], row[1]);
-                        y -= used;
-                    }
-                }
-
-                float detailMargin = 52f;
-                float detailPageHeight = summaryPage.getMediaBox().getHeight();
-                float detailRowHeight = 19f;
-                int rowsPerPage = Math.max(12, (int) ((detailPageHeight - (2 * detailMargin) - 120f) / detailRowHeight));
-                int totalPages = Math.max(1, (txList.size() + rowsPerPage - 1) / rowsPerPage);
-                int pageNo = 1;
-                for (int start = 0; start < txList.size(); start += rowsPerPage) {
-                    int end = Math.min(start + rowsPerPage, txList.size());
-                    PDPage detailPage = new PDPage();
-                    document.addPage(detailPage);
-                    try (PDPageContentStream cs = new PDPageContentStream(document, detailPage)) {
-                        float pageWidth = detailPage.getMediaBox().getWidth();
-                        float pageHeight = detailPage.getMediaBox().getHeight();
-                        float x = detailMargin;
-                        float y = pageHeight - detailMargin;
-
-                        cs.setNonStrokingColor(new Color(38, 93, 171));
-                        cs.addRect(x, y - 28f, pageWidth - (2 * detailMargin), 28f);
-                        cs.fill();
-
-                        cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA_BOLD, 16);
-                        cs.setNonStrokingColor(Color.WHITE);
-                        cs.newLineAtOffset(x + 10, y - 18);
-                        cs.showText("Detailnachweis – Einzeltransaktionen (Seite " + pageNo + " von " + totalPages + ")");
-                        cs.endText();
-                        y -= 42;
-
-                        float totalTableWidth = pageWidth - (2 * detailMargin);
-                        float cZeit = totalTableWidth * 0.20f;
-                        float cTyp = totalTableWidth * 0.17f;
-                        float cOrder = totalTableWidth * 0.16f;
-                        float cOrderW = totalTableWidth * 0.20f;
-                        float cBmg = totalTableWidth * 0.14f;
-                        float cProv = totalTableWidth - (cZeit + cTyp + cOrder + cOrderW + cBmg);
-                        float h=detailRowHeight;
-                        drawSimpleCell(cs, x, y, cZeit, h, "Zeitpunkt", true, new Color(235, 242, 252));
-                        drawSimpleCell(cs, x+cZeit, y, cTyp, h, "Typ", true, new Color(235, 242, 252));
-                        drawSimpleCell(cs, x+cZeit+cTyp, y, cOrder, h, "Bestellnummer", true, new Color(235, 242, 252));
-                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder, y, cOrderW, h, "Bestellwert*", true, new Color(235, 242, 252));
-                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW, y, cBmg, h, "BMG", true, new Color(235, 242, 252));
-                        drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW+cBmg, y, cProv, h, "Provision", true, new Color(235, 242, 252));
-                        y -= h;
-
-                        for (int i=start; i<end; i++) {
-                            JsonNode tx = txList.get(i);
-                            JsonNode md = tx.get("metadata");
-                            String t = formatDateTimeEuropeBerlin(asText(tx, "created_at"));
-                            String typ = "rewards".equalsIgnoreCase(asText(tx, "entity_type")) ? "Team (Reward)" : "Direkt (Order)";
-                            String orderNo = md != null ? asText(md, "order_number") : "";
-                            String orderVal = md != null ? euro(parseDoubleSafe(asText(md, "order_value"))) : "";
-                            String bmgVal = md != null ? euro(parseDoubleSafe(asText(md, "commission_on"))) : "";
-                            String provVal = euro(parseDoubleSafe(asText(tx, "amount")));
-
-                            Color rowBg = (i % 2 == 0) ? null : new Color(249, 251, 255);
-                            drawSimpleCell(cs, x, y, cZeit, h, t, false, rowBg);
-                            drawSimpleCell(cs, x+cZeit, y, cTyp, h, typ, false, rowBg);
-                            drawSimpleCell(cs, x+cZeit+cTyp, y, cOrder, h, orderNo, false, rowBg);
-                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder, y, cOrderW, h, orderVal, false, rowBg);
-                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW, y, cBmg, h, bmgVal, false, rowBg);
-                            drawSimpleCell(cs, x+cZeit+cTyp+cOrder+cOrderW+cBmg, y, cProv, h, provVal, false, rowBg);
-                            y -= h;
-                        }
-
-                        y -= 14;
-                        cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA, 9);
-                        cs.setNonStrokingColor(new Color(72, 78, 85));
-                        cs.newLineAtOffset(x, y);
-                        cs.showText("* Bestellwert exkl. abgezogener Rabatte (so wie im System/Export übergeben).");
-                        cs.endText();
-
-                        y -= 12;
-                        cs.beginText();
-                        cs.setFont(PDType1Font.HELVETICA_OBLIQUE, 8);
-                        cs.newLineAtOffset(x, y);
-                        cs.showText(shortenForPdf("Inhalts-Hash (SHA-256): " + documentHash, 120));
-                        cs.endText();
-                    }
-                    pageNo++;
-                }
-
-                document.save(pdfPath.toFile());
-            }
-        }
-
-        private String maskIban(String iban) {
-            if (iban == null || iban.length() < 8) {
-                return iban == null ? "" : iban;
-            }
-            String compact = iban.replaceAll("\\s+", "");
-            if (compact.length() <= 8) return compact;
-            return compact.substring(0, 4) + " **** **** **** " + compact.substring(compact.length() - 4);
-        }
-
-        private String euro(double value) {
-            return euroPdf(value);
-        }
-
-        private double parseDoubleSafe(String raw) {
-            if (raw == null || raw.isBlank() || "null".equalsIgnoreCase(raw)) return 0.0;
-            try {
-                return Double.parseDouble(raw.replace(",", "."));
-            } catch (Exception e) {
-                return 0.0;
-            }
-        }
-
-        private String formatDateTimeEuropeBerlin(String input) {
-            if (input == null || input.isBlank()) return "";
-            try {
-                OffsetDateTime dt = OffsetDateTime.parse(input);
-                return dt.atZoneSameInstant(ZoneId.of("Europe/Berlin")).format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
-            } catch (Exception ignored) {
-                return input;
-            }
-        }
-
-        private void drawSimpleCell(PDPageContentStream cs, float x, float y, float width, float height, String text, boolean bold) throws IOException {
-            drawSimpleCell(cs, x, y, width, height, text, bold, null);
-        }
-
-        private void drawSimpleCell(PDPageContentStream cs, float x, float y, float width, float height, String text, boolean bold, Color background) throws IOException {
-            if (background != null) {
-                cs.setNonStrokingColor(background);
-                cs.addRect(x, y - height, width, height);
-                cs.fill();
-            }
-
-            cs.setStrokingColor(new Color(196, 205, 217));
-            cs.setLineWidth(0.45f);
-            cs.addRect(x, y - height, width, height);
-            cs.stroke();
-
-            List<String> lines = wrapForPdf(text == null ? "" : text, Math.max(8, (int)(width / 5.2f)));
-            float ty = y - 12f;
-            for (int i = 0; i < Math.min(lines.size(), 2); i++) {
-                cs.beginText();
-                cs.setFont(bold ? PDType1Font.HELVETICA_BOLD : PDType1Font.HELVETICA, 9);
-                cs.setNonStrokingColor(new Color(44, 52, 64));
-                cs.newLineAtOffset(x + 4, ty - (i * 9f));
-                cs.showText(shortenForPdf(lines.get(i), 80));
-                cs.endText();
             }
         }
     }
@@ -5087,41 +4658,6 @@ public class WebUiServer {
 
         rows.add(new String[]{prefix, node.asText()});
     }
-
-    private static float drawTableRow(PDPageContentStream cs, float x, float y, float minRowHeight, float keyWidth, float valueWidth, String key, String value) throws IOException {
-            List<String> keyLines = wrapForPdf(key, Math.max(8, (int)(keyWidth / 4.8f)));
-            List<String> valueLines = valueWidth > 0 ? wrapForPdf(value, Math.max(8, (int)(valueWidth / 4.8f))) : List.of("");
-            int lines = Math.max(keyLines.size(), valueLines.size());
-            float rowHeight = Math.max(minRowHeight, lines * 10f + 8f);
-
-            cs.setLineWidth(0.5f);
-            cs.addRect(x, y - rowHeight, keyWidth, rowHeight);
-            if (valueWidth > 0f) {
-                cs.addRect(x + keyWidth, y - rowHeight, valueWidth, rowHeight);
-            }
-            cs.stroke();
-
-            float textY = y - 12f;
-            for (int i = 0; i < lines; i++) {
-                String kl = i < keyLines.size() ? keyLines.get(i) : "";
-                String vl = i < valueLines.size() ? valueLines.get(i) : "";
-
-                cs.beginText();
-                cs.setFont(PDType1Font.HELVETICA_BOLD, 9);
-                cs.newLineAtOffset(x + 4, textY - (i * 10f));
-                cs.showText(shortenForPdf(kl, 200));
-                cs.endText();
-
-                if (valueWidth > 0f) {
-                    cs.beginText();
-                    cs.setFont(PDType1Font.HELVETICA, 9);
-                    cs.newLineAtOffset(x + keyWidth + 4, textY - (i * 10f));
-                    cs.showText(shortenForPdf(vl, 400));
-                    cs.endText();
-                }
-            }
-            return rowHeight;
-        }
 
     private static float drawTableRowBold(PDPageContentStream cs, float x, float y, float minRowHeight, float keyWidth, float valueWidth, String key, String value) throws IOException {
             List<String> keyLines = wrapForPdf(key, Math.max(8, (int)(keyWidth / 4.8f)));
@@ -6235,16 +5771,18 @@ public class WebUiServer {
 
         contentPart.setContent(alternative);
 
-        MimeBodyPart attachmentPart = new MimeBodyPart();
-        FileDataSource fds = new FileDataSource(pdfPath.toFile());
-        attachmentPart.setDataHandler(new DataHandler(fds));
-        attachmentPart.setFileName(pdfPath.getFileName().toString());
-
         // Die JSON-Rohdaten werden weiterhin im Exportordner abgelegt, aber bewusst NICHT mehr
         // mitgeschickt: sie sind eine interne Datenablage und für die Beraterin ohne Nutzen.
         MimeMultipart multipart = new MimeMultipart("mixed");
         multipart.addBodyPart(contentPart);
-        multipart.addBodyPart(attachmentPart);
+        // Eine eigenständige Provisionsübersicht gibt es nur ohne Gutschrift-PDF - sonst steckt
+        // sie als Anlage im Gutschrift-PDF.
+        if (pdfPath != null) {
+            MimeBodyPart attachmentPart = new MimeBodyPart();
+            attachmentPart.setDataHandler(new DataHandler(new FileDataSource(pdfPath.toFile())));
+            attachmentPart.setFileName(pdfPath.getFileName().toString());
+            multipart.addBodyPart(attachmentPart);
+        }
         // Die Gutschrift geht auch ohne XML mit: Fehlt der Beraterin die Steuerkennung, entsteht
         // eine PDF-Gutschrift ohne E-Rechnung - der Beleg selbst darf dann nicht wegfallen.
         if (includeEInvoiceAttachments && zugferdPath != null) {
@@ -6665,6 +6203,16 @@ public class WebUiServer {
                 documentNumber, periodLabel, taxTreatment, DocumentKind.GUTSCHRIFT);
     }
 
+    /**
+     * Der handgezeichnete PDFBox-Pfad kennt nur die Gutschrift: er liest fest eInvoiceBuyer*,
+     * druckt "Gutschriftempfängerin" und den § 14-Widerspruchshinweis. Eine Altfall-Rechnung käme
+     * dort mit falschem Aussteller UND falschem Rechtstext heraus - deshalb gilt die
+     * Umschalt-Property ausschließlich für Gutschriften. Eine Anlage kennt er nicht.
+     */
+    private static boolean usesLegacyEInvoiceRenderer(DocumentKind kind) {
+        return kind == DocumentKind.GUTSCHRIFT && Boolean.getBoolean("goaffpro.legacyEInvoicePdfRenderer");
+    }
+
     private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
                                                          String gutschriftNr, String periodLabel, TaxTreatment taxTreatment,
                                                          DocumentKind kind) throws IOException {
@@ -6674,12 +6222,18 @@ public class WebUiServer {
     private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
                                                          String gutschriftNr, String periodLabel, TaxTreatment taxTreatment,
                                                          DocumentKind kind, String replacesDocumentNumber) throws IOException {
-        // Der handgezeichnete PDFBox-Pfad unten kennt nur die Gutschrift: er liest fest
-        // eInvoiceBuyer*, druckt "Gutschriftempfängerin" und den § 14-Widerspruchshinweis. Eine
-        // Altfall-Rechnung käme dort mit falschem Aussteller UND falschem Rechtstext heraus -
-        // deshalb gilt die Umschalt-Property ausschließlich für Gutschriften.
-        if (kind == DocumentKind.RECHNUNG || !Boolean.getBoolean("goaffpro.legacyEInvoicePdfRenderer")) {
-            createEInvoicePdfFromHtmlTemplate(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment, kind, replacesDocumentNumber);
+        createEInvoicePdfWithEmbeddedXml(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment,
+                kind, replacesDocumentNumber, null);
+    }
+
+    /** {@code overview} wird als Anlage ab Seite 2 angehängt; {@code null} = Beleg ohne Anlage. */
+    private static void createEInvoicePdfWithEmbeddedXml(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
+                                                         String gutschriftNr, String periodLabel, TaxTreatment taxTreatment,
+                                                         DocumentKind kind, String replacesDocumentNumber,
+                                                         CommissionOverview overview) throws IOException {
+        if (!usesLegacyEInvoiceRenderer(kind)) {
+            createEInvoicePdfFromHtmlTemplate(pdfPath, xmlPath, payment, affiliate, config, gutschriftNr, periodLabel, taxTreatment,
+                    kind, replacesDocumentNumber, overview);
             return;
         }
 
@@ -6995,24 +6549,17 @@ public class WebUiServer {
 
     private static void createEInvoicePdfFromHtmlTemplate(Path pdfPath, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
                                                          String documentNumber, String periodLabel, TaxTreatment taxTreatment,
-                                                         DocumentKind kind, String replacesDocumentNumber) throws IOException {
+                                                         DocumentKind kind, String replacesDocumentNumber,
+                                                         CommissionOverview overview) throws IOException {
         String template = documentPdfTemplateHtml(config, kind);
         String renderedHtml = renderEInvoicePdfViewHtml(template, payment, affiliate, config, documentNumber, periodLabel, taxTreatment, kind);
         renderedHtml = insertReplacesDocumentRow(renderedHtml, documentNumber, replacesDocumentNumber, kind);
-        String xhtml = normalizeHtmlForPdf(renderedHtml);
-        String baseUri = pdfPath.toAbsolutePath().getParent() == null
-                ? Paths.get(".").toAbsolutePath().toUri().toString()
-                : pdfPath.toAbsolutePath().getParent().toUri().toString();
+        // Erst nach dem Ersetzt-Hinweis anhängen: Die Anlage nennt die Belegnummer ebenfalls.
+        renderedHtml = appendCommissionOverview(renderedHtml, overview);
 
-        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
-            PdfRendererBuilder builder = new PdfRendererBuilder();
-            builder.useFastMode();
-            configurePdfA3(builder);
-            builder.withHtmlContent(xhtml, baseUri);
-            builder.toStream(out);
-            builder.run();
-
-            try (PDDocument document = PDDocument.load(out.toByteArray())) {
+        try {
+            byte[] rendered = renderPdfA3(renderedHtml, pdfPath);
+            try (PDDocument document = PDDocument.load(rendered)) {
                 boolean withFacturX = xmlPath != null && Files.exists(xmlPath);
                 if (withFacturX) {
                     attachZugferdXmlToPdf(document, xmlPath);
@@ -7022,6 +6569,22 @@ public class WebUiServer {
             }
         } catch (Exception e) {
             throw new IOException("E-Gutschrift-PDF konnte nicht aus der gespeicherten HTML-Vorlage gerendert werden: " + e.getMessage(), e);
+        }
+    }
+
+    /** HTML → PDF/A-3B mit eingebetteter Liberation Sans; Bilder werden relativ zum Zielordner aufgelöst. */
+    private static byte[] renderPdfA3(String html, Path pdfPath) throws Exception {
+        String xhtml = normalizeHtmlForPdf(html);
+        Path parent = pdfPath.toAbsolutePath().getParent();
+        String baseUri = (parent == null ? Paths.get(".").toAbsolutePath() : parent).toUri().toString();
+        try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+            PdfRendererBuilder builder = new PdfRendererBuilder();
+            builder.useFastMode();
+            configurePdfA3(builder);
+            builder.withHtmlContent(xhtml, baseUri);
+            builder.toStream(out);
+            builder.run();
+            return out.toByteArray();
         }
     }
 
@@ -7046,6 +6609,315 @@ public class WebUiServer {
         }
         document.body().prependElement("div").text(label + " Nr. " + replaces);
         return document.outerHtml();
+    }
+
+    // ══════════════ PROVISIONSÜBERSICHT (Anlage zum Beleg) ══════════════
+    // Die Übersicht ist HTML und läuft durch denselben openhtmltopdf-Durchgang wie die Gutschrift:
+    // eingebettete Liberation Sans, sRGB, A4. Darum bleiben PDF/A-3 und die Factur-X-Anlage intakt -
+    // mit PDFBox-Standardschriften gezeichnete Seiten würden PDF/A brechen. Entsteht kein
+    // Gutschrift-PDF (E-Gutschrift abgeschaltet), wird sie als eigenes PDF abgelegt.
+
+    /** Fertige Anlage: CSS für den head, HTML für den body, Titel für die PDF-Metadaten. */
+    private record CommissionOverview(String css, String bodyHtml, String title) {
+    }
+
+    /** Eine Buchung der Übersicht. Bestellwert und BMG sind null, wo die Buchung keine trägt. */
+    private record OverviewTx(OffsetDateTime time, String timeLabel, boolean direct, String typeLabel,
+                              String orderNumber, Double orderValue, Double bmg, double commission,
+                              boolean correction) {
+    }
+
+    // Stil der Standard-Gutschriftvorlage (schwarz/grau, Linien wie .items/.total). Alle Klassen
+    // tragen das Präfix pu-, damit sich Anlage und (eigene) Vorlagen nicht gegenseitig umstylen.
+    private static final String COMMISSION_OVERVIEW_CSS = """
+            .pu { font-family: Arial, Helvetica, sans-serif; color: #000000; font-size: 9.5px; line-height: 1.38; }
+            .pu-appendix { page-break-before: always; }
+            .pu table { border-collapse: collapse; width: 100%; }
+            .pu-kicker { color: #444444; font-size: 9px; }
+            .pu-title { font-size: 23px; letter-spacing: .2px; margin: 2px 0 16px 0; }
+            .pu-h { font-weight: 700; font-size: 11px; margin: 18px 0 6px 0; }
+            .pu-meta td { padding: 0 0 2px 0; vertical-align: top; }
+            .pu-meta td.pu-lbl { width: 210px; }
+            .pu-grid { -fs-table-paginate: paginate; }
+            .pu-grid th { font-weight: 700; text-align: left; padding: 5px 6px; border-top: 1px solid #000000; border-bottom: 1px solid #000000; }
+            .pu-grid td { padding: 4px 6px; vertical-align: top; }
+            .pu-grid tr { page-break-inside: avoid; }
+            .pu-grid .pu-num { text-align: right; white-space: nowrap; }
+            .pu-grid tr.pu-total td { font-weight: 700; border-top: 1px solid #000000; }
+            .pu-note { color: #444444; font-size: 8px; margin-top: 6px; }
+            .pu-hint { margin: 0 0 2px 0; }
+            @page { @bottom-right { content: "Seite " counter(page) " von " counter(pages); font-family: Arial, Helvetica, sans-serif; font-size: 7px; color: #444444; } }
+            """;
+
+    private static final Map<String, String> GOAFFPRO_STATUS_LABELS = Map.of(
+            "approved", "freigegeben",
+            "pending", "ausstehend",
+            "rejected", "abgelehnt",
+            "blocked", "gesperrt",
+            "cancelled", "storniert",
+            "canceled", "storniert",
+            "paid", "ausgezahlt");
+
+    private static String goaffproStatusLabel(String raw) {
+        String value = Objects.toString(raw, "").trim();
+        return GOAFFPRO_STATUS_LABELS.getOrDefault(value.toLowerCase(java.util.Locale.ROOT), value);
+    }
+
+    /** Auf Cent gerundet, damit Fließkommareste nicht als "-0,00 €" erscheinen. */
+    private static String euroCents(double value) {
+        return euroStatic(Math.round(value * 100.0) / 100.0);
+    }
+
+    private static String maskIban(String iban) {
+        String compact = Objects.toString(iban, "").replaceAll("\\s+", "");
+        if (compact.length() <= 8) return compact;
+        return compact.substring(0, 4) + " **** **** **** " + compact.substring(compact.length() - 4);
+    }
+
+    /**
+     * Eine GoAffPro-Buchung. Direkt/Team einheitlich über entity_type "orders". Ein Storno
+     * (event_type delete) trägt den positiven Bestellwert der stornierten Bestellung - er zählt
+     * hier negativ, sonst stünde die Bestellung doppelt in der Summe. Eine Änderung (update)
+     * korrigiert nur die Provision und trägt weder Bestellwert noch BMG.
+     */
+    private static OverviewTx overviewTx(JsonNode tx) {
+        JsonNode md = tx.path("metadata");
+        String event = asText(tx, "event_type").trim().toLowerCase(java.util.Locale.ROOT);
+        boolean direct = "orders".equalsIgnoreCase(asText(tx, "entity_type"));
+        boolean storno = "delete".equals(event);
+        boolean change = "update".equals(event);
+        Double orderValue = null;
+        Double bmg = null;
+        if (!change) {
+            if (md.hasNonNull("order_value")) orderValue = parseDoubleSafeStatic(asText(md, "order_value"));
+            if (md.hasNonNull("commission_on")) bmg = parseDoubleSafeStatic(asText(md, "commission_on"));
+            if (storno) {
+                if (orderValue != null) orderValue = -Math.abs(orderValue);
+                if (bmg != null) bmg = -Math.abs(bmg);
+            }
+        }
+        String typeLabel = direct ? "Direkt (Order)" : "Team (Reward)";
+        if (storno) {
+            typeLabel += " · Storno";
+        } else if (change) {
+            String status = goaffproStatusLabel(asText(md, "new_status"));
+            typeLabel += " · Änderung" + (status.isBlank() ? "" : " (" + status + ")");
+        }
+        OffsetDateTime time = null;
+        try {
+            time = OffsetDateTime.parse(asText(tx, "created_at"));
+        } catch (Exception ignored) {
+        }
+        return new OverviewTx(time, formatDateTimeEuropeBerlinStatic(asText(tx, "created_at")), direct, typeLabel,
+                asText(md, "order_number"), orderValue, bmg, parseDoubleSafeStatic(asText(tx, "amount")), storno || change);
+    }
+
+    /**
+     * Baut die Provisionsübersicht zu einem Zahllauf: Kennzahlen, Aufteilung Direkt/Team,
+     * Einzeltransaktionen, Stammdaten der Beraterin, Hinweise und Inhalts-Hash.
+     *
+     * @param docResponse die (bereinigte) GoAffPro-Antwort mit genau einem Zahllauf
+     */
+    private static CommissionOverview buildCommissionOverview(JsonNode docResponse, JsonNode affiliate, Properties config,
+                                                              String number, String replacesNr, DocumentKind kind,
+                                                              int hiddenBeforeStart) {
+        JsonNode payments = docResponse != null ? docResponse.get("payments") : null;
+        JsonNode payment = payments != null && payments.isArray() && payments.size() > 0
+                ? payments.get(0) : OBJECT_MAPPER.createObjectNode();
+
+        List<OverviewTx> rows = new ArrayList<>();
+        for (JsonNode tx : payment.path("transactions")) rows.add(overviewTx(tx));
+        rows.sort(java.util.Comparator.comparing(OverviewTx::time,
+                java.util.Comparator.nullsLast(java.util.Comparator.naturalOrder())));
+
+        int directCount = 0;
+        int teamCount = 0;
+        double[] orderSum = new double[2];   // [0] Direkt, [1] Team
+        double[] bmgSum = new double[2];
+        double[] provSum = new double[2];
+        OffsetDateTime first = null;
+        OffsetDateTime last = null;
+        boolean anyCorrection = false;
+        for (OverviewTx row : rows) {
+            int i = row.direct() ? 0 : 1;
+            if (row.direct()) directCount++; else teamCount++;
+            if (row.orderValue() != null) orderSum[i] += row.orderValue();
+            if (row.bmg() != null) bmgSum[i] += row.bmg();
+            provSum[i] += row.commission();
+            anyCorrection |= row.correction();
+            if (row.time() != null) {
+                if (first == null || row.time().isBefore(first)) first = row.time();
+                if (last == null || row.time().isAfter(last)) last = row.time();
+            }
+        }
+        double orderAll = orderSum[0] + orderSum[1];
+        double bmgAll = bmgSum[0] + bmgSum[1];
+        double provAll = provSum[0] + provSum[1];
+        double net = parseDoubleSafeStatic(asText(payment, "amount"));
+
+        String holder = payoutBankField(payment, affiliate, "account_holder");
+        if (holder.isBlank() && affiliate != null) holder = asText(affiliate, "name");
+        JsonNode paymentDetails = paymentDetailsNode(payment);
+        String paidVia = paymentDetails != null ? asText(paymentDetails, "paid_via") : "";
+        String period = first == null ? "k. A."
+                : formatDateTimeEuropeBerlinStatic(first.toString()) + " bis " + formatDateTimeEuropeBerlinStatic(last.toString());
+        // "Auszahlungsbetrag" heißt auf Seite 1 netto + USt. Der Zahllauf-Betrag ist netto und
+        // braucht deshalb einen eigenen Namen, sonst widerspräche sich der Beleg.
+        String netLabel = kind == DocumentKind.GUTSCHRIFT ? "Gutschriftbetrag (netto)" : "Rechnungsbetrag (netto)";
+
+        List<String[]> keyFigures = new ArrayList<>();
+        keyFigures.add(new String[]{"Zahllauf-ID", asText(payment, "id")});
+        keyFigures.add(new String[]{"Affiliate-ID", asText(payment, "affiliate_id")});
+        if (replacesNr != null && !replacesNr.isBlank()) {
+            keyFigures.add(new String[]{replacesDocumentLabel(kind), replacesNr});
+        }
+        keyFigures.add(new String[]{"Auszahlungsdatum (System)", formatDateTimeEuropeBerlinStatic(asText(payment, "created_at"))});
+        keyFigures.add(new String[]{"Empfänger (Kontoinhaber)", holder});
+        keyFigures.add(new String[]{"Zahlmethode", paidVia.isBlank() ? "SEPA" : "SEPA (via " + paidVia + ")"});
+        keyFigures.add(new String[]{"IBAN (maskiert)", maskIban(payoutBankField(payment, affiliate, "iban"))});
+        keyFigures.add(new String[]{"BIC", payoutBankField(payment, affiliate, "bic")});
+        keyFigures.add(new String[]{"Zeitraum der Transaktionen", period});
+        keyFigures.add(new String[]{"Anzahl Transaktionen im Zahllauf", String.valueOf(rows.size())});
+        keyFigures.add(new String[]{"davon Direkt (Order)", String.valueOf(directCount)});
+        keyFigures.add(new String[]{"davon Team (Reward)", String.valueOf(teamCount)});
+        keyFigures.add(new String[]{"Summe Bestellwert*", euroCents(orderAll)});
+        keyFigures.add(new String[]{"Summe Bemessungsgrundlage", euroCents(bmgAll)});
+        keyFigures.add(new String[]{"Summe Provision", euroCents(provAll)});
+        keyFigures.add(new String[]{netLabel, euroCents(net)});
+        keyFigures.add(new String[]{"Rundungsdifferenz (Betrag – Summe Provision)", euroCents(net - provAll)});
+        if (hiddenBeforeStart > 0) {
+            String start = gutschriftTransactionStartDate(config).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+            keyFigures.add(new String[]{"Nicht aufgeführt (vor " + start + ")",
+                    hiddenBeforeStart + (hiddenBeforeStart == 1 ? " stornierte Buchung" : " stornierte Buchungen")
+                            + ", Saldo " + euroCents(0.0)});
+        }
+
+        StringBuilder html = new StringBuilder(4096 + rows.size() * 400);
+        html.append("<div class=\"pu\">");
+        html.append("<div class=\"pu-kicker\">Anlage zur ").append(escapeHtmlEmail(kind.label + " " + number)).append("</div>");
+        html.append("<div class=\"pu-title\">Provisionsübersicht</div>");
+        appendOverviewKeyValueTable(html, keyFigures);
+
+        html.append("<div class=\"pu-h\">Aufteilung der Provisionen</div>");
+        html.append("<table class=\"pu-grid\"><thead><tr><th>Typ</th><th class=\"pu-num\">Summe Bestellwert*</th>")
+                .append("<th class=\"pu-num\">Summe Bemessungsgrundlage</th><th class=\"pu-num\">Summe Provision</th></tr></thead><tbody>");
+        appendOverviewSplitRow(html, "Direkt (Order)", orderSum[0], bmgSum[0], provSum[0], false);
+        appendOverviewSplitRow(html, "Team (Reward)", orderSum[1], bmgSum[1], provSum[1], false);
+        appendOverviewSplitRow(html, "Gesamt", orderAll, bmgAll, provAll, true);
+        html.append("</tbody></table>");
+
+        html.append("<div class=\"pu-h\">Einzeltransaktionen</div>");
+        html.append("<table class=\"pu-grid\"><thead><tr>")
+                .append("<th style=\"width:78px;\">Zeitpunkt</th><th>Typ</th><th style=\"width:72px;\">Bestellnummer</th>")
+                .append("<th class=\"pu-num\" style=\"width:68px;\">Bestellwert*</th><th class=\"pu-num\" style=\"width:62px;\">BMG</th>")
+                .append("<th class=\"pu-num\" style=\"width:62px;\">Provision</th></tr></thead><tbody>");
+        if (rows.isEmpty()) {
+            html.append("<tr><td colspan=\"6\">Keine Einzeltransaktionen im Zahllauf.</td></tr>");
+        }
+        for (OverviewTx row : rows) {
+            html.append("<tr><td>").append(escapeHtmlEmail(row.timeLabel())).append("</td>")
+                    .append("<td>").append(escapeHtmlEmail(row.typeLabel())).append("</td>")
+                    .append("<td>").append(escapeHtmlEmail(row.orderNumber())).append("</td>")
+                    .append("<td class=\"pu-num\">").append(row.orderValue() == null ? "–" : euroCents(row.orderValue())).append("</td>")
+                    .append("<td class=\"pu-num\">").append(row.bmg() == null ? "–" : euroCents(row.bmg())).append("</td>")
+                    .append("<td class=\"pu-num\">").append(euroCents(row.commission())).append("</td></tr>");
+        }
+        html.append("<tr class=\"pu-total\"><td colspan=\"3\">Summe</td>")
+                .append("<td class=\"pu-num\">").append(euroCents(orderAll)).append("</td>")
+                .append("<td class=\"pu-num\">").append(euroCents(bmgAll)).append("</td>")
+                .append("<td class=\"pu-num\">").append(euroCents(provAll)).append("</td></tr>");
+        html.append("</tbody></table>");
+        html.append("<div class=\"pu-note\">* Bestellwert exkl. abgezogener Rabatte (so wie im System übergeben).");
+        if (anyCorrection) {
+            html.append(" Storno-Buchungen mindern Bestellwert und Bemessungsgrundlage. Änderungsbuchungen korrigieren")
+                    .append(" nur die Provision; Bestellwert und BMG stehen dort als „–“.");
+        }
+        html.append("</div>");
+
+        List<String[]> advisorRows = new ArrayList<>();
+        if (affiliate != null) {
+            String tax = asText(affiliate, "tax_identification_number");
+            advisorRows.add(new String[]{"Name", asText(affiliate, "name")});
+            advisorRows.add(new String[]{"E-Mail", asText(affiliate, "email")});
+            advisorRows.add(new String[]{"Telefon", asText(affiliate, "phone")});
+            advisorRows.add(new String[]{"Unternehmen", asText(affiliate, "company_name")});
+            advisorRows.add(new String[]{"Adresse", formatAffiliateAddress(affiliate)});
+            advisorRows.add(new String[]{looksLikeVatId(tax) ? "USt-IdNr" : "Steuernummer", tax});
+            advisorRows.add(new String[]{"Referenzcode", asText(affiliate, "ref_code")});
+            advisorRows.add(new String[]{"Status", goaffproStatusLabel(asText(affiliate, "status"))});
+            advisorRows.removeIf(row -> row[1] == null || row[1].isBlank());
+        }
+        if (!advisorRows.isEmpty()) {
+            html.append("<div class=\"pu-h\">Beraterin (Stammdaten)</div>");
+            appendOverviewKeyValueTable(html, advisorRows);
+        }
+
+        html.append("<div class=\"pu-h\">Hinweise für Beraterinnen (für die eigene Nachweisführung)</div>");
+        for (String hint : List.of(
+                "Bewahren Sie diese Provisionsübersicht zusammen mit Ihrem Kontoauszug (Zahlungseingang) auf.",
+                "Wenn Sie umsatzsteuerpflichtig sind: Prüfen Sie, ob die Provision netto oder brutto auszuweisen ist.",
+                "Bei Kleinunternehmerregelung (§ 19 UStG): Prüfen Sie, ob die " + kind.label + " korrekt ausgestellt wurde.",
+                "Team- und Downline-Provisionen: Bewahren Sie die Referenzen aus dem System auf und reichen Sie sie bei Bedarf nach.",
+                "Archivieren Sie die Unterlagen nach Jahr, Monat und Zahllauf.",
+                "Halten Sie Ihre Stammdaten (Name, IBAN, Adresse, Steuernummer) aktuell, damit die Zuordnung eindeutig bleibt.")) {
+            html.append("<div class=\"pu-hint\">• ").append(escapeHtmlEmail(hint)).append("</div>");
+        }
+
+        // Kontakt wie in der Fußzeile auf Seite 1 - bisher stand hier fest eine andere Adresse.
+        String providerNote = "Diese Provisionsübersicht wurde von der " + documentProviderName(config, kind)
+                + " als Anlage zur " + kind.label + " " + number + (kind.selfBilling ? " gemäß § 14 UStG" : "")
+                + " erstellt. Bei Rückfragen wenden Sie sich bitte an "
+                + buyerProperty(config, kind, "PublicEmail", "info@vemmina.de")
+                + ". Die zugrundeliegenden Rohdaten können bei Bedarf angefragt werden.";
+        String contentHash = sha256Hex(toCanonicalJson(docResponse) + "|affiliate=" + toCanonicalJson(affiliate));
+        html.append("<div class=\"pu-note\" style=\"margin-top:14px;\">").append(escapeHtmlEmail(providerNote)).append("</div>");
+        html.append("<div class=\"pu-note\">Inhalts-Hash (SHA-256): ").append(escapeHtmlEmail(contentHash)).append("</div>");
+        html.append("</div>");
+
+        return new CommissionOverview(COMMISSION_OVERVIEW_CSS, html.toString(), "Provisionsübersicht " + number);
+    }
+
+    private static void appendOverviewKeyValueTable(StringBuilder html, List<String[]> rows) {
+        html.append("<table class=\"pu-meta\">");
+        for (String[] row : rows) {
+            String value = row[1] == null || row[1].isBlank() ? "–" : row[1];
+            html.append("<tr><td class=\"pu-lbl\">").append(escapeHtmlEmail(row[0])).append("</td><td>")
+                    .append(escapeHtmlEmail(value)).append("</td></tr>");
+        }
+        html.append("</table>");
+    }
+
+    private static void appendOverviewSplitRow(StringBuilder html, String label, double order, double bmg, double prov, boolean total) {
+        html.append(total ? "<tr class=\"pu-total\">" : "<tr>")
+                .append("<td>").append(escapeHtmlEmail(label)).append("</td>")
+                .append("<td class=\"pu-num\">").append(euroCents(order)).append("</td>")
+                .append("<td class=\"pu-num\">").append(euroCents(bmg)).append("</td>")
+                .append("<td class=\"pu-num\">").append(euroCents(prov)).append("</td></tr>");
+    }
+
+    /** Hängt die Übersicht ab einer neuen Seite an das gerenderte Beleg-HTML an (jede Vorlage). */
+    private static String appendCommissionOverview(String html, CommissionOverview overview) {
+        if (overview == null) return html;
+        Document document = Jsoup.parse(html == null ? "" : html);
+        document.head().appendElement("style").appendChild(new org.jsoup.nodes.DataNode(overview.css()));
+        document.body().appendElement("div").addClass("pu-appendix").append(overview.bodyHtml());
+        return document.outerHtml();
+    }
+
+    /** Die Übersicht als eigenes PDF/A-3 - nur, wenn kein Gutschrift-PDF entsteht. */
+    private static void createCommissionOverviewPdf(Path pdfPath, CommissionOverview overview) throws IOException {
+        String html = "<!doctype html><html lang=\"de\"><head><meta charset=\"UTF-8\" />"
+                + "<style>@page { size: A4; margin: 16mm 18mm 14mm 20mm; } body { margin: 0; }</style>"
+                + "<style>" + overview.css() + "</style></head><body>" + overview.bodyHtml() + "</body></html>";
+        try {
+            byte[] rendered = renderPdfA3(html, pdfPath);
+            try (PDDocument document = PDDocument.load(rendered)) {
+                writePdfAMetadata(document, overview.title(), false);
+                document.save(pdfPath.toFile());
+            }
+        } catch (Exception e) {
+            throw new IOException("Provisionsübersicht konnte nicht als PDF erstellt werden: " + e.getMessage(), e);
+        }
     }
 
     private static String normalizeHtmlForPdf(String html) {

@@ -15,8 +15,9 @@ Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierung
 - **Neusten Zahllauf hinzufügen**
   - Ermittelt den neuesten Zahllauf aus GoAffPro und ergänzt ihn in die Historie.
 - **Gutschrift & Provisionsübersicht exportieren**
-  - Erstellt für die markierten Zeilen Gutschrift (bzw. bei Altfällen Rechnung), Provisionsnachweis und JSON.
+  - Erstellt für die markierten Zeilen die Gutschrift (bzw. bei Altfällen Rechnung) als PDF mit der Provisionsübersicht als Anlage ab Seite 2, dazu die JSON-Rohdaten.
   - Mit hinterlegter Steuernummer oder USt-IdNr. der Beraterin wird die Gutschrift als E-Gutschrift (Factur-X/ZUGFeRD) erzeugt, sonst als PDF ohne E-Rechnung.
+  - Ist „E-Gutschrift (ZUGFeRD + Gutschrift-PDF) mitschicken & ablegen“ ausgeschaltet, entsteht kein Gutschrift-PDF; die Provisionsübersicht wird dann als eigenes PDF (`provisionsnachweis_…pdf`) abgelegt und verschickt.
   - Kann optional E-Mails versenden.
 - **Filterfeld**
   - Filtert die Tabelle nach Name, Land, Steuernummer, Belegdatum usw.
@@ -58,6 +59,25 @@ Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierung
   - `export_<belegdatum>_<hoechste-payment-id>_<beraterinnenname>`
 - Dort werden die generierten Dateien (PDF/JSON) abgelegt.
 
+### Provisionsübersicht als Anlage
+
+Die Provisionsübersicht steht im selben PDF wie die Gutschrift, ab Seite 2, im Stil der Gutschrift
+und mit Seitenzahlen („Seite x von y“) auf allen Seiten. Sie entsteht im selben Durchgang wie die
+Gutschrift (eingebettete Schrift, A4, PDF/A-3); die E-Gutschrift-Daten (factur-x.xml) bleiben
+dadurch unberührt. Maßgeblich für die E-Rechnung ist weiterhin die XML; die Übersicht ist eine
+erläuternde Anlage.
+
+Inhalt: Kennzahlen des Zahllaufs (maskierte Bankverbindung, Zeitraum, Anzahl, Summen), Aufteilung
+Direkt/Team, alle Einzeltransaktionen mit Summenzeile, Stammdaten der Beraterin, Hinweise zur
+eigenen Nachweisführung und ein Inhalts-Hash.
+
+- **Stornos** (GoAffPro-Buchung „delete“) mindern Bestellwert und Bemessungsgrundlage und sind in
+  der Liste als „Storno“ gekennzeichnet.
+- **Änderungen** (Buchung „update“, z. B. Status → abgelehnt) korrigieren nur die Provision;
+  Bestellwert und BMG stehen dort als „–“.
+- Der Betrag des Zahllaufs heißt in der Übersicht „Gutschriftbetrag (netto)“ – „Auszahlungsbetrag“
+  auf Seite 1 ist netto plus Umsatzsteuer.
+
 ## 4a) Altfälle bis 31.12.2025 (Gutschrift oder Rechnung)
 
 Die Dokumentart wird **automatisch aus dem Auszahlungsdatum des Zahllaufs** abgeleitet — es gibt
@@ -95,8 +115,8 @@ keine neue fortlaufende Nummer, sondern eine **Version** der Stammnummer:
 
 `GS-2026-0042` → `GS-2026-0042-1` → `GS-2026-0042-2` …
 
-- Jede Version nennt den Beleg, den sie ersetzt: im Gutschrift-PDF und im Provisionsnachweis als
-  Zeile „Ersetzt Gutschrift …“, in der E-Gutschrift (ZUGFeRD) als Verweis auf den Vorgängerbeleg
+- Jede Version nennt den Beleg, den sie ersetzt: im Gutschrift-PDF auf Seite 1 und in der
+  Provisionsübersicht als Zeile „Ersetzt Gutschrift …“, in der E-Gutschrift (ZUGFeRD) als Verweis auf den Vorgängerbeleg
   (BT-25). Ersetzt wird immer der unmittelbar vorherige Beleg: `-1` ersetzt die Stammnummer, `-2`
   ersetzt `-1`.
 - Die Statuszeile zeigt nach dem Erzeugen „(ersetzt …)“.
