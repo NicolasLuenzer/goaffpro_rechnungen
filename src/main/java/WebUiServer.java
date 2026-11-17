@@ -721,6 +721,7 @@ public class WebUiServer {
                     item.put("affiliateName", affiliate != null ? asText(affiliate, "name") : "");
                     item.put("affiliateEmail", affiliate != null ? asText(affiliate, "email") : "");
                     item.put("affiliateAddress", formatAffiliateAddress(affiliate));
+                    item.put("affiliateAddressMissing", String.join(", ", missingAddressParts(affiliate)));
                     item.put("affiliateCountry", affiliate != null ? asText(affiliate, "country") : "");
                     item.put("affiliateSteuernummer", affiliate != null ? asText(affiliate, "tax_identification_number") : "");
                     item.put("affiliatePhone", affiliate != null ? asText(affiliate, "phone") : "");
@@ -4672,6 +4673,8 @@ public class WebUiServer {
                 payload.put("documentVersion", issued.version());
                 payload.put("replacesDocumentNumber", replacesNr);
                 payload.put("accountingMailMessage", accountingMailMessage);
+                // Nicht blockierend: Der Beleg entsteht trotzdem, die Lücke muss aber auffallen.
+                payload.put("addressMissing", String.join(", ", missingAddressParts(affiliate)));
                 payload.put("documentKindSource", decision.source());
                 // Nur informativ: wie viele Provisionen des Zahllaufs aus der Zeit vor dem Stichtag
                 // stammen. Auf die Dokumentart wirkt das nicht, es erklärt aber den Beleginhalt.
@@ -5576,6 +5579,7 @@ public class WebUiServer {
             row.put("phone", asText(a, "phone"));
             row.put("company", asText(a, "company_name"));
             row.put("address", formatAffiliateAddress(a));
+            row.put("addressMissing", String.join(", ", missingAddressParts(a)));
             row.put("country", asText(a, "country"));
             row.put("dateOfBirth", asText(a, "date_of_birth"));
             String taxNumber = asText(a, "tax_identification_number");
@@ -5746,8 +5750,8 @@ public class WebUiServer {
 
         String address1 = asText(affiliate, "address_1");
         String address2 = asText(affiliate, "address_2");
-        String zip = asText(affiliate, "zip");
-        String city = asText(affiliate, "city");
+        String zip = asText(affiliate, "zip").trim();
+        String city = asText(affiliate, "city").trim();
         String state = asText(affiliate, "state");
         String country = asText(affiliate, "country");
 
@@ -5756,10 +5760,13 @@ public class WebUiServer {
         if (!address2.isBlank()) parts.add(address2);
 
         StringBuilder cityLine = new StringBuilder();
-        if (!zip.isBlank()) cityLine.append(zip.trim());
+        // Manche tragen die PLZ zusätzlich ins Ortsfeld ein ("6890 Lustenau") - ohne diese Prüfung
+        // stünde sie doppelt in der Anschrift.
+        boolean zipAlreadyInCity = !zip.isBlank() && (city.equals(zip) || city.startsWith(zip + " "));
+        if (!zip.isBlank() && !zipAlreadyInCity) cityLine.append(zip);
         if (!city.isBlank()) {
             if (cityLine.length() > 0) cityLine.append(" ");
-            cityLine.append(city.trim());
+            cityLine.append(city);
         }
         if (!state.isBlank()) {
             if (cityLine.length() > 0) cityLine.append(", ");
@@ -5769,6 +5776,25 @@ public class WebUiServer {
 
         if (!country.isBlank()) parts.add(country);
         return parts;
+    }
+
+    /**
+     * Welche Teile der Anschrift fehlen. Die Gutschrift braucht die vollständige Anschrift der
+     * Beraterin (§ 14 Abs. 4 Nr. 1 UStG), GoAffPro erzwingt das aber nicht: Bei manchen Konten sind
+     * PLZ und Ort gepflegt, die Straße ist leer. Die zusammengesetzte Anschrift ist dann nicht leer
+     * und fiel bisher durch jede Prüfung. Fehlt alles, heißt es schlicht "Adresse".
+     */
+    private static List<String> missingAddressParts(JsonNode affiliate) {
+        if (affiliate == null || affiliate.isMissingNode() || affiliate.isNull()) return List.of("Adresse");
+        boolean hasStreet = !asText(affiliate, "address_1").isBlank() || !asText(affiliate, "address_2").isBlank();
+        boolean hasZip = !asText(affiliate, "zip").isBlank();
+        boolean hasCity = !asText(affiliate, "city").isBlank();
+        if (!hasStreet && !hasZip && !hasCity) return List.of("Adresse");
+        List<String> missing = new ArrayList<>();
+        if (!hasStreet) missing.add("Straße und Hausnummer");
+        if (!hasZip) missing.add("PLZ");
+        if (!hasCity) missing.add("Ort");
+        return missing;
     }
 
     private static class TransactionSplit {

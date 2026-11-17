@@ -39,6 +39,12 @@ Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierung
     - Name fehlt,
     - IBAN fehlt,
     - oder IBAN ungültig ist.
+- **Spalte „Adresse“ rot mit ⚠**
+  - Die Anschrift der Beraterin ist unvollständig, meist fehlt die Straße. Beim Darüberfahren steht, welcher Teil fehlt.
+  - Die Gutschrift wird trotzdem erzeugt. Die Statuszeile bzw. die Ergebnisliste des Sammelexports weist aber darauf hin. Die Gutschrift braucht die vollständige Anschrift (§ 14 Abs. 4 UStG), darum bitte in GoAffPro nachtragen.
+- **Aktuelle Daten**
+  - Jeder Polling-Abruf holt die Beraterinnendaten frisch aus GoAffPro und aktualisiert auch Zeilen, die schon in der Tabelle stehen. Eine in GoAffPro nachgetragene Anschrift erscheint so beim nächsten Abruf.
+  - Beim Erzeugen einer Gutschrift werden Zahllauf und Beraterin unabhängig davon noch einmal direkt aus GoAffPro geladen.
 
 ## 3) Einstellungen
 
@@ -260,6 +266,20 @@ Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
   Dateinamen — deshalb werden beide Felder geprüft.
 - Ein fehlender Vertrag zählt als fehlendes Feld und erscheint damit in der Erinnerungsmail.
 
+### Spalte „Adresse"
+
+- Die Anschrift wird aus den GoAffPro-Feldern Adresszeile 1 und 2, PLZ, Ort, Bundesland und Land
+  zusammengesetzt, so wie GoAffPro sie über die Schnittstelle ausliefert.
+- Geprüft wird jeder Teil einzeln. Fehlen Straße, PLZ oder Ort, ist die Zelle rot. Beim Darüberfahren
+  steht, was fehlt, z. B. „Straße und Hausnummer“. Dieser Teil erscheint auch unter „Felder fehlen“
+  und damit in der Erinnerungsmail.
+- Fehlt die Anschrift ganz, heißt das fehlende Feld wie bisher „Adresse“.
+- Steht die PLZ zusätzlich im Ortsfeld (z. B. „6890 Lustenau“), erscheint sie nur einmal.
+- **Wenn GoAffPro im Admin-Bereich eine Straße zeigt, die hier fehlt:** Die Tabelle zeigt, was die
+  GoAffPro-Schnittstelle liefert, ohne Zwischenspeicher. Nach „Stammdaten laden / neu laden“ steht
+  dort also der aktuelle Stand. Fehlt die Straße dann immer noch, ist sie in GoAffPro nicht
+  gespeichert. Dann die Straße in GoAffPro (erneut) eintragen, speichern und hier neu laden.
+
 
 ## 11) Dynamischer Hilfe-Bereich
 
@@ -269,7 +289,12 @@ Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
 
 ## 12) Validierungsfilter
 
-Im Reiter **Validierung** gibt es zwei Wege, die Tabelle einzugrenzen:
+Im Reiter **Validierung** gibt es drei Wege, die Tabelle einzugrenzen:
+
+**Suchfelder „Name suchen“ und „E-Mail suchen“** — filtern beim Tippen. Groß-/Kleinschreibung und
+Umlaut-Schreibweise sind egal: „dorr“, „doerr“ und „dörr“ finden alle „Dörr“. Mehrere Wörter müssen
+alle vorkommen, die Reihenfolge ist egal („eva knorr“ findet „Benjamin und Eva Knorr“). Beide Felder
+lassen sich kombinieren; das ✕ im Feld leert es wieder.
 
 **Schnellfilter „nur Approved"** — der Schalter neben dem Lade-Button blendet alle Beraterinnen
 aus, deren Status nicht `approved` ist. Er ist **standardmäßig aktiv**; zum Anzeigen aller
@@ -283,8 +308,11 @@ einer leeren Tabelle der Hinweis „Keine Datensätze mit diesem Filter."
 - **Rechtsklick** auf einen Spaltenkopf öffnet ein Filtermenü mit allen vorkommenden Werten und
   ihrer Häufigkeit, inklusive „Alle" / „Keine" / „Filter löschen".
 - Spaltenbreiten lassen sich am rechten Rand des Spaltenkopfs ziehen.
+- **Abgekürzte Zellen** (Text endet mit „…“) zeigen beim Darüberfahren den vollständigen Text.
+  Das gilt auch für abgekürzte Spaltenköpfe. Eine Erklärung zur Zelle (z. B. was an der Anschrift
+  fehlt) steht direkt darunter.
 
-Beide Wege sind kombinierbar und wirken direkt auf die geladene Tabelle.
+Alle Wege sind kombinierbar und wirken direkt auf die geladene Tabelle.
 
 ## 13) Speichern-Button (Änderungsstatus)
 
