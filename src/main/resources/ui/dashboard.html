@@ -1394,6 +1394,7 @@
             <input id="validationSearchName" class="validation-search" type="search" placeholder="Name suchen …" aria-label="Stammdaten nach Name durchsuchen" autocomplete="off" />
             <input id="validationSearchEmail" class="validation-search" type="search" placeholder="E-Mail suchen …" aria-label="Stammdaten nach E-Mail-Adresse durchsuchen" autocomplete="off" />
             <label><input type="checkbox" id="filterOnlyApproved" checked /> nur Approved</label>
+            <label title="Blendet alle Beraterinnen aus, bei denen alle geprüften Angaben in Ordnung sind (in der Spalte „Aktion“ steht dort „vollständig“)."><input type="checkbox" id="filterOnlyIncomplete" /> nur unvollständige</label>
           </div>
           <p id="validationStatus" class="status">Noch keine Daten geladen.</p>
           <div class="validation-table-wrap">
@@ -3069,11 +3070,15 @@
       const body = document.getElementById('validationBody');
       if (!status || !body) return;
       const onlyApproved = !!document.getElementById('filterOnlyApproved')?.checked;
+      const onlyIncomplete = !!document.getElementById('filterOnlyIncomplete')?.checked;
       const matchesName = searchMatcher(document.getElementById('validationSearchName')?.value);
       const matchesEmail = searchMatcher(document.getElementById('validationSearchEmail')?.value);
       // Auf dem Datenarray filtern, nicht per row.style.display: das setzt applyTableFilterAndSort()
       // fuer den Excel-Spaltenfilter und beide wuerden sich gegenseitig ueberschreiben.
+      // "nur unvollständige" nutzt dieselbe Prüfung wie "N Felder fehlen" in der Spalte Aktion:
+      // ausgeblendet wird genau, was dort "vollständig" hieße.
       const rows = validationRowsCache.filter(r => (!onlyApproved || isApprovedValidationRow(r))
+        && (!onlyIncomplete || collectMissingValidationFields(r).length > 0)
         && matchesName(r.name) && matchesEmail(r.email));
       body.innerHTML = rows.map(r => {
         const missing = collectMissingValidationFields(r);
@@ -5479,6 +5484,7 @@
         const rerenderValidationIfLoaded = () => { if (validationRowsCache.length) renderValidationTable(); };
         document.getElementById('validationSearchName')?.addEventListener('input', rerenderValidationIfLoaded);
         document.getElementById('validationSearchEmail')?.addEventListener('input', rerenderValidationIfLoaded);
+        document.getElementById('filterOnlyIncomplete')?.addEventListener('change', rerenderValidationIfLoaded);
         wireAkteSubtabs();
         document.getElementById('akteSearch')?.addEventListener('input', () => { renderAkteList(); updateAktePosition(); });
         document.getElementById('aktePrevBtn')?.addEventListener('click', () => stepAkte(-1));

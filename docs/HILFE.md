@@ -308,7 +308,7 @@ Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
 
 ## 12) Validierungsfilter
 
-Im Reiter **Validierung** gibt es drei Wege, die Tabelle einzugrenzen:
+Im Reiter **Validierung** gibt es vier Wege, die Tabelle einzugrenzen:
 
 **Suchfelder „Name suchen“ und „E-Mail suchen“** — filtern beim Tippen. Groß-/Kleinschreibung und
 Umlaut-Schreibweise sind egal: „dorr“, „doerr“ und „dörr“ finden alle „Dörr“. Mehrere Wörter müssen
@@ -320,6 +320,14 @@ aus, deren Status nicht `approved` ist. Er ist **standardmäßig aktiv**; zum An
 Datensätze (auch `blocked`, `invited`, `pending`) einfach abwählen. Die Statuszeile zeigt „X von Y
 Datensätzen angezeigt", solange gefiltert wird. Greift der Filter auf keine Zeile, erscheint statt
 einer leeren Tabelle der Hinweis „Keine Datensätze mit diesem Filter."
+
+**Schnellfilter „nur unvollständige"** — blendet mit einem Klick alle Beraterinnen aus, bei denen
+alle geprüften Angaben in Ordnung sind. Übrig bleiben die, bei denen in der Spalte **Aktion**
+„… Felder fehlen" steht statt „vollständig". Geprüft wird dasselbe wie für die Erinnerungsmail:
+Name, E-Mail, Telefon, Anschrift (Straße, PLZ, Ort), Land, Geburtsdatum, Steuernummer oder
+USt-ID, Zahlmethode, IBAN samt Prüfsumme, Kontoinhaber und der unterschriebene Vertrag.
+Standardmäßig aus. Zusammen mit „nur Approved" zeigt die Tabelle alle aktiven Beraterinnen, bei
+denen noch etwas fehlt.
 
 **Spaltenfilter und Sortierung (wie in Excel)** — gilt für jede Spalte und jede Tabelle:
 
