@@ -19,6 +19,10 @@ Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierung
   - Mit hinterlegter Steuernummer oder USt-IdNr. der Beraterin wird die Gutschrift als E-Gutschrift (Factur-X/ZUGFeRD) erzeugt, sonst als PDF ohne E-Rechnung.
   - Ist „E-Gutschrift (ZUGFeRD + Gutschrift-PDF) mitschicken & ablegen“ ausgeschaltet, entsteht kein Gutschrift-PDF; die Provisionsübersicht wird dann als eigenes PDF (`provisionsnachweis_…pdf`) abgelegt und verschickt.
   - Kann optional E-Mails versenden.
+- **Aktion „Vorschau“ (je Zeile)**
+  - Zeigt den Beleg zur Sichtprüfung im Browser: gleiche Daten, gleiche Vorlage, gleiche Provisionsübersicht wie beim echten Erzeugen.
+  - Statt einer Nummer steht „ENTWURF“ im Beleg, dazu ein Wasserzeichen „ENTWURF – kein gültiger Beleg“ auf jeder Seite.
+  - Verbraucht keine Belegnummer, legt keine Datei ab, verschickt nichts und schreibt nichts ins Versandprotokoll. Eine E-Rechnungs-XML gibt es in der Vorschau nicht.
 - **Filterfeld**
   - Filtert die Tabelle nach Name, Land, Steuernummer, Belegdatum usw.
 
@@ -47,7 +51,9 @@ Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierung
   - Kontakt-E-Mail
   - SMTP Host/Port/Benutzer/Passwort
   - Versand aktivieren/deaktivieren
-  - Versandziel: Kontakt-E-Mail oder Beraterinnen-E-Mail
+  - Versandziel: Kontakt-E-Mail oder Beraterinnen-E-Mail. „Kontakt-E-Mail“ ist der Testmodus: Alle Mails – auch die Stammdaten-Erinnerungen – gehen dann an die Kontakt-E-Mail.
+  - BCC: bekommt eine Kopie jeder Mail (Gutschriften, Erinnerungen, Wochenmails).
+  - Buchhaltungs-E-Mail: bekommt jede Gutschrift (bzw. Altfall-Rechnung), die an die Beraterin verschickt wird, als eigene Mail mit Gutschrift-PDF (inkl. Provisionsübersicht) und – falls vorhanden – der E-Rechnungs-XML. Betreff: „Gutschrift GS-… – Name – Zahllauf …“; bei einer neuen Version nennt die Mail den ersetzten Beleg. Im Testmodus (Versand an Kontakt-E-Mail) geht nichts an die Buchhaltung. Schlägt nur diese Mail fehl, meldet die Statuszeile das; der Beleg an die Beraterin ist dann trotzdem raus.
 - **Zahllauf-Historie bearbeiten**
   - Zahlläufe können entfernt werden.
 - **Speichern-Feedback**

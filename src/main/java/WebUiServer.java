@@ -392,6 +392,7 @@ public class WebUiServer {
         server.createContext("/api/settings/recipient-mode", new RecipientModeHandler());
         server.createContext("/api/provisionen-goaffpro/export-pdf", new ExportPdfHandler());
         server.createContext("/api/provisionen-goaffpro/invoice-details-pdf", new InvoiceDetailsPdfHandler());
+        server.createContext("/api/provisionen-goaffpro/invoice-preview-pdf", new InvoicePreviewPdfHandler());
         server.createContext("/api/mail-log", new MailLogHandler());
         server.createContext("/api/mail-log/download", new MailLogDownloadHandler());
         server.createContext("/api/version", new VersionHandler());
@@ -785,6 +786,7 @@ public class WebUiServer {
                 String smtpPort = Objects.toString(config.getProperty("smtpPort"), "587").trim();
                 String smtpUsername = Objects.toString(config.getProperty("smtpUsername"), "").trim();
                 String emailBcc = Objects.toString(config.getProperty("emailBcc"), "").trim();
+                String accountingEmail = Objects.toString(config.getProperty("accountingEmail"), "").trim();
                 boolean smtpTls = Boolean.parseBoolean(Objects.toString(config.getProperty("smtpTls"), "false"));
                 boolean hasSmtpPassword = !getSecretOrConfig(config, "SMTP_PASSWORD", "smtpPassword", "").trim().isBlank();
                 boolean sendEmailsEnabled = Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true"));
@@ -848,6 +850,7 @@ public class WebUiServer {
                 payload.put("smtpPort", smtpPort);
                 payload.put("smtpUsername", smtpUsername);
                 payload.put("emailBcc", emailBcc);
+                payload.put("accountingEmail", accountingEmail);
                 payload.put("smtpTls", smtpTls);
                 payload.put("hasSmtpPassword", hasSmtpPassword);
                 payload.put("sendEmailsEnabled", sendEmailsEnabled);
@@ -923,6 +926,7 @@ public class WebUiServer {
                     String smtpPort = asText(body, "smtpPort").trim();
                     String smtpUsername = asText(body, "smtpUsername").trim();
                     String emailBcc = asText(body, "emailBcc").trim();
+                    String accountingEmail = asText(body, "accountingEmail").trim();
                     String smtpPassword = asText(body, "smtpPassword").trim();
                     boolean smtpTls = body.has("smtpTls") && body.get("smtpTls").asBoolean(false);
                     boolean sendEmailsEnabled = !body.has("sendEmailsEnabled") || body.get("sendEmailsEnabled").asBoolean(true);
@@ -991,6 +995,10 @@ public class WebUiServer {
                     config.setProperty("smtpPort", smtpPort.isBlank() ? "587" : smtpPort);
                     config.setProperty("smtpUsername", smtpUsername);
                     config.setProperty("emailBcc", emailBcc);
+                    // Nur übernehmen, wenn mitgeschickt - sonst löschte jede ältere Speicheranfrage die Adresse.
+                    if (body.has("accountingEmail")) {
+                        config.setProperty("accountingEmail", accountingEmail);
+                    }
                     config.setProperty("smtpTls", String.valueOf(smtpTls));
                     if (!smtpPassword.isBlank()) {
                         config.setProperty("smtpPassword", smtpPassword);
@@ -1082,6 +1090,7 @@ public class WebUiServer {
                     payload.put("smtpPort", Objects.toString(config.getProperty("smtpPort"), "587"));
                     payload.put("smtpUsername", Objects.toString(config.getProperty("smtpUsername"), ""));
                     payload.put("emailBcc", Objects.toString(config.getProperty("emailBcc"), ""));
+                    payload.put("accountingEmail", Objects.toString(config.getProperty("accountingEmail"), ""));
                     payload.put("smtpTls", Boolean.parseBoolean(Objects.toString(config.getProperty("smtpTls"), "false")));
                     payload.put("hasSmtpPassword", !getSecretOrConfig(config, "SMTP_PASSWORD", "smtpPassword", "").trim().isBlank());
                     payload.put("sendEmailsEnabled", Boolean.parseBoolean(Objects.toString(config.getProperty("sendEmailsEnabled"), "true")));
@@ -4420,6 +4429,76 @@ public class WebUiServer {
     }
 
 
+    /** Alles, was Beleg und Vorschau aus GoAffPro brauchen - rein lesend, ohne Nummernvergabe. */
+    private record DocumentRun(String detailsUrl, JsonNode response, JsonNode payment, JsonNode affiliate,
+                               DocumentKindDecision decision, DocumentKind kind, JsonNode docPayment,
+                               JsonNode docResponse, int hiddenBeforeStart, String periodLabel) {
+    }
+
+    /** Abbruch beim Vorbereiten, mit HTTP-Status und fertigem JSON-Body für die Antwort. */
+    private static final class DocumentRunException extends Exception {
+        final int status;
+        final String body;
+
+        DocumentRunException(int status, String body) {
+            super(body);
+            this.status = status;
+            this.body = body;
+        }
+    }
+
+    /**
+     * Lädt Zahllauf und Beraterin und bestimmt Dokumentart, Bereinigung und Zeitraum. Rein lesend:
+     * Erst danach darf eine Belegnummer gezogen werden – generateNextDocumentNumber persistiert sofort.
+     */
+    private static DocumentRun prepareDocumentRun(String paymentId, Properties config) throws Exception {
+        String apiKey = requireGoaffproApiKey(config);
+        String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?id=" + paymentId
+                + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
+        JsonNode response = requestJson(detailsUrl, apiKey);
+        JsonNode payments = response.get("payments");
+        if (payments == null || !payments.isArray() || payments.size() == 0) {
+            throw new DocumentRunException(404, "{\"error\":\"Keine Payment-Details gefunden\"}");
+        }
+        JsonNode payment = payments.get(0);
+        String affiliateId = asText(payment, "affiliate_id");
+        JsonNode affiliate = null;
+        if (!affiliateId.isBlank()) {
+            affiliate = fetchAffiliatesById(apiKey, List.of(affiliateId)).get(affiliateId);
+        }
+
+        // Die Dokumentart wird allein aus dem Auszahlungsdatum abgeleitet; ein mitgesendetes
+        // documentKind wird bewusst ignoriert. Die Stellschraube ist der Stichtag.
+        DocumentKindDecision decision = resolveDocumentKind(payment, config);
+        DocumentKind kind = decision.kind();
+
+        // Gutschriften führen keine stornierten Provisionen aus der Zeit vor dem Start der
+        // S+R-Provisionen. Alles Weitere - Provisionsübersicht, JSON-Anhang, ZUGFeRD,
+        // Gutschrift, Mail - arbeitet mit dem bereinigten Zahllauf.
+        JsonNode docPayment = payment;
+        JsonNode docResponse = response;
+        int hiddenBeforeStart = 0;
+        if (kind == DocumentKind.GUTSCHRIFT) {
+            StartDateSplit startSplit = splitBeforeGutschriftStart(payment, config);
+            String blockReason = gutschriftStartBlockReason(startSplit, paymentId, config);
+            if (blockReason != null) {
+                throw new DocumentRunException(409,
+                        "{\"error\":\"" + escapeJson(blockReason) + "\",\"code\":\"vor-provisionsstart\"}");
+            }
+            hiddenBeforeStart = startSplit.hiddenCount();
+            if (hiddenBeforeStart > 0) {
+                docPayment = startSplit.visiblePayment();
+                ObjectNode cleanedResponse = response.deepCopy();
+                cleanedResponse.set("payments", OBJECT_MAPPER.createArrayNode().add(docPayment));
+                docResponse = cleanedResponse;
+                // Die Info-Zähler sollen beschreiben, was der Beleg tatsächlich enthält.
+                decision = resolveDocumentKind(docPayment, config);
+            }
+        }
+        return new DocumentRun(detailsUrl, response, payment, affiliate, decision, kind, docPayment, docResponse,
+                hiddenBeforeStart, buildPaymentPeriodLabel(docPayment));
+    }
+
     private static class InvoiceDetailsPdfHandler implements HttpHandler {
         @Override
         public void handle(HttpExchange exchange) throws IOException {
@@ -4446,21 +4525,23 @@ public class WebUiServer {
                 Properties uiSettings = loadUiSettings(resolveSettingsDirectory(config));
                 mergeUiSettingsIntoConfig(config, uiSettings);
 
-                String apiKey = requireGoaffproApiKey(config);
-                String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?id=" + paymentId
-                        + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
-                JsonNode response = requestJson(detailsUrl, apiKey);
-                JsonNode payments = response.get("payments");
-                if (payments == null || !payments.isArray() || payments.size() == 0) {
-                    sendResponse(exchange, 404, "application/json", "{\"error\":\"Keine Payment-Details gefunden\"}");
+                DocumentRun run;
+                try {
+                    run = prepareDocumentRun(paymentId, config);
+                } catch (DocumentRunException e) {
+                    sendResponse(exchange, e.status, "application/json", e.body);
                     return;
                 }
-                JsonNode payment = payments.get(0);
-                String affiliateId = asText(payment, "affiliate_id");
-                JsonNode affiliate = null;
-                if (!affiliateId.isBlank()) {
-                    affiliate = fetchAffiliatesById(apiKey, List.of(affiliateId)).get(affiliateId);
-                }
+                String detailsUrl = run.detailsUrl();
+                JsonNode response = run.response();
+                JsonNode payment = run.payment();
+                JsonNode affiliate = run.affiliate();
+                DocumentKindDecision decision = run.decision();
+                DocumentKind kind = run.kind();
+                JsonNode docPayment = run.docPayment();
+                JsonNode docResponse = run.docResponse();
+                int hiddenBeforeStart = run.hiddenBeforeStart();
+                String periodLabel = run.periodLabel();
 
                 String exportDirValue = requestedDir.isEmpty()
                         ? Objects.toString(config.getProperty("pdfExportPath"), DEFAULT_PDF_EXPORT_PATH)
@@ -4473,40 +4554,6 @@ public class WebUiServer {
                 String belegFolder = belegDate != null ? belegDate.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")) : "unbekanntes-datum";
                 String advisorFolderToken = affiliate != null ? asText(affiliate, "name") : "ohne-beraterin";
                 Path runExportDir = exportDir.resolve("export_" + sanitizeFilename(belegFolder + "_" + paymentId + "_" + advisorFolderToken));
-
-                // Dokumentart, Bereinigung und Zeitraum ZUERST bestimmen (rein lesend). Erst danach
-                // darf eine Belegnummer gezogen werden – generateNextDocumentNumber persistiert sofort.
-                DocumentKindDecision decision = resolveDocumentKind(payment, config);
-                // Die Dokumentart wird allein aus dem Auszahlungsdatum abgeleitet; ein mitgesendetes
-                // documentKind wird bewusst ignoriert. Die Stellschraube ist der Stichtag.
-                DocumentKind kind = decision.kind();
-
-                // Gutschriften führen keine stornierten Provisionen aus der Zeit vor dem Start der
-                // S+R-Provisionen. Alles Weitere - Provisionsnachweis, JSON-Anhang, ZUGFeRD,
-                // Gutschrift, Mail - arbeitet mit dem bereinigten Zahllauf.
-                JsonNode docPayment = payment;
-                JsonNode docResponse = response;
-                int hiddenBeforeStart = 0;
-                if (kind == DocumentKind.GUTSCHRIFT) {
-                    StartDateSplit startSplit = splitBeforeGutschriftStart(payment, config);
-                    String blockReason = gutschriftStartBlockReason(startSplit, paymentId, config);
-                    if (blockReason != null) {
-                        sendResponse(exchange, 409, "application/json",
-                                "{\"error\":\"" + escapeJson(blockReason) + "\",\"code\":\"vor-provisionsstart\"}");
-                        return;
-                    }
-                    hiddenBeforeStart = startSplit.hiddenCount();
-                    if (hiddenBeforeStart > 0) {
-                        docPayment = startSplit.visiblePayment();
-                        ObjectNode cleanedResponse = response.deepCopy();
-                        cleanedResponse.set("payments", OBJECT_MAPPER.createArrayNode().add(docPayment));
-                        docResponse = cleanedResponse;
-                        // Die Info-Zähler sollen beschreiben, was der Beleg tatsächlich enthält.
-                        decision = resolveDocumentKind(docPayment, config);
-                    }
-                }
-                String periodLabel = buildPaymentPeriodLabel(docPayment);
-
                 Files.createDirectories(runExportDir);
 
                 String timestamp = FILE_TIMESTAMP.format(LocalDateTime.now());
@@ -4570,12 +4617,35 @@ public class WebUiServer {
                     sendResponse(exchange, 400, "application/json", "{\"error\":\"" + escapeJson(errorText) + "\"}");
                     return;
                 }
+                String accountingMailMessage = "";
                 if (sendEmailsEnabled) {
                     String affiliateNameForMail = affiliate != null ? asText(affiliate, "name") : "";
                     String buyerCompanyNameForMail = buyerProperty(config, kind, "Name", kind.defaultBuyerName);
                     sendInvoiceMailWithAttachment(targetEmail, Objects.toString(config.getProperty("emailBcc"), "").trim(), pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, eInvoiceAttachAndStoreEnabled, affiliateNameForMail, periodLabel, docPayment, affiliate, Objects.toString(config.getProperty(kind.mailTemplateKey), ""), resolveSmtpConfig(config), gutschriftNr, kind, buyerCompanyNameForMail);
                     String subject = documentMailSubject(kind, gutschriftNr, periodLabel, affiliateNameForMail);
                     appendMailLogEntry(config, paymentId, emailRecipientMode, targetEmail, subject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, kind, gutschriftNr, eInvoiceStatus);
+
+                    // Die Buchhaltung bekommt jeden Beleg, der wirklich an die Beraterin geht, als eigene
+                    // Mail. Testläufe an die Kontakt-E-Mail landen nicht bei ihr.
+                    String accountingEmail = Objects.toString(config.getProperty("accountingEmail"), "").trim();
+                    if ("advisor".equals(emailRecipientMode) && !accountingEmail.isBlank()) {
+                        List<Path> attachments = new ArrayList<>();
+                        for (Path file : new Path[]{eInvoicePdfPath, pdfPath, zugferdPath}) {
+                            if (file != null) attachments.add(file);
+                        }
+                        String accountingSubject = accountingMailSubject(kind, gutschriftNr, affiliateNameForMail, paymentId);
+                        try {
+                            sendSimpleHtmlMail(accountingEmail, "", accountingSubject,
+                                    accountingMailBody(kind, gutschriftNr, replacesNr, affiliateNameForMail, paymentId, periodLabel, docPayment, eInvoiceStatus, attachments),
+                                    accountingMailHtml(kind, gutschriftNr, replacesNr, affiliateNameForMail, paymentId, periodLabel, docPayment, eInvoiceStatus, attachments),
+                                    attachments, resolveSmtpConfig(config));
+                            appendMailLogEntry(config, paymentId, "accounting", accountingEmail, accountingSubject, periodLabel, pdfPath, jsonPath, zugferdPath, eInvoicePdfPath, kind, gutschriftNr, eInvoiceStatus);
+                            accountingMailMessage = "an Buchhaltung (" + accountingEmail + ") versendet";
+                        } catch (Exception mailError) {
+                            // Die Beraterin hat ihren Beleg schon - ein Fehler hier darf das nicht verschleiern.
+                            accountingMailMessage = "Mail an Buchhaltung fehlgeschlagen: " + mailError.getMessage();
+                        }
+                    }
                 }
 
                 boolean opened = false;
@@ -4601,6 +4671,7 @@ public class WebUiServer {
                 payload.put("documentNumber", gutschriftNr);
                 payload.put("documentVersion", issued.version());
                 payload.put("replacesDocumentNumber", replacesNr);
+                payload.put("accountingMailMessage", accountingMailMessage);
                 payload.put("documentKindSource", decision.source());
                 // Nur informativ: wie viele Provisionen des Zahllaufs aus der Zeit vor dem Stichtag
                 // stammen. Auf die Dokumentart wirkt das nicht, es erklärt aber den Beleginhalt.
@@ -4629,6 +4700,57 @@ public class WebUiServer {
         }
     }
 
+
+    /**
+     * Vorschau eines Belegs zur Sichtprüfung: dieselben Daten, dieselbe Vorlage und dieselbe Anlage
+     * wie bei der echten Erzeugung, aber "ENTWURF" statt Nummer und ein Wasserzeichen. Rein lesend:
+     * keine Nummer, keine Datei, keine Mail, kein Protokoll, keine geänderten Einstellungen.
+     */
+    private static class InvoicePreviewPdfHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                String paymentId = Objects.toString(parseQueryParams(exchange.getRequestURI()).get("paymentId"), "").trim();
+                // Die ID landet in der GoAffPro-URL - nur Ziffern zulassen.
+                if (!paymentId.matches("\\d{1,20}")) {
+                    sendResponse(exchange, 400, "application/json", "{\"error\":\"paymentId fehlt oder ist ungültig\"}");
+                    return;
+                }
+                Properties config = loadConfigWithUiSettings();
+                DocumentRun run;
+                try {
+                    run = prepareDocumentRun(paymentId, config);
+                } catch (DocumentRunException e) {
+                    sendResponse(exchange, e.status, "application/json", e.body);
+                    return;
+                }
+                CommissionOverview overview = buildCommissionOverview(run.docResponse(), run.affiliate(), config,
+                        DRAFT_DOCUMENT_NUMBER, "", run.kind(), run.hiddenBeforeStart());
+                byte[] pdf = renderDocumentPdf(null, null, run.docPayment(), run.affiliate(), config, DRAFT_DOCUMENT_NUMBER,
+                        run.periodLabel(), resolveTaxTreatment(run.affiliate()), run.kind(), "", overview, true);
+
+                exchange.getResponseHeaders().set("Content-Type", "application/pdf");
+                exchange.getResponseHeaders().set("Content-Disposition", "inline; filename=\"vorschau_" + paymentId + ".pdf\"");
+                exchange.getResponseHeaders().set("Cache-Control", "no-store");
+                exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                exchange.sendResponseHeaders(200, pdf.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(pdf);
+                }
+            } catch (Exception e) {
+                e.printStackTrace();
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
 
     private static void flattenJsonForPdf(String prefix, JsonNode node, List<String[]> rows) {
         if (node == null || node.isNull()) {
@@ -6157,6 +6279,12 @@ public class WebUiServer {
     }
 
     private static void sendSimpleHtmlMail(String toEmail, String bccEmail, String subject, String plainTextBody, String htmlBody, SmtpConfig smtpConfig) throws Exception {
+        sendSimpleHtmlMail(toEmail, bccEmail, subject, plainTextBody, htmlBody, List.of(), smtpConfig);
+    }
+
+    /** Wie oben, mit Dateianhängen; PDF und XML bekommen ihren Inhaltstyp ausdrücklich. */
+    private static void sendSimpleHtmlMail(String toEmail, String bccEmail, String subject, String plainTextBody, String htmlBody,
+                                           List<Path> attachments, SmtpConfig smtpConfig) throws Exception {
         Properties props = new Properties();
         props.put("mail.smtp.host", smtpConfig.host);
         props.put("mail.smtp.port", String.valueOf(smtpConfig.port));
@@ -6180,7 +6308,24 @@ public class WebUiServer {
         MimeBodyPart htmlPart = new MimeBodyPart();
         htmlPart.setContent(htmlBody, "text/html; charset=UTF-8");
         alternative.addBodyPart(htmlPart);
-        message.setContent(alternative);
+        if (attachments == null || attachments.isEmpty()) {
+            message.setContent(alternative);
+        } else {
+            MimeBodyPart contentPart = new MimeBodyPart();
+            contentPart.setContent(alternative);
+            MimeMultipart mixed = new MimeMultipart("mixed");
+            mixed.addBodyPart(contentPart);
+            for (Path attachment : attachments) {
+                MimeBodyPart part = new MimeBodyPart();
+                part.setDataHandler(new DataHandler(new FileDataSource(attachment.toFile())));
+                part.setFileName(attachment.getFileName().toString());
+                String name = attachment.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+                if (name.endsWith(".pdf")) part.setHeader("Content-Type", "application/pdf");
+                if (name.endsWith(".xml")) part.setHeader("Content-Type", "application/xml; charset=UTF-8");
+                mixed.addBodyPart(part);
+            }
+            message.setContent(mixed);
+        }
 
         Transport transport = session.getTransport("smtp");
         try {
@@ -6551,32 +6696,70 @@ public class WebUiServer {
                                                          String documentNumber, String periodLabel, TaxTreatment taxTreatment,
                                                          DocumentKind kind, String replacesDocumentNumber,
                                                          CommissionOverview overview) throws IOException {
+        byte[] pdf = renderDocumentPdf(pdfPath.toAbsolutePath().getParent(), xmlPath, payment, affiliate, config,
+                documentNumber, periodLabel, taxTreatment, kind, replacesDocumentNumber, overview, false);
+        Files.write(pdfPath, pdf);
+    }
+
+    /** Platzhalter statt Belegnummer in der Vorschau - eine echte Nummer wird dafür nie gezogen. */
+    static final String DRAFT_DOCUMENT_NUMBER = "ENTWURF";
+
+    /**
+     * Das Beleg-PDF als Bytes. {@code draft} markiert eine Vorschau: Wasserzeichen auf jeder Seite.
+     * Eine Vorschau bekommt nie eine XML, denn sie ist kein Beleg.
+     */
+    private static byte[] renderDocumentPdf(Path baseDir, Path xmlPath, JsonNode payment, JsonNode affiliate, Properties config,
+                                            String documentNumber, String periodLabel, TaxTreatment taxTreatment,
+                                            DocumentKind kind, String replacesDocumentNumber,
+                                            CommissionOverview overview, boolean draft) throws IOException {
         String template = documentPdfTemplateHtml(config, kind);
         String renderedHtml = renderEInvoicePdfViewHtml(template, payment, affiliate, config, documentNumber, periodLabel, taxTreatment, kind);
         renderedHtml = insertReplacesDocumentRow(renderedHtml, documentNumber, replacesDocumentNumber, kind);
         // Erst nach dem Ersetzt-Hinweis anhängen: Die Anlage nennt die Belegnummer ebenfalls.
         renderedHtml = appendCommissionOverview(renderedHtml, overview);
+        if (draft) {
+            renderedHtml = appendDraftWatermark(renderedHtml);
+        }
 
         try {
-            byte[] rendered = renderPdfA3(renderedHtml, pdfPath);
-            try (PDDocument document = PDDocument.load(rendered)) {
-                boolean withFacturX = xmlPath != null && Files.exists(xmlPath);
+            byte[] rendered = renderPdfA3(renderedHtml, baseDir);
+            try (PDDocument document = PDDocument.load(rendered);
+                 ByteArrayOutputStream out = new ByteArrayOutputStream()) {
+                boolean withFacturX = !draft && xmlPath != null && Files.exists(xmlPath);
                 if (withFacturX) {
                     attachZugferdXmlToPdf(document, xmlPath);
                 }
                 writePdfAMetadata(document, kind.label + " " + documentNumber, withFacturX);
-                document.save(pdfPath.toFile());
+                document.save(out);
+                return out.toByteArray();
             }
         } catch (Exception e) {
             throw new IOException("E-Gutschrift-PDF konnte nicht aus der gespeicherten HTML-Vorlage gerendert werden: " + e.getMessage(), e);
         }
     }
 
-    /** HTML → PDF/A-3B mit eingebetteter Liberation Sans; Bilder werden relativ zum Zielordner aufgelöst. */
-    private static byte[] renderPdfA3(String html, Path pdfPath) throws Exception {
+    /**
+     * Schräges "ENTWURF"-Wasserzeichen auf jeder Seite. position:fixed wiederholt openhtmltopdf auf
+     * allen Seiten; z-index -1 legt es hinter den Text, damit der Beleg lesbar bleibt.
+     */
+    private static String appendDraftWatermark(String html) {
+        Document document = Jsoup.parse(html == null ? "" : html);
+        document.head().appendElement("style").appendChild(new org.jsoup.nodes.DataNode(
+                ".draft-watermark { position: fixed; top: 330px; left: 0; width: 100%; z-index: -1; text-align: center;"
+                        + " font-family: Arial, Helvetica, sans-serif; font-weight: 700; color: #d4d4d4;"
+                        + " transform: rotate(-35deg); }"
+                        + " .draft-watermark-main { font-size: 96px; letter-spacing: 4px; }"
+                        + " .draft-watermark-sub { font-size: 30px; }"));
+        Element watermark = document.body().prependElement("div").addClass("draft-watermark");
+        watermark.appendElement("div").addClass("draft-watermark-main").text("ENTWURF");
+        watermark.appendElement("div").addClass("draft-watermark-sub").text("kein gültiger Beleg");
+        return document.outerHtml();
+    }
+
+    /** HTML → PDF/A-3B mit eingebetteter Liberation Sans; Bilder werden relativ zu {@code baseDir} aufgelöst. */
+    private static byte[] renderPdfA3(String html, Path baseDir) throws Exception {
         String xhtml = normalizeHtmlForPdf(html);
-        Path parent = pdfPath.toAbsolutePath().getParent();
-        String baseUri = (parent == null ? Paths.get(".").toAbsolutePath() : parent).toUri().toString();
+        String baseUri = (baseDir == null ? Paths.get(".").toAbsolutePath() : baseDir).toUri().toString();
         try (ByteArrayOutputStream out = new ByteArrayOutputStream()) {
             PdfRendererBuilder builder = new PdfRendererBuilder();
             builder.useFastMode();
@@ -6910,7 +7093,7 @@ public class WebUiServer {
                 + "<style>@page { size: A4; margin: 16mm 18mm 14mm 20mm; } body { margin: 0; }</style>"
                 + "<style>" + overview.css() + "</style></head><body>" + overview.bodyHtml() + "</body></html>";
         try {
-            byte[] rendered = renderPdfA3(html, pdfPath);
+            byte[] rendered = renderPdfA3(html, pdfPath.toAbsolutePath().getParent());
             try (PDDocument document = PDDocument.load(rendered)) {
                 writePdfAMetadata(document, overview.title(), false);
                 document.save(pdfPath.toFile());
@@ -7905,6 +8088,54 @@ public class WebUiServer {
         return value.isBlank() ? defaultMailTemplate(kind) : value;
     }
 
+    /** Betreff der Buchhaltungs-Mail: Beleg, Beraterin, Zahllauf - so lässt sie sich im Postfach sortieren. */
+    private static String accountingMailSubject(DocumentKind kind, String documentNumber, String advisorName, String paymentId) {
+        String name = advisorName == null || advisorName.isBlank() ? "Beraterin" : advisorName.trim();
+        return kind.label + " " + documentNumber + " – " + name + " – Zahllauf " + paymentId;
+    }
+
+    private static List<String> accountingMailLines(DocumentKind kind, String documentNumber, String replacesNr, String advisorName,
+                                                    String paymentId, String periodLabel, JsonNode payment, String eInvoiceStatus,
+                                                    List<Path> attachments) {
+        String name = advisorName == null || advisorName.isBlank() ? "die Beraterin" : advisorName.trim();
+        String eInvoice = switch (Objects.toString(eInvoiceStatus, "")) {
+            case "e-rechnung" -> "ZUGFeRD-XML (EN 16931) liegt bei und ist im PDF eingebettet";
+            case "ohne-steuerkennung" -> "keine – für die Beraterin ist weder Steuernummer noch USt-IdNr. hinterlegt";
+            default -> "keine – E-" + kind.label + " ist abgeschaltet";
+        };
+        List<String> lines = new ArrayList<>();
+        lines.add("anbei die " + kind.label + " " + documentNumber + " für " + name + ".");
+        lines.add("");
+        lines.add("Zahllauf: " + paymentId);
+        lines.add("Leistungszeitraum: " + periodLabel);
+        lines.add("Betrag (netto): " + euroStatic(parseDoubleSafeStatic(asText(payment, "amount"))));
+        if (replacesNr != null && !replacesNr.isBlank()) {
+            lines.add("Ersetzt: " + kind.label + " " + replacesNr);
+        }
+        lines.add("E-Rechnung: " + eInvoice);
+        lines.add("Anhänge: " + attachments.stream().map(p -> p.getFileName().toString()).collect(Collectors.joining(", ")));
+        return lines;
+    }
+
+    private static String accountingMailBody(DocumentKind kind, String documentNumber, String replacesNr, String advisorName,
+                                             String paymentId, String periodLabel, JsonNode payment, String eInvoiceStatus,
+                                             List<Path> attachments) {
+        return "Guten Tag,\n\n"
+                + String.join("\n", accountingMailLines(kind, documentNumber, replacesNr, advisorName, paymentId, periodLabel, payment, eInvoiceStatus, attachments))
+                + "\n\nDiese E-Mail wurde automatisch vom VEMMiNA Assistent erstellt.";
+    }
+
+    private static String accountingMailHtml(DocumentKind kind, String documentNumber, String replacesNr, String advisorName,
+                                             String paymentId, String periodLabel, JsonNode payment, String eInvoiceStatus,
+                                             List<Path> attachments) {
+        String lines = accountingMailLines(kind, documentNumber, replacesNr, advisorName, paymentId, periodLabel, payment, eInvoiceStatus, attachments)
+                .stream().map(WebUiServer::escapeHtmlEmail).collect(Collectors.joining("<br>"));
+        return "<!doctype html><html lang=\"de\"><body style=\"font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1f2937;\">"
+                + "<p>Guten Tag,</p><p>" + lines + "</p>"
+                + "<p style=\"color:#64748b;font-size:12px;\">Diese E-Mail wurde automatisch vom VEMMiNA Assistent erstellt.</p>"
+                + "</body></html>";
+    }
+
     private static String documentMailSubject(DocumentKind kind, String documentNumber, String periodLabel) {
         return documentMailSubject(kind, documentNumber, periodLabel, "Beraterin");
     }
@@ -8481,6 +8712,7 @@ public class WebUiServer {
         ui.setProperty("smtpPort", Objects.toString(source.getProperty("smtpPort"), "587"));
         ui.setProperty("smtpUsername", Objects.toString(source.getProperty("smtpUsername"), ""));
         ui.setProperty("emailBcc", Objects.toString(source.getProperty("emailBcc"), ""));
+        ui.setProperty("accountingEmail", Objects.toString(source.getProperty("accountingEmail"), ""));
         ui.setProperty("smtpPassword", Objects.toString(source.getProperty("smtpPassword"), ""));
         ui.setProperty("smtpTls", Objects.toString(source.getProperty("smtpTls"), "false"));
         ui.setProperty("sendEmailsEnabled", Objects.toString(source.getProperty("sendEmailsEnabled"), "true"));
@@ -8597,6 +8829,10 @@ public class WebUiServer {
         String uiEmailBcc = Objects.toString(uiSettings.getProperty("emailBcc"), "").trim();
         if (!uiEmailBcc.isEmpty()) {
             config.setProperty("emailBcc", uiEmailBcc);
+        }
+        String uiAccountingEmail = Objects.toString(uiSettings.getProperty("accountingEmail"), "").trim();
+        if (!uiAccountingEmail.isEmpty()) {
+            config.setProperty("accountingEmail", uiAccountingEmail);
         }
         String uiSmtpPassword = Objects.toString(uiSettings.getProperty("smtpPassword"), "").trim();
         if (!uiSmtpPassword.isEmpty() || config.containsKey("smtpPassword")) {
