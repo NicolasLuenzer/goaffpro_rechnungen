@@ -332,7 +332,10 @@
     .user-row-selected td { background:var(--clr-surface-light) !important; }
     .user-row { cursor:pointer; }
     .user-row:hover td { background:var(--clr-surface-tint); }
-    .validation-empty-cell { background:var(--clr-error-bg); }
+    /* Zweiter Selektor: Die Zebra-Streifen (tr:nth-child(even) td) sind spezifischer und haben die
+       rote Markierung in jeder zweiten Zeile überdeckt - fehlende Felder fielen dort nicht auf. */
+    .validation-empty-cell,
+    tr:nth-child(even) td.validation-empty-cell { background:var(--clr-error-bg); }
     .count-hover { text-decoration: underline dotted; cursor: help; }
 
     /* ── KPI Cards ── */
@@ -3085,7 +3088,7 @@
         const historyHtml = !logs.length
           ? '<span class="mail-log-badge none">nicht versendet</span>'
           : `<button type="button" class="mail-log-badge sent reminder-log-btn" data-advisor-id="${escapeHtml(String(r.id || ''))}" title="${escapeHtml(`Letzte: ${last.toEmail || '-'} (${last.sentAt || '-'}) – Protokoll anzeigen`)}">${logs.length} gesendet</button>`;
-        return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderAddressCell(r.address, r.addressMissing)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderTaxNumberCell(r)}${renderValidationCell(r.iban)}${renderValidationCell(r.ibanOwner)}<td>${r.ibanValid === 'Ja' ? '✅' : '❌'}</td>${renderContractCell(r)}${renderValidationCell(r.status)}<td class="validation-action-cell"><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="validation-action-meta">${missingHtml}${historyHtml}</div></td></tr>`;
+        return `<tr>${renderValidationCell(r.id)}${renderValidationCell(r.name)}${renderValidationCell(r.email)}${renderValidationCell(r.phone)}${renderAddressCell(r.address, r.addressMissing)}${renderValidationCell(r.country)}${renderValidationCell(r.dateOfBirth)}${renderTaxNumberCell(r)}${renderIbanCell(r)}${renderValidationCell(r.ibanOwner)}${renderIbanValidCell(r)}${renderContractCell(r)}${renderValidationCell(r.status)}<td class="validation-action-cell"><button type="button" class="secondary validation-reminder-btn" data-advisor-id="${escapeHtml(r.id || '')}">Erinnerung senden</button><div class="validation-action-meta">${missingHtml}${historyHtml}</div></td></tr>`;
       }).join('');
       if (!rows.length) {
         // updateEmptyTablesVisibility blendet eine leere Tabelle samt Kopfzeile aus - dann waere
@@ -3811,7 +3814,7 @@
           : withoutTaxIdLogs.length
             ? `<span class="mail-log-badge warn" title="Weder Steuernummer noch USt-IdNr. in den Stammdaten - die Gutschrift ging als PDF ohne E-Rechnung raus.">E-Gutschrift nicht erstellt – Steuernummer fehlt</span>`
             : `<span class="mail-log-badge none">nicht erzeugt/versendet</span>`;
-        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ""}</td><td>${row.belegdatum || ""}</td><td><span class="advisor-name-link" data-advisor="${advisorDataEncoded}">${row.affiliateName || ""}</span></td><td>${row.affiliateEmail || ""}</td>${renderPaymentAddressCell(row)}<td>${row.affiliateCountry || ""}</td><td>${row.affiliateSteuernummer || ""}</td><td title="${row.hasIban || ""}">${ibanState}</td><td title="${row.hasValidIban || ""}">${ibanValidState}</td><td>${formatEuroAmount(row.amount)}</td><td>${(() => { if (!logs.length) return "<span class=\"mail-log-badge none\">nicht versendet</span>"; const last = logs[0] || {}; return `<span class=\"mail-log-badge sent\">${logs.length} gesendet</span> <button type=\"button\" class=\"secondary mail-log-btn\" data-payment-id=\"${escapeHtml(String(row.paymentId || ""))}\">anzeigen</button><div class=\"settings-hint\">letzte: ${escapeHtml(last.toEmail || "")} (${escapeHtml(last.sentAt || "")})</div>`; })()}</td><td>${eInvoiceStatusHtml}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ""}" type="button">Gutschrift</button> <button class="secondary preview-btn" data-payment-id="${row.paymentId || ""}" type="button" title="Beleg als ENTWURF im Browser ansehen – verbraucht keine Nummer, verschickt nichts">Vorschau</button></td>`;
+        tr.innerHTML = `<td><input type="checkbox" class="row-select" data-key="${key}" ${checked} /></td><td>${row.paymentId || ""}</td><td>${row.belegdatum || ""}</td><td><span class="advisor-name-link" data-advisor="${advisorDataEncoded}">${row.affiliateName || ""}</span></td><td>${row.affiliateEmail || ""}</td>${renderPaymentAddressCell(row)}<td>${row.affiliateCountry || ""}</td><td>${row.affiliateSteuernummer || ""}</td><td title="${row.hasIban || ""}">${ibanState}</td><td title="${escapeHtml(ibanValidTitle(row.ibanProblem, row.hasIban === 'Ja', row.hasValidIban === 'Ja'))}">${ibanValidState}</td><td>${formatEuroAmount(row.amount)}</td><td>${(() => { if (!logs.length) return "<span class=\"mail-log-badge none\">nicht versendet</span>"; const last = logs[0] || {}; return `<span class=\"mail-log-badge sent\">${logs.length} gesendet</span> <button type=\"button\" class=\"secondary mail-log-btn\" data-payment-id=\"${escapeHtml(String(row.paymentId || ""))}\">anzeigen</button><div class=\"settings-hint\">letzte: ${escapeHtml(last.toEmail || "")} (${escapeHtml(last.sentAt || "")})</div>`; })()}</td><td>${eInvoiceStatusHtml}</td><td><button class="secondary details-btn" data-payment-id="${row.paymentId || ""}" type="button">Gutschrift</button> <button class="secondary preview-btn" data-payment-id="${row.paymentId || ""}" type="button" title="Beleg als ENTWURF im Browser ansehen – verbraucht keine Nummer, verschickt nichts">Vorschau</button></td>`;
         body.appendChild(tr);
       });
 
@@ -4474,6 +4477,11 @@
         // Eine Anschrift nur aus PLZ und Ort ist nicht leer - die fehlende Straße gehört trotzdem
         // in die Erinnerung, sonst wird sie nie nachgetragen. An derselben Stelle der Liste.
         else if (label === 'Adresse') splitAddressMissing(row.addressMissing).forEach(part => missing.push(part));
+        // Eine fehlerhafte IBAN ist so gut wie keine: Die Vorlage leitet mit "fehlen uns noch
+        // folgende Angaben" ein, darum als fehlende "korrekte IBAN" mit dem Grund dazu.
+        else if (label === 'IBAN' && String(row.ibanProblem || '').trim()) {
+          missing.push(`Korrekte IBAN (die hinterlegte IBAN ${String(row.ibanProblem).trim()})`);
+        }
       });
       // Nur bei gesichertem "nein" mahnen. Bei "unbekannt" konnten wir die Dokumente nicht
       // abrufen - dann darf keine Erinnerung wegen eines Vertrags rausgehen, den es geben koennte.
@@ -4923,6 +4931,28 @@
       if (!missing.length) return `<td>${escapeHtml(address)}</td>`;
       const tip = `Anschrift unvollständig – es fehlt: ${missing.join(', ')}. Die Gutschrift braucht die vollständige Anschrift; bitte in GoAffPro ergänzen.`;
       return `<td class="validation-empty-cell" title="${escapeHtml(tip)}">${address.trim() ? '⚠ ' + escapeHtml(address) : ''}</td>`;
+    }
+
+    /**
+     * Tooltip der Spalte "IBAN korrekt". Der Grund kommt vom Server als Satzende zu "die IBAN …"
+     * ("hat 23 statt 22 Zeichen"), damit er unverändert auch in die Erinnerungsmail passt.
+     */
+    function ibanValidTitle(problem, hasIban, valid) {
+      if (!hasIban) return 'Keine IBAN hinterlegt';
+      if (String(problem || '').trim()) return `Die IBAN ${String(problem).trim()}`;
+      return valid ? 'Syntax und Prüfsumme in Ordnung' : 'IBAN fehlerhaft';
+    }
+
+    function renderIbanCell(row) {
+      const problem = String((row && row.ibanProblem) || '').trim();
+      if (!String((row && row.iban) || '').trim() || !problem) return renderValidationCell(row && row.iban);
+      return `<td class="validation-empty-cell" title="${escapeHtml(ibanValidTitle(problem, true, false))}">${escapeHtml(row.iban)}</td>`;
+    }
+
+    function renderIbanValidCell(row) {
+      const hasIban = !!String((row && row.iban) || '').trim();
+      const valid = row && row.ibanValid === 'Ja';
+      return `<td title="${escapeHtml(ibanValidTitle(row && row.ibanProblem, hasIban, valid))}">${valid ? '✅' : '❌'}</td>`;
     }
 
     /** Fehlende Anschriftteile kommen vom Server als "Straße und Hausnummer, PLZ" (leer = vollständig). */

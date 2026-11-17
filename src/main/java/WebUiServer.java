@@ -732,6 +732,7 @@ public class WebUiServer {
                     item.put("ibanOwner", asText(payment.path("payment_details"), "account_name"));
                     item.put("hasIban", iban.isBlank() ? "Nein" : "Ja");
                     item.put("hasValidIban", isValidIban(iban) ? "Ja" : "Nein");
+                    item.put("ibanProblem", ibanProblem(iban));
                     item.put("amount", asText(payment, "amount"));
                     item.put("currency", asText(payment, "currency"));
                     responsePayments.add(item);
@@ -5264,7 +5265,9 @@ public class WebUiServer {
                 ? "<ram:SpecifiedTradeSettlementPaymentMeans><ram:TypeCode>1</ram:TypeCode>"
                   + "</ram:SpecifiedTradeSettlementPaymentMeans>"
                 : "<ram:SpecifiedTradeSettlementPaymentMeans><ram:TypeCode>58</ram:TypeCode>"
-                  + "<ram:PayeePartyCreditorFinancialAccount><ram:IBANID>" + escapeXml(bankIban) + "</ram:IBANID>"
+                  // Elektronische Form ohne Leerzeichen - GoAffPro liefert sie teils gruppiert,
+                  // teils mit geschützten Leerzeichen. Das PDF zeigt die IBAN weiter wie hinterlegt.
+                  + "<ram:PayeePartyCreditorFinancialAccount><ram:IBANID>" + escapeXml(normalizeIban(bankIban)) + "</ram:IBANID>"
                   + (bankAccountHolder.isBlank() ? ""
                         : "<ram:AccountName>" + escapeXml(bankAccountHolder) + "</ram:AccountName>")
                   + "</ram:PayeePartyCreditorFinancialAccount>"
@@ -5580,6 +5583,13 @@ public class WebUiServer {
             row.put("company", asText(a, "company_name"));
             row.put("address", formatAffiliateAddress(a));
             row.put("addressMissing", String.join(", ", missingAddressParts(a)));
+            // Die einzelnen Felder zusätzlich: Die zusammengesetzte Anschrift lässt sich nicht
+            // eindeutig zurückzerlegen (Kommas in der Straße, fehlende PLZ, Bundesland ja/nein).
+            row.put("addressLine1", asText(a, "address_1").trim());
+            row.put("addressLine2", asText(a, "address_2").trim());
+            row.put("zip", asText(a, "zip").trim());
+            row.put("city", asText(a, "city").trim());
+            row.put("state", asText(a, "state").trim());
             row.put("country", asText(a, "country"));
             row.put("dateOfBirth", asText(a, "date_of_birth"));
             String taxNumber = asText(a, "tax_identification_number");
@@ -5596,6 +5606,8 @@ public class WebUiServer {
             row.put("iban", iban);
             row.put("ibanOwner", asText(a.path("payment_details"), "account_name").trim());
             row.put("ibanValid", isValidIban(iban) ? "Ja" : "Nein");
+            // Der Grund geht als "Korrekte IBAN (die hinterlegte IBAN …)" in die Erinnerungsmail.
+            row.put("ibanProblem", ibanProblem(iban));
             String contract = Objects.toString(contractsByAffiliate.get(row.get("id")), "");
             row.put("contractDocument", contract);
             row.put("contractStatus", contractStatusFor(contractsKnown, contract));
@@ -6878,7 +6890,7 @@ public class WebUiServer {
     }
 
     private static String maskIban(String iban) {
-        String compact = Objects.toString(iban, "").replaceAll("\\s+", "");
+        String compact = normalizeIban(iban);
         if (compact.length() <= 8) return compact;
         return compact.substring(0, 4) + " **** **** **** " + compact.substring(compact.length() - 4);
     }
@@ -9257,23 +9269,93 @@ private static String toGermanDate(String input) {
         }
     }
 
-    private static boolean isValidIban(String rawIban) {
-        if (rawIban == null) return false;
-        String iban = rawIban.replaceAll("\\s+", "").toUpperCase();
-        if (iban.length() < 15 || iban.length() > 34) return false;
-        if (!iban.matches("[A-Z]{2}[0-9A-Z]+")) return false;
+    // ── IBAN-Prüfung (ISO 13616) ──
+
+    /**
+     * Leerraum jeder Art: GoAffPro liefert IBANs auch mit geschützten Leerzeichen (U+00A0), die
+     * \s allein nicht erfasst - eine korrekte IBAN galt dann als ungültig.
+     */
+    private static final String IBAN_SPACES = "[\\s\\p{Z}\\u200B-\\u200D\\uFEFF]+";
+
+    /**
+     * IBAN-Längen je Land laut SWIFT-IBAN-Register (Europa). Länder, die hier fehlen, prüft
+     * ibanProblem nur gegen die allgemeine Spanne 15–34: lieber keine Längenprüfung als ein
+     * Fehlalarm für eine gültige IBAN.
+     */
+    private static final Map<String, Integer> IBAN_LENGTHS = parseIbanLengths(
+            "AD24 AL28 AT20 BA20 BE16 BG22 BY28 CH21 CY28 CZ24 DE22 DK18 EE20 ES24 FI18 FO18 FR27 GB22 GE22 "
+            + "GI23 GL18 GR27 HR21 HU28 IE22 IS26 IT27 LI21 LT20 LU20 LV21 MC27 MD24 ME22 MK19 MT31 NL18 NO15 "
+            + "PL28 PT25 RO24 RS22 SE24 SI19 SK24 SM27 TR26 UA29 VA22 XK20");
+
+    /** Länder, deren Kontoteil (BBAN) nur aus Ziffern besteht - ein "O" statt "0" fällt dort sofort auf. */
+    private static final Set<String> IBAN_NUMERIC_BBAN = Set.of(
+            "AT", "BE", "CZ", "DE", "DK", "EE", "ES", "FI", "HR", "HU", "LT", "NO", "PL", "PT", "SE", "SI", "SK");
+
+    private static Map<String, Integer> parseIbanLengths(String spec) {
+        Map<String, Integer> lengths = new HashMap<>();
+        for (String entry : spec.trim().split("\\s+")) {
+            lengths.put(entry.substring(0, 2), Integer.parseInt(entry.substring(2)));
+        }
+        return Map.copyOf(lengths);
+    }
+
+    /** IBAN in elektronischer Form: ohne Leerraum, in Großbuchstaben - so gehört sie in die E-Rechnung. */
+    private static String normalizeIban(String raw) {
+        return Objects.toString(raw, "").replaceAll(IBAN_SPACES, "").toUpperCase(java.util.Locale.ROOT);
+    }
+
+    /**
+     * Syntax- und Prüfsummenprüfung. Leer heißt: in Ordnung oder gar keine IBAN (das meldet die
+     * Prüfung auf fehlende Felder). Sonst der Grund als Satzende zu "die hinterlegte IBAN …" - er
+     * steht so in der Erinnerungsmail und muss für die Beraterin verständlich sein.
+     */
+    private static String ibanProblem(String raw) {
+        String compact = Objects.toString(raw, "").replaceAll(IBAN_SPACES, "");
+        if (compact.isEmpty()) return "";
+        // Die Zeichen so nennen, wie sie eingetragen sind (vor der Großschreibung: aus "ß" würde "SS").
+        Set<String> invalid = new LinkedHashSet<>();
+        compact.codePoints()
+                .filter(cp -> !(cp < 128 && Character.isLetterOrDigit(cp)))
+                .forEach(cp -> invalid.add(new String(Character.toChars(cp))));
+        if (!invalid.isEmpty()) {
+            return "enthält unzulässige Zeichen ("
+                    + invalid.stream().map(c -> "„" + c + "“").collect(Collectors.joining(", ")) + ")";
+        }
+        String iban = compact.toUpperCase(java.util.Locale.ROOT);
+        if (!iban.matches("[A-Z]{2}[0-9]{2}.*")) {
+            return "beginnt nicht mit Länderkennung und zwei Prüfziffern (z. B. DE12 …)";
+        }
+        String country = iban.substring(0, 2);
+        Integer expected = IBAN_LENGTHS.get(country);
+        if (expected != null && iban.length() != expected) {
+            return "hat " + iban.length() + " statt " + expected + " Zeichen";
+        }
+        if (iban.length() < 15) return "ist mit " + iban.length() + " Zeichen zu kurz";
+        if (iban.length() > 34) return "ist mit " + iban.length() + " Zeichen zu lang";
+        if (IBAN_NUMERIC_BBAN.contains(country) && !iban.substring(4).matches("[0-9]+")) {
+            return "enthält nach den Prüfziffern Buchstaben, erlaubt sind dort nur Ziffern";
+        }
+        // Prüfziffern laufen von 02 bis 98: "99" ergäbe zwar dieselbe Prüfsumme wie "02", ist aber falsch.
+        int checkDigits = Integer.parseInt(iban.substring(2, 4));
+        if (checkDigits < 2 || checkDigits > 98 || ibanMod97(iban) != 1) {
+            return "hat eine falsche Prüfsumme (vermutlich ein Tippfehler oder Zahlendreher)";
+        }
+        return "";
+    }
+
+    /** Rest der IBAN modulo 97 nach ISO 7064: Länderkennung und Prüfziffern ans Ende, Buchstaben als 10–35. */
+    private static int ibanMod97(String iban) {
         String rearranged = iban.substring(4) + iban.substring(0, 4);
-        StringBuilder numeric = new StringBuilder();
-        for (char c : rearranged.toCharArray()) {
-            if (Character.isDigit(c)) numeric.append(c);
-            else if (c >= 'A' && c <= 'Z') numeric.append((int) (c - 'A' + 10));
-            else return false;
-        }
         int mod = 0;
-        for (int i = 0; i < numeric.length(); i++) {
-            mod = (mod * 10 + (numeric.charAt(i) - '0')) % 97;
+        for (char c : rearranged.toCharArray()) {
+            int value = Character.isDigit(c) ? c - '0' : c - 'A' + 10;
+            mod = ((value < 10 ? mod * 10 : mod * 100) + value) % 97;
         }
-        return mod == 1;
+        return mod;
+    }
+
+    private static boolean isValidIban(String rawIban) {
+        return !normalizeIban(rawIban).isEmpty() && ibanProblem(rawIban).isEmpty();
     }
 
     /**

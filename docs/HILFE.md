@@ -33,7 +33,15 @@ Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierung
 - **Spalte „IBAN vorhanden“**
   - ✅ wenn eine IBAN vorhanden ist, sonst ❌.
 - **Spalte „IBAN korrekt“**
-  - ✅ wenn IBAN formal gültig (Mod-97), sonst ❌.
+  - ✅ wenn die IBAN Syntax- und Prüfsummenprüfung besteht, sonst ❌.
+  - Geprüft werden:
+    - zulässige Zeichen
+    - Länderkennung mit zwei Prüfziffern
+    - die Länge je Land (z. B. DE 22, AT 20, CH 21 Zeichen)
+    - bei Ländern mit rein numerischem Kontoteil (z. B. DE, AT, BE) nur Ziffern nach den Prüfziffern
+    - die Prüfsumme (Modulo 97)
+  - Leerzeichen und Groß-/Kleinschreibung spielen keine Rolle.
+  - Beim Darüberfahren steht der Grund, z. B. „Die IBAN hat 23 statt 22 Zeichen“.
 - **Zeilenwarnung (leicht rot)**
   - Wird gesetzt, wenn
     - Name fehlt,
@@ -279,6 +287,17 @@ Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
   GoAffPro-Schnittstelle liefert, ohne Zwischenspeicher. Nach „Stammdaten laden / neu laden“ steht
   dort also der aktuelle Stand. Fehlt die Straße dann immer noch, ist sie in GoAffPro nicht
   gespeichert. Dann die Straße in GoAffPro (erneut) eintragen, speichern und hier neu laden.
+
+### Spalten „IBAN“ und „IBAN korrekt"
+
+- Die IBAN wird auf Syntax und Prüfsumme geprüft (siehe Abschnitt 2). Ist sie fehlerhaft, ist die
+  IBAN-Zelle rot; beim Darüberfahren steht der Grund, z. B. „Die IBAN hat eine falsche Prüfsumme
+  (vermutlich ein Tippfehler oder Zahlendreher)“.
+- Eine fehlerhafte IBAN zählt unter „Felder fehlen“ als **„Korrekte IBAN (die hinterlegte IBAN …)“**
+  und steht so auch in der Erinnerungsmail. „Erinnerung senden“ geht damit auch dann, wenn sonst
+  nichts fehlt. Die IBAN selbst steht nicht in der Mail.
+- Leerzeichen in der IBAN sind kein Fehler, auch geschützte Leerzeichen nicht. In die E-Rechnung
+  (XML) wird die IBAN ohne Leerzeichen geschrieben, im PDF steht sie wie hinterlegt.
 
 
 ## 11) Dynamischer Hilfe-Bereich
