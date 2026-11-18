@@ -30,10 +30,12 @@ Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierung
 
 - **Sortierung per Spaltenkopf** (auf/absteigend).
 - **Mehrfachauswahl per Checkboxen**.
+- **Ja/Nein-Spalten** zeigen ein grünes Häkchen bzw. ein rotes Kreuz. Im Spaltenfilter (Rechtsklick)
+  heißen die Werte „Ja“ und „Nein“.
 - **Spalte „IBAN vorhanden“**
-  - ✅ wenn eine IBAN vorhanden ist, sonst ❌.
+  - Häkchen, wenn eine IBAN vorhanden ist, sonst Kreuz.
 - **Spalte „IBAN korrekt“**
-  - ✅ wenn die IBAN Syntax- und Prüfsummenprüfung besteht, sonst ❌.
+  - Häkchen, wenn die IBAN Syntax- und Prüfsummenprüfung besteht, sonst Kreuz.
   - Geprüft werden:
     - zulässige Zeichen
     - Länderkennung mit zwei Prüfziffern
@@ -47,7 +49,7 @@ Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierung
     - Name fehlt,
     - IBAN fehlt,
     - oder IBAN ungültig ist.
-- **Spalte „Adresse“ rot mit ⚠**
+- **Spalte „Adresse“ rot mit Warndreieck**
   - Die Anschrift der Beraterin ist unvollständig, meist fehlt die Straße. Beim Darüberfahren steht, welcher Teil fehlt.
   - Die Gutschrift wird trotzdem erzeugt. Die Statuszeile bzw. die Ergebnisliste des Sammelexports weist aber darauf hin. Die Gutschrift braucht die vollständige Anschrift (§ 14 Abs. 4 UStG), darum bitte in GoAffPro nachtragen.
 - **Aktuelle Daten**
@@ -262,10 +264,10 @@ Wenn Sie neue Funktionen hinzufügen, bitte diese Datei ebenfalls aktualisieren.
 
 ### Spalte „Vertrag"
 
-- ✅ bedeutet: an der Beraterin hängt ein Dokument, dessen **Titel oder Dateiname** das Wort
-  „Vertrag" enthält (Groß-/Kleinschreibung egal). Der Titel des gefundenen Dokuments erscheint
-  beim Darüberfahren.
-- ❌ bedeutet: kein solches Dokument gefunden.
+- Häkchen (Filterwert „Ja“) bedeutet: an der Beraterin hängt ein Dokument, dessen **Titel oder
+  Dateiname** das Wort „Vertrag" enthält (Groß-/Kleinschreibung egal). Der Titel des gefundenen
+  Dokuments erscheint beim Darüberfahren.
+- Kreuz (Filterwert „Nein“) bedeutet: kein solches Dokument gefunden.
 - **?** bedeutet: die Dokumente konnten nicht abgerufen werden. Das ist ausdrücklich **nicht**
   dasselbe wie „kein Vertrag" — in diesem Fall wird auch keine Erinnerung wegen des Vertrags
   ausgelöst.
