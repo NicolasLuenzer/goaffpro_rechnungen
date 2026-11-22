@@ -176,6 +176,7 @@ keine neue fortlaufende Nummer, sondern eine **Version** der Stammnummer:
 - `GET /api/version` – aktuelle Version
 - `GET /api/version/history` – letzte Versionen
 - `POST /api/analytics/fetch` – Auswertungsdaten
+- `POST /api/analytics/advisor-detail` – 360°-Sicht einer Beraterin (Auszahlungen, Verkäufe, Artikel)
 - `POST /api/commissions/add-latest` – neuesten Zahllauf hinzufügen
 - `POST /api/commissions/remove` – Zahllauf aus Historie entfernen
 - `GET /api/help` – diese Hilfe-Dokumentation
@@ -207,6 +208,7 @@ keine neue fortlaufende Nummer, sondern eine **Version** der Stammnummer:
 
 ### Analytics
 - `drawBarChart`, `renderAnalytics`, `wireAnalyticsDateRange`, `fetchAnalyticsData`
+- 360°-Sicht: `fetchAdvisor360`, `renderAdvisor360`, `renderAdvisorSales`, `advisorSaleDetailHtml`
 
 ### Polling
 - `pollOnce`, `togglePolling`, `setPollingButtonState`
@@ -425,3 +427,29 @@ unverschlüsselt; es gehört nicht in E-Mail-Anhänge oder Cloud-Ordner.
 Belegdownloads sind auf den Exportordner begrenzt. Liegt eine Datei außerhalb, meldet
 der Server *„Die Datei liegt außerhalb des Exportordners."* — der Beleg muss dann neu
 erzeugt werden.
+
+## 15) Auswertungen: Beraterinnenebene (360°)
+
+Beraterin wählen und **360° laden**. Die Sicht holt ihre Daten live aus GoAffPro; der Sync
+spielt dafür keine Rolle.
+
+- **Auszahlungen:** Zahlläufe der Beraterin im gewählten Zeitraum (ab dem gewählten Zahllauf).
+- **Verkäufe:** alle Bestellungen mit Bestelldatum im Zeitraum – auch offene und noch nicht
+  ausgezahlte, also unabhängig von den Zahlläufen.
+  - **Direkt** sind ihre eigenen Verkäufe.
+  - **Team** sind Verkäufe ihrer Teampartnerinnen, für die sie eine Team-Provision (Reward)
+    erhält. Als Provision steht dort ihre Team-Provision, nicht die Provision der Partnerin.
+  - Je Verkauf stehen Status, „ausgezahlt in …“ bzw. „nicht ausgezahlt“, „Eigenbestellung“
+    (die Kundin ist die Beraterin selbst) und „Neukundin“.
+  - Ein Klick auf den Pfeil klappt die **Aufschlüsselung** auf, wie die Bestellansicht in
+    GoAffPro: Positionen mit Menge, Netto, Rabatt, MwSt und Provision mit Satz, darunter
+    Bestellwert, BMG, Rabatt, Versand, MwSt, Anpassung und Provision. Versand ergibt sich aus
+    Bestellwert minus Positionen, die Anpassung aus Provision minus Summe der Positionen.
+  - Abgelehnte oder stornierte Verkäufe stehen grau in der Liste und zählen nicht mit.
+- **Kennzahlen:** Direkte Verkäufe, Team-Verkäufe und verkaufte Einheiten zählen Bestellungen
+  bzw. Artikel (abzüglich Retouren), nicht Buchungen. Bei den Provisionen steht dabei, wie viel
+  davon noch nicht ausgezahlt ist.
+- **Verkaufte Artikel:** dieselben Verkäufe nach Artikel zusammengefasst, Umsatz netto.
+
+**Kundendaten:** Die Verkäufe zeigen Name und E-Mail der Kundin im Klartext – wie GoAffPro
+selbst. Telefon und Adresse werden nicht übernommen.

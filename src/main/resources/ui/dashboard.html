@@ -331,6 +331,15 @@
     .tree-toggle { display: inline-flex; align-items: center; justify-content: center; min-width: 30px; min-height: 30px; background: var(--clr-surface); color: var(--clr-info); border: 1px solid var(--clr-border-strong); border-radius: 6px; padding: 0 6px; font-size: var(--fs-body); margin-right: 6px; font-family: inherit; cursor: pointer; vertical-align: middle; }
     .tree-toggle:hover { background: var(--clr-surface-light); border-color: var(--clr-info-border); color: var(--clr-info); }
     .tree-indent { display:inline-block; }
+    /* 360°-Sicht: Verkäufe mit aufklappbarer Aufschlüsselung */
+    .advisor-sales .num, .advisor-sale-detail .num { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+    .advisor-sale-row.not-counted td { color:var(--clr-muted); }
+    .advisor-sale-tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px; }
+    .advisor-sale-tag { font-size:var(--fs-sm); border:1px solid var(--clr-border-strong); border-radius:999px; padding:0 8px; white-space:nowrap; }
+    .advisor-sale-detail > td { background:var(--clr-surface-light); padding:10px 14px 14px 48px; }
+    .advisor-sale-detail table { width:100%; margin:0; }
+    .advisor-sale-discount { color:var(--clr-danger); }
+    .advisor-sale-foot { display:flex; flex-wrap:wrap; gap:6px 18px; margin-top:8px; font-size:var(--fs-sm); }
 
     /* ── Table Filter Menu ── */
     .table-filter-menu { position: fixed; z-index: 3000; width: 280px; max-height: 420px; overflow: auto; background:var(--clr-surface); border:1px solid var(--clr-border); border-radius:var(--radius-md); box-shadow:var(--shadow-lg); padding:12px; }
@@ -725,6 +734,10 @@
     let reminderLogByAdvisor = new Map();
     let analyticsLastPayload = null;
     let analyticsPartyRowsCache = [];
+    // 360°-Sicht: Verkäufe, aufgeklappte Zeilen und die Parameter der geladenen Sicht
+    let advisorSalesRowsCache = [];
+    let advisorSalesExpanded = new Set();
+    let advisor360LoadedKey = '';
     let analyticsNewCustomerLeaderCache = null;
     let leaderWeeklyMailPreviewCache = null;
     let syncDiagnosticsPollTimer = null;
@@ -1228,8 +1241,12 @@
           <div id="analyticsAdvisorSummaryCards" class="kpi-grid"></div>
           <div class="toolbar"><strong>Auszahlungen</strong></div>
           <table><thead><tr><th>Payment-ID</th><th>Datum</th><th>Betrag</th><th>Methode</th><th>Zeitraum</th><th>Transaktionen</th></tr></thead><tbody id="analyticsAdvisorPayoutBody"></tbody></table>
+          <div class="toolbar"><strong>Verkäufe</strong><span id="analyticsAdvisorSalesPeriod" class="settings-hint" style="margin:0"></span></div>
+          <p id="analyticsAdvisorSalesEmpty" class="status" hidden>Keine Verkäufe im Zeitraum.</p>
+          <div class="table-scroll"><table class="advisor-sales"><thead><tr><th></th><th>Datum</th><th>Bestellung</th><th>Art</th><th>Status</th><th>Kundin</th><th>Gutschein / Quelle</th><th class="num">Bestellwert</th><th class="num">BMG</th><th class="num">Provision</th></tr></thead><tbody id="analyticsAdvisorSalesBody"></tbody></table></div>
           <div class="toolbar"><strong>Verkaufte Artikel (direkt + indirekt)</strong></div>
-          <table><thead><tr><th>Artikel</th><th>Menge</th><th>Umsatz (geschätzt)</th></tr></thead><tbody id="analyticsAdvisorProductBody"></tbody></table>
+          <p id="analyticsAdvisorProductEmpty" class="status" hidden>Keine verkauften Artikel im Zeitraum.</p>
+          <table><thead><tr><th>Artikel</th><th>Menge</th><th>Umsatz netto</th></tr></thead><tbody id="analyticsAdvisorProductBody"></tbody></table>
         </div>
 
         <div id="analytics-parties-section" class="validation-section">
@@ -1779,8 +1796,19 @@
       const select = document.getElementById('analyticsAdvisorSelect');
       if (!select) return;
       const rows = Array.isArray(advisors) ? advisors : [];
+      // Die Gesamt-Auswertung baut die Liste neu; die gewählte Beraterin bleibt dabei gewählt
+      const previous = select.value;
       select.innerHTML = rows.map(r => `<option value="${escapeHtml(r.affiliateId || '')}">${escapeHtml(r.advisorName || r.affiliateId || '')} (${escapeHtml(r.affiliateId || '-')})</option>`).join('');
       if (!rows.length) select.innerHTML = '<option value="">Keine Beraterinnen verfügbar</option>';
+      else if (previous && rows.some(r => String(r.affiliateId || '') === previous)) select.value = previous;
+    }
+
+    /** Welche Sicht gerade geladen ist - ändert sich der Zeitraum, ist die 360°-Sicht veraltet. */
+    function advisor360RequestKey(advisorId) {
+      const since = document.getElementById('analyticsSinceSelect');
+      const from = document.getElementById('analyticsFromDate');
+      const to = document.getElementById('analyticsToDate');
+      return [advisorId || '', since ? since.value : '', from ? from.value : '', to ? to.value : ''].join('|');
     }
 
     function renderAdvisor360(data) {
@@ -1788,25 +1816,115 @@
       const cards = document.getElementById('analyticsAdvisorSummaryCards');
       const payoutBody = document.getElementById('analyticsAdvisorPayoutBody');
       const productBody = document.getElementById('analyticsAdvisorProductBody');
+      const productEmpty = document.getElementById('analyticsAdvisorProductEmpty');
+      const salesPeriod = document.getElementById('analyticsAdvisorSalesPeriod');
       if (!status || !cards || !payoutBody || !productBody) return;
       const summary = data.summary || {};
+      const unpaidHint = value => Number(value || 0) > 0.005 ? `davon nicht ausgezahlt ${formatEuroAmount(value)}` : '';
       cards.innerHTML = [
         ['Beraterin', summary.advisorName || '-'],
         ['Auszahlungen', summary.payoutCount || 0],
         ['Auszahlungssumme', formatEuroAmount(summary.payoutSum || 0)],
         ['Direkte Verkäufe', summary.directSalesCount || 0],
-        ['Indirekte Verkäufe', summary.indirectSalesCount || 0],
+        ['Team-Verkäufe', summary.teamSalesCount || 0],
         ['Verkaufte Einheiten', summary.soldUnits || 0],
-        ['Direkte Provision', formatEuroAmount(summary.directCommission || 0)],
-        ['Indirekte Provision', formatEuroAmount(summary.indirectCommission || 0)],
-      ].map(([k,v]) => `<div class="kpi-card"><div class="kpi-label">${escapeHtml(String(k))}</div><div class="kpi-value">${escapeHtml(String(v))}</div></div>`).join('');
+        ['Provision direkt', formatEuroAmount(summary.directCommission || 0), unpaidHint(summary.directCommissionUnpaid)],
+        ['Provision Team', formatEuroAmount(summary.teamCommission || 0), unpaidHint(summary.teamCommissionUnpaid)],
+      ].map(([k, v, hint]) => `<div class="kpi-card"><div class="kpi-label">${escapeHtml(String(k))}</div><div class="kpi-value">${escapeHtml(String(v))}</div>${hint ? `<div class="settings-hint">${escapeHtml(hint)}</div>` : ''}</div>`).join('');
 
       const payouts = Array.isArray(data.payoutRows) ? data.payoutRows : [];
       payoutBody.innerHTML = payouts.map(r => `<tr><td>${escapeHtml(r.paymentId || '')}</td><td>${escapeHtml(r.created || '')}</td><td>${formatEuroAmount(r.amount || 0)}</td><td>${escapeHtml(r.method || '')}</td><td>${escapeHtml(r.periodLabel || '')}</td><td>${escapeHtml(String(r.txCount || 0))}</td></tr>`).join('');
+
+      if (salesPeriod) salesPeriod.textContent = summary.salesFrom ? `Bestellungen vom ${summary.salesFrom} bis ${summary.salesTo}` : '';
+      advisorSalesRowsCache = Array.isArray(data.saleRows) ? data.saleRows : [];
+      advisorSalesExpanded = new Set();
+      renderAdvisorSales();
+
       const products = Array.isArray(data.productRows) ? data.productRows : [];
-      productBody.innerHTML = products.map(r => `<tr><td>${escapeHtml(r.productName || '')}</td><td>${escapeHtml(String(r.quantity || 0))}</td><td>${formatEuroAmount(r.salesValue || 0)}</td></tr>`).join('');
-      status.textContent = `360°-Sicht geladen für ${summary.advisorName || summary.advisorId || '-'}.`;
+      productBody.innerHTML = products.map(r => `<tr><td>${escapeHtml(r.productName || '')}${r.sku ? `<div class="settings-hint">SKU ${escapeHtml(r.sku)}</div>` : ''}</td><td>${escapeHtml(String(r.quantity || 0))}</td><td>${formatEuroAmount(r.salesValue || 0)}</td></tr>`).join('');
+      if (productEmpty) productEmpty.hidden = products.length > 0;
+
+      const notes = [];
+      if (data.truncated) notes.push('Nicht alle Daten geladen (zu viele Einträge) – bitte Zeitraum verkleinern.');
+      (Array.isArray(data.warnings) ? data.warnings : []).forEach(w => notes.push(String(w)));
+      status.textContent = `360°-Sicht geladen für ${summary.advisorName || summary.advisorId || '-'}.` + (notes.length ? ' ' + notes.join(' ') : '');
       updateEmptyTablesVisibility(document);
+    }
+
+    function renderAdvisorSales(focusKey) {
+      const body = document.getElementById('analyticsAdvisorSalesBody');
+      const empty = document.getElementById('analyticsAdvisorSalesEmpty');
+      if (!body) return;
+      const rows = advisorSalesRowsCache;
+      if (empty) empty.hidden = rows.length > 0;
+      body.innerHTML = rows.map((r, index) => {
+        const key = `${r.kind}:${r.orderId || index}`;
+        const open = advisorSalesExpanded.has(key);
+        const hasLines = Array.isArray(r.lines) && r.lines.length > 0;
+        const toggle = hasLines
+          ? `<button type="button" class="tree-toggle" data-sale-key="${escapeHtml(key)}" aria-expanded="${open}" aria-label="${open ? 'Zuklappen' : 'Aufklappen'}: Bestellung ${escapeHtml(r.number || '')}"><svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="${open ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4'}"/></svg></button>`
+          : '';
+        const kind = r.kind === 'team' ? `Team${r.partnerName ? `: ${r.partnerName}` : ''}` : 'Direkt';
+        const tags = [];
+        if (Array.isArray(r.payoutIds) && r.payoutIds.length) tags.push(`ausgezahlt in ${r.payoutIds.join(', ')}`);
+        else if (r.counted) tags.push('nicht ausgezahlt');
+        if (r.ownOrder) tags.push('Eigenbestellung');
+        if (r.isNewCustomer) tags.push('Neukundin');
+        const source = [(r.coupons || []).join(', '), r.conversionSource || ''].filter(Boolean).join(' · ');
+        const row = `<tr class="advisor-sale-row${r.counted ? '' : ' not-counted'}">
+          <td>${toggle}</td>
+          <td>${escapeHtml(r.createdAt || '')}</td>
+          <td>${escapeHtml(r.number || '–')}</td>
+          <td>${escapeHtml(kind)}${r.kind === 'team' && r.partnerId ? `<div class="settings-hint">${escapeHtml(r.partnerId)}</div>` : ''}</td>
+          <td>${escapeHtml(r.statusLabel || r.status || '')}<div class="advisor-sale-tags">${tags.map(t => `<span class="advisor-sale-tag">${escapeHtml(t)}</span>`).join('')}</div></td>
+          <td>${escapeHtml(r.customerName || '')}${r.customerEmail ? `<div class="settings-hint">${escapeHtml(r.customerEmail)}</div>` : ''}</td>
+          <td>${escapeHtml(source)}</td>
+          <td class="num">${formatEuroAmount(r.total || 0)}</td>
+          <td class="num">${formatEuroAmount(r.subtotal || 0)}</td>
+          <td class="num">${formatEuroAmount(r.commission || 0)}</td>
+        </tr>`;
+        return open ? row + advisorSaleDetailHtml(r) : row;
+      }).join('');
+      body.querySelectorAll('.tree-toggle[data-sale-key]').forEach(btn => btn.addEventListener('click', () => {
+        const key = String(btn.dataset.saleKey || '');
+        if (advisorSalesExpanded.has(key)) advisorSalesExpanded.delete(key);
+        else advisorSalesExpanded.add(key);
+        renderAdvisorSales(key);
+      }));
+      if (focusKey) {
+        const again = Array.from(body.querySelectorAll('.tree-toggle[data-sale-key]')).find(btn => btn.dataset.saleKey === focusKey);
+        if (again) again.focus();
+      }
+      updateEmptyTablesVisibility(body.closest('.table-scroll') || document);
+    }
+
+    /** Aufschlüsselung eines Verkaufs wie die Bestellansicht in GoAffPro. */
+    function advisorSaleDetailHtml(r) {
+      const team = r.kind === 'team';
+      const lines = Array.isArray(r.lines) ? r.lines : [];
+      const minus = value => Number(value || 0) > 0.005 ? `<span class="advisor-sale-discount">−${formatEuroAmount(value)}</span>` : formatEuroAmount(0);
+      const lineRows = lines.map(l => `<tr>
+          <td>${escapeHtml(l.name || '')} × ${escapeHtml(String(l.quantity || 0))}${l.refundQuantity ? ` <span class="advisor-sale-tag">${escapeHtml(String(l.refundQuantity))} retourniert</span>` : ''}${l.sku ? `<div class="settings-hint">SKU ${escapeHtml(l.sku)}</div>` : ''}</td>
+          <td class="num">${formatEuroAmount(l.net || 0)}</td>
+          <td class="num">${minus(l.discount)}</td>
+          <td class="num">${formatEuroAmount(l.tax || 0)}</td>
+          ${team ? '' : `<td class="num">${l.rate ? `<span class="settings-hint">${escapeHtml(l.rate)}</span> ` : ''}${formatEuroAmount(l.commission || 0)}</td>`}
+        </tr>`).join('');
+      const teamRate = team && r.teamRate != null
+        ? ` (${Number(r.teamRate).toLocaleString('de-DE', { maximumFractionDigits: 2 })} % der BMG)` : '';
+      const foot = [
+        ['Bestellwert', formatEuroAmount(r.total || 0)],
+        ['BMG', formatEuroAmount(r.subtotal || 0)],
+        ['Rabatt', minus(r.discount)],
+        ['Versand', r.shipping == null ? 'nicht bestimmbar' : formatEuroAmount(r.shipping)],
+        ['MwSt', formatEuroAmount(r.tax || 0)],
+      ];
+      if (!team) foot.push(['Anpassung', formatEuroAmount(r.adjustment || 0)]);
+      foot.push([team ? 'Team-Provision' : 'Provision', formatEuroAmount(r.commission || 0) + escapeHtml(teamRate)]);
+      return `<tr class="advisor-sale-detail"><td colspan="10">
+        <table><thead><tr><th>Artikel</th><th class="num">Netto</th><th class="num">Rabatt</th><th class="num">MwSt</th>${team ? '' : '<th class="num">Provision</th>'}</tr></thead><tbody>${lineRows}</tbody></table>
+        <div class="advisor-sale-foot">${foot.map(([k, v]) => `<span>${escapeHtml(k)} <strong>${v}</strong></span>`).join('')}</div>
+      </td></tr>`;
     }
 
     function riskBadgeHtml(level, score) {
@@ -2236,6 +2354,7 @@
       }
       try {
         status.textContent = 'Lade 360°-Sicht...';
+        const requestKey = advisor360RequestKey(advisorId);
         const data = await apiPost('/api/analytics/advisor-detail', {
           advisorId,
           sinceId: sinceSelect ? (sinceSelect.value || '0') : '0',
@@ -2243,6 +2362,7 @@
           toDate: toDateInput ? toDateInput.value : ''
         });
         renderAdvisor360(data);
+        advisor360LoadedKey = requestKey;
       } catch (error) {
         status.textContent = `Fehler bei Beraterinnen-360°: ${error.message}`;
       }
@@ -5335,8 +5455,15 @@
         renderAnalytics(data);
         const count = (data.summary && data.summary.paymentsCount) || 0;
         status.textContent = `Auswertung geladen (${count} Zahlläufe).`;
+        // Die Gesamt-Auswertung ist oft langsamer als die 360°-Sicht und überschrieb deren Status.
+        // Jetzt nur noch, wenn keine passende 360°-Sicht geladen ist.
         const advisorStatus = document.getElementById('analyticsAdvisorStatus');
-        if (advisorStatus) advisorStatus.textContent = 'Bitte Beraterin auswählen und 360° laden.';
+        const advisorSelect = document.getElementById('analyticsAdvisorSelect');
+        if (advisorStatus && advisor360LoadedKey !== advisor360RequestKey(advisorSelect ? advisorSelect.value : '')) {
+          advisorStatus.textContent = advisor360LoadedKey
+            ? 'Zeitraum oder Beraterin geändert – bitte 360° neu laden.'
+            : 'Bitte Beraterin auswählen und 360° laden.';
+        }
       } catch (error) {
         status.textContent = `Fehler beim Laden der Auswertung: ${error.message}`;
       }

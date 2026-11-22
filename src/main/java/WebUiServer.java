@@ -2385,12 +2385,7 @@ public class WebUiServer {
                 }
 
                 double payoutSum = 0.0;
-                int directSalesCount = 0;
-                int indirectSalesCount = 0;
-                double directCommission = 0.0;
-                double indirectCommission = 0.0;
                 int totalTx = 0;
-                Set<String> orderIds = new LinkedHashSet<>();
                 List<Map<String, Object>> payoutRows = new ArrayList<>();
 
                 for (JsonNode payment : advisorPayments) {
@@ -2400,22 +2395,6 @@ public class WebUiServer {
                     JsonNode txArray = payment.get("transactions");
                     int txCount = (txArray != null && txArray.isArray()) ? txArray.size() : 0;
                     totalTx += txCount;
-                    if (txArray != null && txArray.isArray()) {
-                        for (JsonNode tx : txArray) {
-                            String entityType = asText(tx, "entity_type");
-                            double txAmount = parseDoubleSafeStatic(asText(tx, "amount"));
-                            if ("orders".equalsIgnoreCase(entityType)) {
-                                directSalesCount++;
-                                directCommission += txAmount;
-                            } else {
-                                indirectSalesCount++;
-                                indirectCommission += txAmount;
-                            }
-                            String orderId = asText(tx.path("metadata"), "order_id").trim();
-                            if (orderId.isBlank()) orderId = asText(tx, "entity_id").trim();
-                            if (!orderId.isBlank()) orderIds.add(orderId);
-                        }
-                    }
                     Map<String, Object> row = new LinkedHashMap<>();
                     row.put("paymentId", paymentId);
                     row.put("created", formatDateTimeEuropeBerlinStatic(asText(payment, "created_at")));
@@ -2427,32 +2406,41 @@ public class WebUiServer {
                     payoutRows.add(row);
                 }
 
-                Map<String, JsonNode> ordersById = fetchOrdersById(apiKey, new ArrayList<>(orderIds));
-                Map<String, Map<String, Object>> productAgg = new LinkedHashMap<>();
-                int totalUnits = 0;
-                for (JsonNode order : ordersById.values()) {
-                    JsonNode lineItems = order.get("line_items");
-                    if (lineItems == null || !lineItems.isArray()) continue;
-                    for (JsonNode li : lineItems) {
-                        String name = asText(li, "title");
-                        if (name.isBlank()) name = asText(li, "name");
-                        if (name.isBlank()) name = "(ohne Titel)";
-                        int qty = parseIntSafe(asText(li, "quantity"));
-                        double price = parseDoubleSafeStatic(asText(li, "price"));
-                        totalUnits += Math.max(qty, 0);
-                        Map<String, Object> agg = productAgg.computeIfAbsent(name, k -> {
-                            Map<String, Object> m = new LinkedHashMap<>();
-                            m.put("productName", k);
-                            m.put("quantity", 0);
-                            m.put("salesValue", 0.0);
-                            return m;
-                        });
-                        agg.put("quantity", ((Integer) agg.get("quantity")) + Math.max(qty, 0));
-                        agg.put("salesValue", ((Double) agg.get("salesValue")) + Math.max(price, 0.0) * Math.max(qty, 0));
-                    }
+                // Verkäufe nach Bestelldatum, unabhängig von den Zahlläufen: auch offene und noch nicht
+                // ausgezahlte. Bisher kamen die Artikel über metadata.order_id - die Shop-ID, die der
+                // orders?id=-Filter von GoAffPro nicht kennt; die Liste blieb deshalb still leer.
+                LocalDate salesTo = toDate != null ? toDate : LocalDate.now(BERLIN_ZONE);
+                LocalDate salesFrom = fromDate != null ? fromDate : salesTo.minusDays(180);
+                String createdRange = goaffproCreatedRange(salesFrom, salesTo);
+                boolean[] truncated = {false};
+                List<String> warnings = new ArrayList<>();
+                List<JsonNode> directOrders = fetchAllPages("https://api.goaffpro.com/v1/admin/orders?affiliate_id=" + advisorId
+                        + createdRange + "&fields=" + ADVISOR_SALE_ORDER_FIELDS, "orders", apiKey, truncated);
+
+                List<JsonNode> rewards = new ArrayList<>();
+                Map<String, JsonNode> teamOrdersById = Collections.emptyMap();
+                Map<String, JsonNode> partnersById = Collections.emptyMap();
+                try {
+                    rewards = fetchAllPages("https://api.goaffpro.com/v1/admin/rewards?affiliate_id=" + advisorId
+                            + createdRange + "&fields=id,amount,status,created_at,type,order_id,order", "rewards", apiKey, truncated);
+                    List<String> teamOrderIds = rewards.stream().map(r -> asText(r, "order_id").trim())
+                            .filter(id -> !id.isBlank()).distinct().toList();
+                    teamOrdersById = fetchOrdersById(apiKey, teamOrderIds);
+                    List<String> partnerIds = teamOrdersById.values().stream().map(o -> asText(o, "affiliate_id").trim())
+                            .filter(id -> !id.isBlank()).distinct().toList();
+                    partnersById = fetchAffiliatesById(apiKey, partnerIds);
+                } catch (Exception e) {
+                    warnings.add("Team-Verkäufe konnten nicht geladen werden: " + e.getMessage());
                 }
-                List<Map<String, Object>> productRows = new ArrayList<>(productAgg.values());
-                productRows.sort((a, b) -> Integer.compare((Integer) b.get("quantity"), (Integer) a.get("quantity")));
+                Map<String, Set<String>> paidIn = Collections.emptyMap();
+                try {
+                    paidIn = payoutsByEntity(fetchAllPages("https://api.goaffpro.com/v1/admin/transactions?affiliate_id="
+                            + advisorId + "&fields=entity_type,entity_id,is_paid", "transactions", apiKey, truncated));
+                } catch (Exception e) {
+                    warnings.add("Auszahlungsstand konnte nicht geladen werden: " + e.getMessage());
+                }
+                Map<String, Object> sales = buildAdvisorSalesPayload(advisor, directOrders, rewards, teamOrdersById,
+                        partnersById, paidIn);
 
                 Map<String, Object> summary = new LinkedHashMap<>();
                 summary.put("advisorId", advisorId);
@@ -2464,17 +2452,20 @@ public class WebUiServer {
                 summary.put("payoutSum", payoutSum);
                 summary.put("currency", advisorPayments.isEmpty() ? "EUR" : asText(advisorPayments.get(0), "currency"));
                 summary.put("totalTransactions", totalTx);
-                summary.put("directSalesCount", directSalesCount);
-                summary.put("indirectSalesCount", indirectSalesCount);
-                summary.put("directCommission", directCommission);
-                summary.put("indirectCommission", indirectCommission);
-                summary.put("orderCount", ordersById.size());
-                summary.put("soldUnits", totalUnits);
+                summary.put("salesFrom", salesFrom.format(DateTimeFormatter.ofPattern("dd.MM.yyyy")));
+                summary.put("salesTo", salesTo.format(DateTimeFormatter.ofPattern("dd.MM.yyyy")));
+                for (String key : List.of("directSalesCount", "teamSalesCount", "soldUnits", "directCommission",
+                        "directCommissionUnpaid", "teamCommission", "teamCommissionUnpaid")) {
+                    summary.put(key, sales.get(key));
+                }
 
                 Map<String, Object> payload = new LinkedHashMap<>();
                 payload.put("summary", summary);
                 payload.put("payoutRows", payoutRows);
-                payload.put("productRows", productRows);
+                payload.put("saleRows", sales.get("saleRows"));
+                payload.put("productRows", sales.get("productRows"));
+                payload.put("truncated", truncated[0]);
+                payload.put("warnings", warnings);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
@@ -5122,19 +5113,285 @@ public class WebUiServer {
     }
 
 
+    // ── 360°-Sicht: Verkäufe einer Beraterin ──────────────────────────────────
+
+    /** Felder einer Bestellung für die Aufschlüsselung je Verkauf, wie die Bestellansicht in GoAffPro. */
+    private static final String ADVISOR_SALE_ORDER_FIELDS = "id,number,total,subtotal,currency,status,affiliate_id,created_at,"
+            + "commission,coupons,conversion_source,sub_id,is_new_customer,customer,customer_email,line_items";
+    private static final int ADVISOR_SALES_PAGE_SIZE = 250;
+    private static final int ADVISOR_SALES_MAX_PAGES = 20;
+    private static final int ORDER_ID_BATCH = 50;
+    /** Diese Verkäufe stehen in der Liste, zählen aber nicht in Kennzahlen und Artikel. */
+    private static final Set<String> NOT_COUNTED_SALE_STATUSES = Set.of("rejected", "cancelled", "canceled", "blocked", "refunded");
+
+    /**
+     * Bestellungen über GoAffPros eigene ID (entity_id einer Buchung, order_id eines Rewards).
+     * Die Shop-ID aus metadata.order_id kennt der Filter nicht - damit kam bisher nichts zurück.
+     */
     private static Map<String, JsonNode> fetchOrdersById(String apiKey, List<String> orderIds) throws Exception {
         if (orderIds == null || orderIds.isEmpty()) return Collections.emptyMap();
-        String ids = String.join(",", orderIds);
-        String url = "https://api.goaffpro.com/v1/admin/orders?id=" + ids + "&fields=id,number,currency,total,status,affiliate_id,created_at,line_items";
-        JsonNode root = requestJson(url, apiKey);
-        JsonNode orders = root.get("orders");
-        if (orders == null || !orders.isArray()) return Collections.emptyMap();
         Map<String, JsonNode> map = new LinkedHashMap<>();
-        for (JsonNode order : orders) {
-            String id = asText(order, "id").trim();
-            if (!id.isBlank()) map.put(id, order);
+        for (String url : ordersByIdUrls(orderIds)) {
+            JsonNode root = requestJson(url, apiKey);
+            if (root.hasNonNull("error")) throw new IOException("GoAffPro: " + root.get("error"));
+            for (JsonNode order : jsonArrayToList(root.get("orders"))) {
+                String id = asText(order, "id").trim();
+                if (!id.isBlank()) map.put(id, order);
+            }
         }
         return map;
+    }
+
+    /** Höchstens ORDER_ID_BATCH IDs je Abfrage, sonst wird die URL bei vielen Bestellungen zu lang. */
+    private static List<String> ordersByIdUrls(List<String> orderIds) {
+        List<String> urls = new ArrayList<>();
+        for (int i = 0; i < orderIds.size(); i += ORDER_ID_BATCH) {
+            List<String> batch = orderIds.subList(i, Math.min(i + ORDER_ID_BATCH, orderIds.size()));
+            urls.add("https://api.goaffpro.com/v1/admin/orders?id=" + String.join(",", batch)
+                    + "&limit=" + ORDER_ID_BATCH + "&fields=" + ADVISOR_SALE_ORDER_FIELDS);
+        }
+        return urls;
+    }
+
+    /**
+     * Alle Einträge einer GoAffPro-Liste, seitenweise über offset (page wirkt dort nicht). Nach
+     * ADVISOR_SALES_MAX_PAGES Seiten ist Schluss; das meldet truncated.
+     */
+    private static List<JsonNode> fetchAllPages(String baseUrl, String arrayField, String apiKey, boolean[] truncated) throws Exception {
+        List<JsonNode> all = new ArrayList<>();
+        for (int page = 0; page < ADVISOR_SALES_MAX_PAGES; page++) {
+            JsonNode root = requestJson(baseUrl + "&limit=" + ADVISOR_SALES_PAGE_SIZE
+                    + "&offset=" + (page * ADVISOR_SALES_PAGE_SIZE), apiKey);
+            // GoAffPro meldet manche Fehler mit HTTP 200 und einem error-Feld statt der Liste
+            if (root.hasNonNull("error")) throw new IOException("GoAffPro: " + root.get("error"));
+            List<JsonNode> items = jsonArrayToList(root.get(arrayField));
+            all.addAll(items);
+            int count = root.path("count").asInt(-1);
+            if (items.size() < ADVISOR_SALES_PAGE_SIZE || (count >= 0 && all.size() >= count)) return all;
+        }
+        if (truncated != null) truncated[0] = true;
+        return all;
+    }
+
+    /** Berliner Kalendertage als created_at-Filter (GoAffPro rechnet in UTC). */
+    private static String goaffproCreatedRange(LocalDate from, LocalDate to) {
+        DateTimeFormatter utc = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'").withZone(java.time.ZoneOffset.UTC);
+        Instant start = from.atStartOfDay(BERLIN_ZONE).toInstant();
+        Instant end = to.plusDays(1).atStartOfDay(BERLIN_ZONE).toInstant().minusMillis(1);
+        return "&created_at_min=" + utc.format(start) + "&created_at_max=" + utc.format(end);
+    }
+
+    /** Zahllauf-IDs je Bestellung bzw. Reward ("orders:ID", "rewards:ID") aus is_paid; 0 heißt noch offen. */
+    private static Map<String, Set<String>> payoutsByEntity(List<JsonNode> transactions) {
+        Map<String, Set<String>> map = new HashMap<>();
+        for (JsonNode tx : transactions) {
+            String paid = asText(tx, "is_paid").trim();
+            if (paid.isBlank() || "0".equals(paid) || "false".equalsIgnoreCase(paid)) continue;
+            String key = asText(tx, "entity_type").trim() + ":" + asText(tx, "entity_id").trim();
+            map.computeIfAbsent(key, k -> new LinkedHashSet<>()).add(paid);
+        }
+        return map;
+    }
+
+    private static boolean countsAsSale(String status) {
+        return !NOT_COUNTED_SALE_STATUSES.contains(Objects.toString(status, "").trim().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /**
+     * Verkäufe einer Beraterin für die 360°-Sicht, aufgeschlüsselt wie die Bestellansicht in GoAffPro.
+     * Direkt sind ihre eigenen Bestellungen. Team sind Bestellungen ihrer Teampartnerinnen, für die sie
+     * einen Reward erhält: Als ihre Provision zählt der Reward, nicht die Positionsprovision der Partnerin.
+     * Abgelehnte oder stornierte Verkäufe stehen in der Liste, zählen aber nicht mit. Von den Kundendaten
+     * gelangen nur Name und E-Mail ins Ergebnis.
+     */
+    private static Map<String, Object> buildAdvisorSalesPayload(JsonNode advisor, List<JsonNode> directOrders,
+                                                                List<JsonNode> rewards, Map<String, JsonNode> teamOrdersById,
+                                                                Map<String, JsonNode> partnersById,
+                                                                Map<String, Set<String>> payoutsByEntity) {
+        String advisorEmail = advisor != null ? asText(advisor, "email") : "";
+        List<Map<String, Object>> saleRows = new ArrayList<>();
+        for (JsonNode order : directOrders) {
+            Map<String, Object> row = saleRowFromOrder(order, true, advisorEmail,
+                    payoutsByEntity.getOrDefault("orders:" + asText(order, "id").trim(), Set.of()));
+            row.put("kind", "direct");
+            row.put("status", asText(order, "status").trim());
+            double commission = parseDoubleSafeStatic(asText(order, "commission"));
+            double adjustment = commission - (double) row.remove("lineCommission");
+            row.put("commission", commission);
+            row.put("adjustment", Math.abs(adjustment) < BALANCE_TOLERANCE ? 0.0 : adjustment);
+            saleRows.add(row);
+        }
+        for (JsonNode reward : rewards) {
+            String orderId = asText(reward, "order_id").trim();
+            JsonNode order = orderId.isBlank() ? null : teamOrdersById.get(orderId);
+            // Ohne geladene Bestellung bleibt die Kurzfassung aus dem Reward (Nummer, Summen, Datum)
+            if (order == null) order = reward.path("order");
+            JsonNode partner = partnersById.get(asText(order, "affiliate_id").trim());
+            Map<String, Object> row = saleRowFromOrder(order, false, partner != null ? asText(partner, "email") : "",
+                    payoutsByEntity.getOrDefault("rewards:" + asText(reward, "id").trim(), Set.of()));
+            row.remove("lineCommission");
+            row.put("kind", "team");
+            // Für ihre Team-Provision zählt der Status des Rewards, nicht der der Bestellung
+            row.put("status", asText(reward, "status").trim());
+            if (row.get("createdAtIso").toString().isBlank()) {
+                row.put("createdAtIso", asText(reward, "created_at"));
+                row.put("createdAt", formatDateTimeEuropeBerlinStatic(asText(reward, "created_at")));
+            }
+            row.put("rewardType", asText(reward, "type").trim());
+            row.put("partnerId", asText(order, "affiliate_id").trim());
+            row.put("partnerName", partner != null ? asText(partner, "name") : "");
+            double commission = parseDoubleSafeStatic(asText(reward, "amount"));
+            double subtotal = (double) row.get("subtotal");
+            row.put("commission", commission);
+            row.put("teamRate", subtotal > 0 ? commission / subtotal * 100.0 : null);
+            saleRows.add(row);
+        }
+        saleRows.sort((a, b) -> b.get("createdAtIso").toString().compareTo(a.get("createdAtIso").toString()));
+
+        int directCount = 0;
+        int teamCount = 0;
+        int units = 0;
+        double directCommission = 0.0;
+        double directUnpaid = 0.0;
+        double teamCommission = 0.0;
+        double teamUnpaid = 0.0;
+        Map<String, Map<String, Object>> products = new LinkedHashMap<>();
+        for (Map<String, Object> row : saleRows) {
+            String status = row.get("status").toString();
+            boolean counted = countsAsSale(status);
+            row.put("statusLabel", goaffproStatusLabel(status));
+            row.put("counted", counted);
+            if (!counted) continue;
+            double commission = (double) row.get("commission");
+            boolean unpaid = ((List<?>) row.get("payoutIds")).isEmpty();
+            if ("team".equals(row.get("kind"))) {
+                if (!row.get("number").toString().isBlank()) teamCount++;
+                teamCommission += commission;
+                if (unpaid) teamUnpaid += commission;
+            } else {
+                directCount++;
+                directCommission += commission;
+                if (unpaid) directUnpaid += commission;
+            }
+            @SuppressWarnings("unchecked")
+            List<Map<String, Object>> lines = (List<Map<String, Object>>) row.get("lines");
+            for (Map<String, Object> line : lines) {
+                int qty = Math.max((int) line.get("quantity") - (int) line.get("refundQuantity"), 0);
+                units += qty;
+                String name = line.get("name").toString();
+                String sku = line.get("sku").toString();
+                Map<String, Object> product = products.computeIfAbsent(sku + "|" + name, k -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("productName", name);
+                    m.put("sku", sku);
+                    m.put("quantity", 0);
+                    m.put("salesValue", 0.0);
+                    return m;
+                });
+                product.put("quantity", (int) product.get("quantity") + qty);
+                product.put("salesValue", (double) product.get("salesValue") + (double) line.get("net"));
+            }
+        }
+        List<Map<String, Object>> productRows = new ArrayList<>(products.values());
+        productRows.sort((a, b) -> {
+            int byQuantity = Integer.compare((int) b.get("quantity"), (int) a.get("quantity"));
+            return byQuantity != 0 ? byQuantity : a.get("productName").toString().compareTo(b.get("productName").toString());
+        });
+
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("saleRows", saleRows);
+        result.put("productRows", productRows);
+        result.put("directSalesCount", directCount);
+        result.put("teamSalesCount", teamCount);
+        result.put("soldUnits", units);
+        result.put("directCommission", directCommission);
+        result.put("directCommissionUnpaid", directUnpaid);
+        result.put("teamCommission", teamCommission);
+        result.put("teamCommissionUnpaid", teamUnpaid);
+        return result;
+    }
+
+    /**
+     * Kopf und Positionen einer Bestellung. GoAffPro liefert MwSt, Rabatt und Netto je Position;
+     * Versand ergibt sich als Bestellwert minus (Brutto - Rabatt) aller Positionen. Die Summe der
+     * Positionsprovisionen geht als lineCommission zurück, damit der Aufrufer die Anpassung bilden kann.
+     */
+    private static Map<String, Object> saleRowFromOrder(JsonNode order, boolean withCommission, String ownerEmail,
+                                                        Set<String> payoutIds) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        String created = firstNonBlank(asText(order, "created_at"), asText(order, "created"));
+        row.put("orderId", asText(order, "id").trim());
+        row.put("number", asText(order, "number").trim());
+        row.put("createdAtIso", created);
+        row.put("createdAt", created.isBlank() ? "" : formatDateTimeEuropeBerlinStatic(created));
+        row.put("payoutIds", new ArrayList<>(payoutIds));
+        JsonNode customer = order.path("customer");
+        String customerEmail = firstNonBlank(asText(order, "customer_email"), asText(customer, "email"));
+        row.put("customerName", firstNonBlank(asText(customer, "name"),
+                (asText(customer, "first_name") + " " + asText(customer, "last_name")).trim()));
+        row.put("customerEmail", customerEmail);
+        row.put("ownOrder", !customerEmail.isBlank() && customerEmail.equalsIgnoreCase(Objects.toString(ownerEmail, "").trim()));
+        row.put("isNewCustomer", isNewCustomerOrder(order));
+        List<String> coupons = new ArrayList<>();
+        for (String coupon : asText(order, "coupons").split(",")) {
+            if (!coupon.isBlank()) coupons.add(coupon.trim());
+        }
+        row.put("coupons", coupons);
+        row.put("conversionSource", asText(order, "conversion_source").trim());
+        row.put("subId", asText(order, "sub_id").trim());
+        double total = parseDoubleSafeStatic(asText(order, "total"));
+        row.put("total", total);
+        row.put("subtotal", parseDoubleSafeStatic(asText(order, "subtotal")));
+
+        List<Map<String, Object>> lines = new ArrayList<>();
+        double tax = 0.0;
+        double discount = 0.0;
+        double afterDiscount = 0.0;
+        double lineCommission = 0.0;
+        for (JsonNode li : jsonArrayToList(order.get("line_items"))) {
+            double qty = parseDoubleSafeStatic(asText(li, "quantity"));
+            double lineDiscount = parseDoubleSafeStatic(asText(li, "total_discount"));
+            double lineTax = parseDoubleSafeStatic(asText(li, "total_tax"));
+            double gross = li.hasNonNull("total_price") ? parseDoubleSafeStatic(asText(li, "total_price"))
+                    : parseDoubleSafeStatic(asText(li, "price")) * qty;
+            double commission = parseDoubleSafeStatic(asText(li, "commission"));
+            tax += lineTax;
+            discount += lineDiscount;
+            afterDiscount += gross - lineDiscount;
+            lineCommission += commission;
+            Map<String, Object> line = new LinkedHashMap<>();
+            line.put("name", firstNonBlank(asText(li, "name"), asText(li, "title"), asText(li, "sku"), "(ohne Artikel)"));
+            line.put("sku", asText(li, "sku").trim());
+            line.put("quantity", (int) Math.round(qty));
+            line.put("refundQuantity", (int) Math.round(parseDoubleSafeStatic(asText(li, "refund_quantity"))));
+            line.put("net", parseDoubleSafeStatic(firstNonBlank(asText(li, "total"), asText(li, "cv"))));
+            line.put("discount", lineDiscount);
+            line.put("tax", lineTax);
+            if (withCommission) {
+                line.put("rate", commissionRateLabel(asText(li, "commission_value"), asText(li, "commission_type")));
+                line.put("commission", commission);
+            }
+            lines.add(line);
+        }
+        row.put("lines", lines);
+        row.put("tax", tax);
+        row.put("discount", discount);
+        double shipping = total - afterDiscount;
+        // Ohne Positionen oder bei deutlich negativem Rest ist der Versand nicht bestimmbar
+        row.put("shipping", lines.isEmpty() || shipping < -BALANCE_TOLERANCE ? null : Math.max(shipping, 0.0));
+        row.put("lineCommission", lineCommission);
+        return row;
+    }
+
+    /** "20" + percentage → "20 %", "7.5" → "7,5 %"; feste Beträge heißen "fest". */
+    private static String commissionRateLabel(String value, String type) {
+        String raw = Objects.toString(value, "").trim();
+        if (raw.isBlank()) return "";
+        String kind = Objects.toString(type, "").trim().toLowerCase(java.util.Locale.ROOT);
+        if (!kind.isBlank() && !kind.startsWith("percent")) return "fest";
+        double number = parseDoubleSafeStatic(raw);
+        String text = number == Math.rint(number) ? String.valueOf((long) number) : String.valueOf(number).replace('.', ',');
+        return text + " %";
     }
 
     private static int parseIntSafe(String value) {
