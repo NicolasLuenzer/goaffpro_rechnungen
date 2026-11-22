@@ -20,6 +20,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -520,6 +521,110 @@ class GoAffProSyncServiceTest {
         }
     }
 
+    // ── Pausieren ───────────────────────────────────────────────────────────────
+
+    private static Properties pauseTestConfig(Path tempDir, HttpServer server) {
+        Properties config = new Properties();
+        config.setProperty("goaffproSyncDataPath", tempDir.toString());
+        config.setProperty("goaffproSyncApiBase", fakeBase(server));
+        config.setProperty("goaffproSyncMaxCallsPerHour", "3600000");
+        config.setProperty("goaffproSyncPreflightProbe", "false");
+        return config;
+    }
+
+    /**
+     * Regression: Ein Lauf arbeitet mit einer Kopie der Einstellungen vom Start. "Sync pausieren"
+     * schrieb nur die gespeicherten Einstellungen, die Prüfung im Lauf sah die Pause deshalb nie -
+     * der Sync lief bis zum Ende weiter, und eine Sicherung blieb so lange gesperrt.
+     */
+    @Test
+    void pausierenHaeltLaufendenSyncNachDerAktuellenSeiteAn(@TempDir Path tempDir) throws Exception {
+        Properties live = new Properties();
+        AtomicBoolean pausiert = new AtomicBoolean(false);
+        List<String> nachPause = Collections.synchronizedList(new java.util.ArrayList<>());
+        HttpServer server = fakeServer(exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if (pausiert.get()) nachPause.add(path);
+            if (path.equals("/v1/admin/orders")) {
+                // Wie ein Klick auf "Sync pausieren", während die erste volle Seite geladen wird
+                live.setProperty("goaffproSyncEnabled", "false");
+                pausiert.set(true);
+                return new FakeResponse(200, "{\"orders\":" + jsonItems("id", "o", 0, 500) + "}");
+            }
+            return new FakeResponse(200, "[]");
+        });
+        try {
+            Properties config = pauseTestConfig(tempDir, server);
+            Path db = GoAffProSyncService.resolveDbPath(config);
+            initDatabase(db);
+            try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + db)) {
+                // Bestand aus einem früheren Lauf, der auf einer nicht mehr gelesenen Seite stünde
+                upsert(connection, "orders", "o999", MAPPER.readTree("{\"id\":\"o999\"}"));
+            }
+
+            GoAffProSyncService service = new GoAffProSyncService();
+            service.setLiveSettingsSource(() -> live);
+            GoAffProSyncService.SyncRunResult run = service.runSync(config, "test-key", "initial");
+
+            assertEquals(List.of(), nachPause, "Nach der Pause geht keine Anfrage mehr an GoAffPro");
+            assertEquals("warning", run.status);
+            assertTrue(run.warnings.contains("Sync wurde pausiert."), run.warnings.toString());
+            try (Connection connection = DriverManager.getConnection("jdbc:sqlite:" + db)) {
+                // Seite 1 ist gespeichert; o999 gilt nicht als gelöscht, nur weil Seite 2 fehlt
+                assertEntityCount(connection, "orders", 501);
+                assertEndpointNote(connection, "orders", "Nach Seite 1 pausiert");
+            }
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void pausierenStopptAuchDieDownloadPhase(@TempDir Path tempDir) throws Exception {
+        Properties live = new Properties();
+        AtomicInteger downloads = new AtomicInteger();
+        HttpServer[] serverRef = new HttpServer[1];
+        serverRef[0] = fakeServer(exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if (path.startsWith("/download/")) {
+                downloads.incrementAndGet();
+                live.setProperty("goaffproSyncEnabled", "false");
+                return new FakeResponse(200, "PDF-BYTES");
+            }
+            if (path.equals("/v1/admin/files")) {
+                String base = fakeBase(serverRef[0]);
+                return new FakeResponse(200, "{\"files\":[{\"id\":\"f1\",\"url\":\"" + base + "/download/f1.pdf\"},"
+                        + "{\"id\":\"f2\",\"url\":\"" + base + "/download/f2.pdf\"}]}");
+            }
+            return new FakeResponse(200, "[]");
+        });
+        try {
+            GoAffProSyncService service = new GoAffProSyncService();
+            service.setLiveSettingsSource(() -> live);
+            GoAffProSyncService.SyncRunResult run = service.runSync(pauseTestConfig(tempDir, serverRef[0]), "test-key", "initial");
+
+            assertEquals(1, downloads.get(), "Nach der Pause wird keine weitere Datei geladen");
+            assertTrue(run.warnings.contains("Sync wurde pausiert."), run.warnings.toString());
+        } finally {
+            serverRef[0].stop(0);
+        }
+    }
+
+    @Test
+    void ohneLiveQuelleLaeuftDerSyncDurch(@TempDir Path tempDir) throws Exception {
+        // Unlesbare Einstellungen sind kein Grund, einen Lauf abzubrechen
+        HttpServer server = fakeServer(exchange -> new FakeResponse(200, "[]"));
+        try {
+            GoAffProSyncService service = new GoAffProSyncService();
+            service.setLiveSettingsSource(() -> { throw new java.io.IOException("Datei gesperrt"); });
+            GoAffProSyncService.SyncRunResult run = service.runSync(pauseTestConfig(tempDir, server), "test-key", "initial");
+
+            assertFalse(run.warnings.contains("Sync wurde pausiert."), run.warnings.toString());
+        } finally {
+            server.stop(0);
+        }
+    }
+
     private static String jsonItems(String idKey, String prefix, int start, int count) {
         StringBuilder json = new StringBuilder("[");
         for (int i = 0; i < count; i++) {
@@ -725,11 +830,12 @@ class GoAffProSyncServiceTest {
         assertEquals("running", computeStateKey(config, true, Map.of("mode", "delta"), lastSuccess));
         assertEquals("Sync läuft", stateLabel("running"));
 
-        // Pausieren setzt nur das Konfig-Flag und bricht keinen laufenden Vorgang ab:
-        // "Pausiert" waehrend sichtbarer Arbeit waere gelogen.
+        // Pausiert waehrend eines Laufs: er haelt erst an der naechsten Pruefstelle an.
+        // Bis dahin "Wird angehalten" - "Pausiert" waehrend sichtbarer Arbeit waere gelogen.
         Properties paused = new Properties();
         paused.setProperty("goaffproSyncEnabled", "false");
-        assertEquals("running", computeStateKey(paused, true, Map.of("mode", "delta"), lastSuccess));
+        assertEquals("pausing", computeStateKey(paused, true, Map.of("mode", "delta"), lastSuccess));
+        assertEquals("pausing", computeStateKey(paused, true, Map.of("mode", "initial"), lastSuccess));
         assertEquals("paused", computeStateKey(paused, false, Map.of(), lastSuccess));
     }
 
@@ -748,7 +854,8 @@ class GoAffProSyncServiceTest {
         assertEquals("unknown", computeStateKey(config, false, Map.of(), Map.of("finishedAt", "kein Zeitstempel")));
 
         for (String[] pair : new String[][]{
-                {"paused", "Pausiert"}, {"running_initial", "Initialsync läuft"}, {"running", "Sync läuft"},
+                {"paused", "Pausiert"}, {"pausing", "Wird angehalten"},
+                {"running_initial", "Initialsync läuft"}, {"running", "Sync läuft"},
                 {"error", "Fehler"}, {"never", "Noch nicht synchronisiert"},
                 {"stale_warning", "Veraltet mit Warnungen"}, {"stale", "Veraltet"},
                 {"ok_warning", "Synchronisiert mit Warnungen"}, {"ok", "Aktuell"}, {"unknown", "Unklar"}}) {

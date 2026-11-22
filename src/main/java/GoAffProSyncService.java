@@ -38,6 +38,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -139,6 +140,32 @@ public class GoAffProSyncService {
 
     public void endMaintenance() {
         maintenance.set(false);
+    }
+
+    // Ein Lauf arbeitet mit einer Kopie der Einstellungen vom Startzeitpunkt. Pausieren schreibt
+    // aber nur die gespeicherten Einstellungen - ohne diese Quelle sah ein laufender Sync die
+    // Pause nie und lief bis zum Ende weiter.
+    private volatile Callable<Properties> liveSettings = null;
+
+    public void setLiveSettingsSource(Callable<Properties> source) {
+        this.liveSettings = source;
+    }
+
+    /**
+     * Gilt auch für einen laufenden Lauf: geprüft vor jedem Endpoint, jeder weiteren Seite,
+     * jeder Beraterin der Detaildaten und jeder Datei. Ohne Live-Quelle (Tests, direkter
+     * Aufruf) zählt die übergebene Konfiguration.
+     */
+    private boolean pauseRequested(Properties runConfig) {
+        Callable<Properties> source = liveSettings;
+        if (source == null) return !isSyncEnabled(runConfig);
+        try {
+            Properties live = source.call();
+            return live != null && !isSyncEnabled(live);
+        } catch (Exception e) {
+            // Einstellungen gerade nicht lesbar: weiterarbeiten statt grundlos abzubrechen
+            return false;
+        }
     }
 
     /** Nach einem Import zeigen die Momentaufnahmen auf Läufe der alten Datenbank. */
@@ -385,24 +412,30 @@ public class GoAffProSyncService {
             run.phase = "endpoints";
             currentRun = run.toStatusMap();
             String runStartedAt = run.startedAt;
+            boolean pausiert = false;
             for (EndpointSpec endpoint : endpoints) {
-                if (!isSyncEnabled(config)) {
-                    run.warning("Sync wurde pausiert.");
-                    run.markPendingEndpointsSkipped();
+                if (pausiert || pauseRequested(config)) {
+                    pausiert = true;
                     break;
                 }
                 run.endpointIndex++;
                 EndpointResult endpointResult = syncEndpoint(connection, endpoint, apiKey, normalizedMode, config, budget, runStartedAt, run);
                 run.add(endpointResult);
+                pausiert = endpointResult.pausiert;
                 run.clearCurrentEndpoint();
                 currentRun = run.toStatusMap();
             }
-            if (assetDownloadEnabled(config) && (!"delta".equals(normalizedMode) || deltaDownloadsEnabled(config))) {
+            if (!pausiert && assetDownloadEnabled(config) && (!"delta".equals(normalizedMode) || deltaDownloadsEnabled(config))) {
                 run.phase = "downloads";
                 currentRun = run.toStatusMap();
                 EndpointResult downloaded = downloadLinkedFiles(connection, apiKey, config, budget, normalizedMode);
                 run.add(downloaded);
+                pausiert = downloaded.pausiert;
                 currentRun = run.toStatusMap();
+            }
+            if (pausiert) {
+                run.warning("Sync wurde pausiert.");
+                run.markPendingEndpointsSkipped();
             }
             run.phase = "finished";
             run.status = run.warnings.isEmpty() ? "success" : "warning";
@@ -1218,6 +1251,14 @@ public class GoAffProSyncService {
         String apiBase = apiBase(config);
 
         for (int page = 1; page <= maxPages; page++) {
+            if (page > 1 && pauseRequested(config)) {
+                // Unvollständig, damit markRemoteMissing nicht greift: die übrigen Seiten wurden
+                // nur nicht mehr gelesen - gelöscht ist dort nichts.
+                result.pausiert = true;
+                result.note("Nach Seite " + (page - 1) + " pausiert.");
+                complete = false;
+                break;
+            }
             String path = endpoint.paginated ? withPagination(basePath, page, limit, endpoint.paginationMode) : basePath;
             run.setCurrentEndpoint(endpoint, page, path, result);
             currentRun = run.toStatusMap();
@@ -1356,6 +1397,12 @@ public class GoAffProSyncService {
         int limit = Math.max(1, intSetting(config, "goaffproSyncAffiliateDetailLimit", 0));
         int count = 0;
         for (JsonNode affiliate : affiliates) {
+            // 5 Calls je Beraterin: ohne diese Prüfung liefe der Block nach einer Pause noch lange weiter
+            if (pauseRequested(config)) {
+                result.pausiert = true;
+                result.note("Affiliate-Detaildaten nach " + count + " Beraterinnen pausiert.");
+                break;
+            }
             if (limit > 0 && count >= limit) {
                 // Bewusste Drosselung, kein Fehler: die Detaildaten kosten 5 Calls je Beraterin
                 // und werden derzeit nirgends ausgewertet. Deshalb Hinweis statt Warnung.
@@ -1440,6 +1487,7 @@ public class GoAffProSyncService {
         // Deep-Check lädt alles neu (Re-Verify); sonst werden bereits vorhandene Dateien übersprungen
         boolean skipExisting = !"deep".equals(mode) && downloadSkipExistingEnabled(config);
         List<String> entityTypes = List.of("files", "asset_contents", "asset_folders", "creatives");
+        typen:
         for (String entityType : entityTypes) {
             for (StoredEntity entity : storedEntities(connection, entityType)) {
                 String url = findDownloadUrl(entity.rawJson);
@@ -1447,6 +1495,11 @@ public class GoAffProSyncService {
                 if (skipExisting && entity.filePath != null && !entity.filePath.isBlank() && Files.exists(Paths.get(entity.filePath))) {
                     result.skippedExisting++;
                     continue;
+                }
+                if (pauseRequested(config)) {
+                    result.pausiert = true;
+                    result.note("Downloads nach " + result.downloaded + " Dateien pausiert.");
+                    break typen;
                 }
                 try {
                     DownloadedFile downloaded = downloadFile(url, apiKey, fileDir.resolve(entityType), entity.externalId, budget, result);
@@ -2783,11 +2836,13 @@ public class GoAffProSyncService {
      * war damit unerreichbar und die Oberflaeche meldete waehrend eines Laufs "Aktuell", waehrend
      * das Badge daneben blau leuchtete. Deshalb jetzt als expliziter Parameter.
      *
-     * Ein laufender Sync schlaegt "Pausiert": Pausieren setzt nur das Konfig-Flag und bricht einen
-     * bereits laufenden Vorgang nicht ab. "Pausiert" waehrend sichtbarer Arbeit waere gelogen.
+     * Wird waehrend eines Laufs pausiert, haelt er erst an der naechsten Pruefstelle an (vor der
+     * naechsten Seite, Beraterin oder Datei). Bis dahin heisst der Zustand "Wird angehalten" -
+     * "Pausiert" waehrend sichtbarer Arbeit waere gelogen.
      */
     private static String computeStateKey(Properties config, boolean running, Map<String, Object> lastRun, Map<String, Object> lastSuccess) {
         if (running) {
+            if (!isSyncEnabled(config)) return "pausing";
             String mode = Objects.toString(lastRun.get("mode"), "");
             return "initial".equals(mode) ? "running_initial" : "running";
         }
@@ -2813,6 +2868,7 @@ public class GoAffProSyncService {
     private static String stateLabel(String stateKey) {
         return switch (Objects.toString(stateKey, "")) {
             case "paused" -> "Pausiert";
+            case "pausing" -> "Wird angehalten";
             case "running_initial" -> "Initialsync läuft";
             case "running" -> "Sync läuft";
             case "error" -> "Fehler";
@@ -3604,6 +3660,8 @@ public class GoAffProSyncService {
         final String displayName;
         final String apiPath;
         boolean complete = true;
+        // Wegen "Sync pausieren" vorzeitig beendet; der Lauf bricht danach ab.
+        boolean pausiert;
         int apiCalls;
         int seen;
         int inserted;
@@ -3644,6 +3702,7 @@ public class GoAffProSyncService {
             warnings.addAll(other.warnings);
             notes.addAll(other.notes);
             complete = complete && other.complete;
+            pausiert = pausiert || other.pausiert;
         }
 
         void warning(String warning) {

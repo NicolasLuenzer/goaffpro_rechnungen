@@ -437,6 +437,8 @@ public class WebUiServer {
             return t;
         }));
         server.start();
+        // Damit "Sync pausieren" auch einen bereits laufenden Sync anhält
+        GOAFFPRO_SYNC_SERVICE.setLiveSettingsSource(WebUiServer::loadConfigWithUiSettings);
         startLeaderWeeklyMailScheduler();
         startGoAffProSyncScheduler();
 

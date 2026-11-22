@@ -303,7 +303,8 @@ docker-compose restart goaffpro
 
 **Sicherung oder Import wird abgelehnt („Wartungsmodus" / laufender Sync):**
 Beide Vorgaenge sperren sich gegenseitig mit dem Sync aus. Im Reiter **Sync** oben auf
-**Sync pausieren** klicken und den Vorgang wiederholen.
+**Sync pausieren** klicken, warten bis der Status von „Wird angehalten" auf „Pausiert"
+wechselt, und den Vorgang wiederholen.
 
 **Belegnummer beginnt nach einem Import wieder bei 1:**
 Die Zaehler stehen ausschliesslich in `config.properties`, nicht in der Datenbank.

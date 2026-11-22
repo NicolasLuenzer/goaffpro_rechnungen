@@ -370,7 +370,9 @@ Umzug ist er nötig; für eine reine Datensicherung nicht. Ist er gesetzt, träg
 Datei den Zusatz `_mit-zugangsdaten` im Namen.
 
 Läuft gerade ein Sync, wird die Sicherung abgelehnt. Der Knopf **Sync pausieren** steht
-im selben Reiter weiter oben.
+im selben Reiter weiter oben. Er hält auch einen laufenden Sync an, und zwar nach der
+gerade geladenen Seite bzw. Datei; bis dahin zeigt der Status „Wird angehalten“. Steht er
+auf „Pausiert“, ist die Sicherung möglich.
 
 ### Sicherung einspielen
 
