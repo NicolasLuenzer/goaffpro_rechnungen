@@ -299,7 +299,8 @@ class ProvisionsuebersichtTest {
         assertTrue(text.contains("als Anlage zur Gutschrift GS-2026-0099 gemäß § 14 UStG"), text);
         assertTrue(text.contains("info@vemmina.de"), "Kontakt wie in der Fußzeile der Gutschrift");
         assertTrue(text.matches(".*Inhalts-Hash \\(SHA-256\\): [0-9a-f]{64}.*"), text);
-        assertFalse(text.contains("Storno-Buchungen mindern"), "Erklärung nur, wenn es Stornos oder Änderungen gibt");
+        assertFalse(text.contains("mindern Bestellwert"), "Erklärung nur, wenn es Stornos oder Änderungen gibt");
+        assertFalse(text.contains("„–“:"), "Erklärung für „–“ nur, wenn eine Zeile keinen Bestellwert hat");
         assertFalse(text.contains("Ersetzt"), "Ohne Vorgänger kein Ersetzt-Hinweis");
     }
 
@@ -315,7 +316,7 @@ class ProvisionsuebersichtTest {
     }
 
     @Test
-    void stornoMindertBestellwertUndAenderungTraegtKeinen() throws Exception {
+    void stornoMindertBestellwertUndAenderungOhneWerteBleibtLeer() throws Exception {
         ObjectNode payment = payment();
         ArrayNode txs = payment.putArray("transactions");
         txs.add(tx("insert", 10.0, "2026-10-01T10:00:00Z", "#100", "100.00", "80.00"));
@@ -331,11 +332,135 @@ class ProvisionsuebersichtTest {
         assertEquals("Direkt (Order) · Storno", rows.get(1).child(1).text());
         assertEquals("-100,00 €", rows.get(1).child(3).text(), "Storno zählt den Bestellwert negativ");
         assertEquals("-80,00 €", rows.get(1).child(4).text());
-        assertEquals("Direkt (Order) · Änderung (abgelehnt)", rows.get(2).child(1).text());
-        assertEquals("–", rows.get(2).child(3).text(), "Eine Änderung trägt keinen Bestellwert");
+        assertEquals("Direkt (Order) · Änderung (abgelehnt)", rows.get(2).child(1).text(), "Ohne alten Status bleibt es bei „Änderung“");
+        assertEquals("–", rows.get(2).child(3).text(), "Ohne new_/old_-Werte bleibt die Änderung leer");
         assertEquals("–", rows.get(2).child(4).text());
         assertEquals(List.of("Summe", "0,00 €", "0,00 €", "-5,00 €"), txTable.select("tr.pu-total td").eachText());
-        assertTrue(doc.text().contains("Storno-Buchungen mindern Bestellwert und Bemessungsgrundlage"), doc.text());
+        assertTrue(doc.text().contains("Stornos, Ablehnungen und Rückstufungen („zurück auf offen“) mindern Bestellwert und Bemessungsgrundlage"), doc.text());
+        assertTrue(doc.text().contains("„–“: Zu dieser Buchung liefert GoAffPro keinen passenden Bestellwert"), doc.text());
+    }
+
+    // ── Änderungsbuchungen (update) mit den Metadaten, wie GoAffPro sie liefert ──
+
+    /** Je Feld ein new_ und ein old_ Wert; die Provision zählt nur im Status approved. */
+    private static ObjectNode update(String oldStatus, String newStatus, String amount, String created, String orderNo,
+                                     String oldCommission, String newCommission, String oldValue, String newValue,
+                                     String oldBmg, String newBmg) {
+        ObjectNode tx = tx("update", 0.0, created, orderNo, null, null);
+        tx.put("amount", amount);
+        ObjectNode md = (ObjectNode) tx.get("metadata");
+        md.put("old_status", oldStatus);
+        md.put("new_status", newStatus);
+        md.put("old_affiliate_commission", oldCommission);
+        md.put("new_affiliate_commission", newCommission);
+        md.put("old_order_value", oldValue);
+        md.put("new_order_value", newValue);
+        md.put("old_commission_on", oldBmg);
+        md.put("new_commission_on", newBmg);
+        return tx;
+    }
+
+    private static Document overviewDoc(ObjectNode payment) throws Exception {
+        return Jsoup.parse(bodyHtml(overview(payment, affiliate(""), config(), "GS-1", "", "GUTSCHRIFT", 0)));
+    }
+
+    /** Zellen je Zeile - eachText() ließe leere Zellen weg und verschöbe die Spalten. */
+    private static List<List<String>> txRows(Document doc) {
+        List<List<String>> rows = new ArrayList<>();
+        for (Element row : doc.select("table.pu-grid").get(1).select("tbody tr:not(.pu-total)")) {
+            List<String> cells = new ArrayList<>();
+            for (Element cell : row.children()) cells.add(cell.text());
+            rows.add(cells);
+        }
+        return rows;
+    }
+
+    /**
+     * Regression zum Zahllauf 3591001: Bestellung #16791 kam als „new“ an und hat deshalb keine
+     * Erstbuchung - ihre Freigabe ist die einzige Buchung und trägt die volle Provision. Bisher
+     * standen Bestellwert und BMG dort als „–“, und die Summen passten nicht zur Provision.
+     */
+    @Test
+    void freigabeZaehltMitBestellwertUndBmgDerBestellung() throws Exception {
+        ObjectNode payment = payment();
+        ArrayNode txs = payment.putArray("transactions");
+        txs.add(tx("insert", 13.428, "2026-10-08T10:32:58Z", "#16406", "86.8", "67.14"));
+        txs.add(update("new", "approved", "23.340300", "2026-10-30T06:50:55Z", "#16791",
+                "23.3403", "23.3403", "141.8", "141.8", "119.62", "119.62"));
+        payment.put("amount", "36.77");
+
+        Document doc = overviewDoc(payment);
+        assertEquals(List.of("30.10.2026 07:50", "Direkt (Order) · Freigabe", "#16791", "141,80 €", "119,62 €", "23,34 €"),
+                txRows(doc).get(1));
+        assertEquals(List.of("Summe", "228,60 €", "186,76 €", "36,77 €"),
+                doc.select("table.pu-grid").get(1).select("tr.pu-total td").eachText());
+        assertEquals(List.of("Direkt (Order)", "228,60 €", "186,76 €", "36,77 €"),
+                doc.select("table.pu-grid").get(0).select("tbody tr").get(0).children().eachText());
+        String text = doc.text();
+        assertTrue(text.contains("Summe Bestellwert* 228,60 €"), text);
+        assertTrue(text.contains("Summe Bemessungsgrundlage 186,76 €"), text);
+        assertTrue(text.contains("Rundungsdifferenz (Betrag – Summe Provision) 0,00 €"), text);
+        assertTrue(text.contains("Freigaben zählen mit den Werten der Bestellung"), text);
+        assertFalse(text.contains("„–“:"), "Alle Zeilen tragen Werte");
+    }
+
+    @Test
+    void ablehnungUndRueckstufungMindernBestellwertUndBmg() throws Exception {
+        ObjectNode payment = payment();
+        ArrayNode txs = payment.putArray("transactions");
+        txs.add(update("approved", "rejected", "-21.370800", "2026-10-05T10:00:00Z", "#15919",
+                "21.3708", "21.3708", "122.5", "122.5", "97.14", "97.14"));
+        txs.add(update("approved", "new", "-4.664", "2026-10-06T10:00:00Z", "#6710",
+                "4.664", "4.664", "27.2", "27.2", "21.2", "21.2"));
+        payment.put("amount", "-26.03");
+
+        List<List<String>> rows = txRows(overviewDoc(payment));
+        assertEquals(List.of("Direkt (Order) · Ablehnung", "#15919", "-122,50 €", "-97,14 €", "-21,37 €"),
+                rows.get(0).subList(1, 6));
+        assertEquals(List.of("Direkt (Order) · zurück auf offen", "#6710", "-27,20 €", "-21,20 €", "-4,66 €"),
+                rows.get(1).subList(1, 6));
+    }
+
+    @Test
+    void korrekturZaehltMitDerDifferenz() throws Exception {
+        // Echte Korrektur aus GoAffPro: Provision 44,91 → 47,44 €, BMG 204,12 → 215,62 €, Bestellwert gleich
+        ObjectNode payment = payment();
+        payment.putArray("transactions").add(update("approved", "approved", "2.53", "2026-10-07T10:00:00Z", "#2105",
+                "44.9064", "47.4364", "195.61", "195.61", "204.12", "215.62"));
+        payment.put("amount", "2.53");
+
+        assertEquals(List.of("Direkt (Order) · Korrektur", "#2105", "0,00 €", "11,50 €", "2,53 €"),
+                txRows(overviewDoc(payment)).get(0).subList(1, 6));
+    }
+
+    @Test
+    void unstimmigeOderWertloseAenderungBleibtLeer() throws Exception {
+        ObjectNode payment = payment();
+        ArrayNode txs = payment.putArray("transactions");
+        // Betrag passt nicht zur Regel (Freigabe müsste 23,34 € buchen): lieber „–“ als eine falsche Zahl
+        txs.add(update("new", "approved", "5.00", "2026-10-02T10:00:00Z", "#1",
+                "23.3403", "23.3403", "141.8", "141.8", "119.62", "119.62"));
+        // Team-Provisionen tragen nur new_amount/old_amount
+        ObjectNode reward = MAPPER.createObjectNode();
+        reward.put("entity_type", "rewards");
+        reward.put("event_type", "update");
+        reward.put("amount", "2.865984");
+        reward.put("created_at", "2026-10-03T10:00:00Z");
+        reward.putObject("metadata").put("old_status", "new").put("new_status", "approved")
+                .put("old_amount", "2.865984").put("new_amount", "2.865984");
+        txs.add(reward);
+        // Ohne alten Status und ohne Provision: Bezeichnung „offen“ statt roh „new“, nichts zu zählen
+        ObjectNode pending = tx("update", 0.0, "2026-10-04T10:00:00Z", "#3", null, null);
+        ((ObjectNode) pending.get("metadata")).put("new_status", "new");
+        txs.add(pending);
+        payment.put("amount", "7.87");
+
+        Document doc = overviewDoc(payment);
+        List<List<String>> rows = txRows(doc);
+        assertEquals(List.of("Direkt (Order) · Freigabe", "#1", "–", "–", "5,00 €"), rows.get(0).subList(1, 6));
+        assertEquals(List.of("Team (Reward) · Freigabe", "", "–", "–", "2,87 €"), rows.get(1).subList(1, 6));
+        assertEquals(List.of("Direkt (Order) · Änderung (offen)", "#3", "0,00 €", "0,00 €", "0,00 €"), rows.get(2).subList(1, 6));
+        assertTrue(doc.text().contains("„–“: Zu dieser Buchung liefert GoAffPro keinen passenden Bestellwert"), doc.text());
     }
 
     @Test

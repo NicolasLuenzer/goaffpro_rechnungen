@@ -6879,7 +6879,8 @@ public class WebUiServer {
             "blocked", "gesperrt",
             "cancelled", "storniert",
             "canceled", "storniert",
-            "paid", "ausgezahlt");
+            "paid", "ausgezahlt",
+            "new", "offen");
 
     private static String goaffproStatusLabel(String raw) {
         String value = Objects.toString(raw, "").trim();
@@ -6901,7 +6902,7 @@ public class WebUiServer {
      * Eine GoAffPro-Buchung. Direkt/Team einheitlich über entity_type "orders". Ein Storno
      * (event_type delete) trägt den positiven Bestellwert der stornierten Bestellung - er zählt
      * hier negativ, sonst stünde die Bestellung doppelt in der Summe. Eine Änderung (update)
-     * korrigiert nur die Provision und trägt weder Bestellwert noch BMG.
+     * zählt Bestellwert und BMG nach derselben Regel wie ihre Provision, siehe updateOrderValues.
      */
     private static OverviewTx overviewTx(JsonNode tx) {
         JsonNode md = tx.path("metadata");
@@ -6909,9 +6910,16 @@ public class WebUiServer {
         boolean direct = "orders".equalsIgnoreCase(asText(tx, "entity_type"));
         boolean storno = "delete".equals(event);
         boolean change = "update".equals(event);
+        double commission = parseDoubleSafeStatic(asText(tx, "amount"));
         Double orderValue = null;
         Double bmg = null;
-        if (!change) {
+        if (change) {
+            double[] values = updateOrderValues(md, commission);
+            if (values != null) {
+                orderValue = values[0];
+                bmg = values[1];
+            }
+        } else {
             if (md.hasNonNull("order_value")) orderValue = parseDoubleSafeStatic(asText(md, "order_value"));
             if (md.hasNonNull("commission_on")) bmg = parseDoubleSafeStatic(asText(md, "commission_on"));
             if (storno) {
@@ -6923,8 +6931,7 @@ public class WebUiServer {
         if (storno) {
             typeLabel += " · Storno";
         } else if (change) {
-            String status = goaffproStatusLabel(asText(md, "new_status"));
-            typeLabel += " · Änderung" + (status.isBlank() ? "" : " (" + status + ")");
+            typeLabel += " · " + changeLabel(asText(md, "old_status"), asText(md, "new_status"));
         }
         OffsetDateTime time = null;
         try {
@@ -6932,7 +6939,54 @@ public class WebUiServer {
         } catch (Exception ignored) {
         }
         return new OverviewTx(time, formatDateTimeEuropeBerlinStatic(asText(tx, "created_at")), direct, typeLabel,
-                asText(md, "order_number"), orderValue, bmg, parseDoubleSafeStatic(asText(tx, "amount")), storno || change);
+                asText(md, "order_number"), orderValue, bmg, commission, storno || change);
+    }
+
+    /**
+     * Bestellwert und BMG einer Änderungsbuchung. GoAffPro bucht eine Provision erst, wenn sie
+     * freigegeben ist: Kommt eine Bestellung mit Status "new" an, gibt es keine Erstbuchung, und
+     * ihre Freigabe (new → approved) ist die einzige Buchung - mit der vollen Provision. Ablehnung
+     * oder Rückstufung (approved → rejected/new) zieht sie voll ab, eine Korrektur (approved →
+     * approved) bucht die Differenz. Bestellwert und BMG folgen derselben Regel aus den
+     * new_/old_-Feldern. Passt die Regel nicht centgenau zum gebuchten Betrag oder fehlen Felder
+     * (Team-Provisionen tragen nur new_amount/old_amount), bleibt es bei null und damit "–".
+     *
+     * @return {Bestellwert, BMG} oder null
+     */
+    private static double[] updateOrderValues(JsonNode md, double amount) {
+        boolean countsNew = "approved".equalsIgnoreCase(asText(md, "new_status").trim());
+        boolean countsOld = "approved".equalsIgnoreCase(asText(md, "old_status").trim());
+        // je Seite: [0] Provision, [1] Bestellwert, [2] BMG
+        double[] after = countsNew ? updateSide(md, "new_") : new double[3];
+        double[] before = countsOld ? updateSide(md, "old_") : new double[3];
+        if (after == null || before == null) return null;
+        if (Math.abs((after[0] - before[0]) - amount) > BALANCE_TOLERANCE) return null;
+        return new double[]{after[1] - before[1], after[2] - before[2]};
+    }
+
+    /** Provision, Bestellwert und BMG einer Seite der Änderung (new_ oder old_), null wenn eines fehlt. */
+    private static double[] updateSide(JsonNode md, String prefix) {
+        String[] fields = {"affiliate_commission", "order_value", "commission_on"};
+        double[] values = new double[fields.length];
+        for (int i = 0; i < fields.length; i++) {
+            String raw = asText(md, prefix + fields[i]);
+            if (raw.isBlank()) return null;
+            values[i] = parseDoubleSafeStatic(raw);
+        }
+        return values;
+    }
+
+    /** Was die Änderung bewirkt hat. Ohne alten Status bleibt es beim neuen Status. */
+    private static String changeLabel(String oldStatus, String newStatus) {
+        String from = Objects.toString(oldStatus, "").trim().toLowerCase(java.util.Locale.ROOT);
+        String to = Objects.toString(newStatus, "").trim().toLowerCase(java.util.Locale.ROOT);
+        if (!from.isEmpty()) {
+            if ("approved".equals(to)) return "approved".equals(from) ? "Korrektur" : "Freigabe";
+            if ("approved".equals(from) && "rejected".equals(to)) return "Ablehnung";
+            if ("approved".equals(from) && ("new".equals(to) || "pending".equals(to))) return "zurück auf offen";
+        }
+        String status = goaffproStatusLabel(newStatus);
+        return "Änderung" + (status.isBlank() ? "" : " (" + status + ")");
     }
 
     /**
@@ -6961,6 +7015,7 @@ public class WebUiServer {
         OffsetDateTime first = null;
         OffsetDateTime last = null;
         boolean anyCorrection = false;
+        boolean anyWithoutValues = false;
         for (OverviewTx row : rows) {
             int i = row.direct() ? 0 : 1;
             if (row.direct()) directCount++; else teamCount++;
@@ -6968,6 +7023,7 @@ public class WebUiServer {
             if (row.bmg() != null) bmgSum[i] += row.bmg();
             provSum[i] += row.commission();
             anyCorrection |= row.correction();
+            anyWithoutValues |= row.orderValue() == null || row.bmg() == null;
             if (row.time() != null) {
                 if (first == null || row.time().isBefore(first)) first = row.time();
                 if (last == null || row.time().isAfter(last)) last = row.time();
@@ -7052,8 +7108,11 @@ public class WebUiServer {
         html.append("</tbody></table>");
         html.append("<div class=\"pu-note\">* Bestellwert exkl. abgezogener Rabatte (so wie im System übergeben).");
         if (anyCorrection) {
-            html.append(" Storno-Buchungen mindern Bestellwert und Bemessungsgrundlage. Änderungsbuchungen korrigieren")
-                    .append(" nur die Provision; Bestellwert und BMG stehen dort als „–“.");
+            html.append(" Stornos, Ablehnungen und Rückstufungen („zurück auf offen“) mindern Bestellwert und")
+                    .append(" Bemessungsgrundlage; Freigaben zählen mit den Werten der Bestellung, Korrekturen mit der Differenz.");
+        }
+        if (anyWithoutValues) {
+            html.append(" „–“: Zu dieser Buchung liefert GoAffPro keinen passenden Bestellwert (z. B. Team-Provision).");
         }
         html.append("</div>");
 

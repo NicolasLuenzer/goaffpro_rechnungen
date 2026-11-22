@@ -95,8 +95,14 @@ eigenen Nachweisführung und ein Inhalts-Hash.
 
 - **Stornos** (GoAffPro-Buchung „delete“) mindern Bestellwert und Bemessungsgrundlage und sind in
   der Liste als „Storno“ gekennzeichnet.
-- **Änderungen** (Buchung „update“, z. B. Status → abgelehnt) korrigieren nur die Provision;
-  Bestellwert und BMG stehen dort als „–“.
+- **Änderungen** (Buchung „update“) zählen nach derselben Regel wie ihre Provision. GoAffPro bucht
+  eine Provision erst, wenn sie freigegeben ist; eine Bestellung, die als „offen“ ankommt, hat
+  deshalb keine eigene Erstbuchung. Daraus folgt:
+  - **Freigabe** (offen → freigegeben) zählt mit Bestellwert und BMG der Bestellung.
+  - **Ablehnung** und **zurück auf offen** ziehen Bestellwert und BMG wieder ab.
+  - **Korrektur** (bleibt freigegeben, z. B. geänderte Provision) zählt mit der Differenz.
+- „–“ steht, wenn die Buchung keinen Bestellwert enthält (z. B. Team-Provisionen) oder ihre Werte
+  nicht centgenau zur gebuchten Provision passen.
 - Der Betrag des Zahllaufs heißt in der Übersicht „Gutschriftbetrag (netto)“ – „Auszahlungsbetrag“
   auf Seite 1 ist netto plus Umsatzsteuer.
 
