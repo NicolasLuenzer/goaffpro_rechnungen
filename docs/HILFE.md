@@ -182,6 +182,13 @@ keine neue fortlaufende Nummer, sondern eine **Version** der Stammnummer:
   vergebene alte Nummer.
 - Die Zuordnung Zahllauf → Stammnummer liegt in der GoAffPro-Datenbank (Tabelle
   `document_numbers`) und ist damit Teil jeder Datensicherung.
+- **Nummernvergabe während eines Syncs:** Sync und Nummernvergabe schreiben in dieselbe
+  Datenbank. Die Vergabe holt sich deshalb zuerst die Schreibsperre und zieht erst dann eine
+  Nummer. Schreibt der Sync gerade, wartet sie bis zu 20 Sekunden. Ist die Datenbank danach noch
+  belegt, kommt die Meldung „Die Datenbank ist gerade belegt …“, und es wird keine Nummer
+  verbraucht. Einfach kurz warten oder unter GoAffPro Sync „Sync pausieren“ und erneut erstellen.
+  (Bis zum 23.11.2026 konnte die Vergabe in diesem Fall abbrechen, nachdem die Nummer schon gezogen
+  war; diese Nummer blieb dann unbenutzt.)
 
 ## 5) E-Mail-Text und Versandverhalten
 

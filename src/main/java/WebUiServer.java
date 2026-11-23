@@ -4976,7 +4976,17 @@ public class WebUiServer {
                 String timestamp = FILE_TIMESTAMP.format(LocalDateTime.now());
                 // Ein Zahllauf hat genau eine Stammnummer; jede erneute Erzeugung ist eine Version
                 // davon (GS-2026-0042-1, -2 ...) und verweist auf den Beleg, den sie ersetzt.
-                DocumentNumberRegistry.Issued issued = issueDocumentNumber(config, exportDir, paymentId, kind);
+                DocumentNumberRegistry.Issued issued;
+                try {
+                    issued = issueDocumentNumber(config, exportDir, paymentId, kind);
+                } catch (DocumentNumberRegistry.DatabaseBusyException busy) {
+                    // Der Sync hielt die Datenbank zu lange: Es wurde nichts vergeben, ein neuer
+                    // Versuch ist gefahrlos. 503 statt 500 - ein vorübergehender Zustand, kein Programmfehler.
+                    rememberError(busy);
+                    sendResponse(exchange, 503, "application/json", "{\"error\":\"" + escapeJson(busy.getMessage())
+                            + "\",\"code\":\"datenbank-belegt\"}");
+                    return;
+                }
                 String gutschriftNr = issued.number();
                 String replacesNr = issued.replaces();
                 TaxTreatment taxTreatment = resolveTaxTreatment(affiliate);

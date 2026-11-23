@@ -13,9 +13,16 @@ import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Optional;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -116,6 +123,138 @@ class BelegnummerVersionTest {
         // Der gescheiterte Versuch hinterlässt nichts: Zahllauf 2 bekommt beim nächsten Mal eine neue Nummer.
         assertEquals("GS-2026-0006", DocumentNumberRegistry.issue(db, "2", "gutschrift",
                 Optional::empty, () -> "GS-2026-0006").number());
+    }
+
+    // ── Nummernvergabe neben dem Sync ──
+
+    private static Connection open(Path db) throws SQLException {
+        return DriverManager.getConnection("jdbc:sqlite:" + db.toAbsolutePath());
+    }
+
+    /** Sync-Datenbank wie auf der NAS: WAL-Modus, dazu eine Tabelle, in die der „Sync“ schreibt. */
+    private static Path syncDatabase(Path dir) throws Exception {
+        Path db = dir.resolve("goaffpro_sync.sqlite");
+        try (Connection c = open(db); Statement st = c.createStatement()) {
+            st.execute("PRAGMA journal_mode=WAL");
+            st.execute("CREATE TABLE sync_rows (id INTEGER PRIMARY KEY, payload TEXT)");
+        }
+        return db;
+    }
+
+    /**
+     * NAS, 23.11.2026 13:06: Während ein Delta-Sync schrieb, scheiterte die Nummernvergabe mit
+     * SQLITE_BUSY - nachdem die Nummer schon gezogen war. Der Ersatz-Sync schreibt wie der echte:
+     * WAL, Autocommit, eine Zeile nach der anderen. Die Suche im Altbestand dauert hier 20 ms; in
+     * dieser Zeit schreibt der Sync und machte den Lese-Snapshot der Vergabe bisher ungültig.
+     */
+    @Test
+    void nummernvergabeNebenSchreibendemSync() throws Exception {
+        Path db = syncDatabase(tmp);
+        AtomicBoolean stop = new AtomicBoolean(false);
+        AtomicInteger written = new AtomicInteger();
+        AtomicReference<Throwable> syncError = new AtomicReference<>();
+        Thread sync = new Thread(() -> {
+            try (Connection c = open(db); Statement st = c.createStatement()) {
+                st.execute("PRAGMA busy_timeout=10000");
+                try (PreparedStatement ps = c.prepareStatement("INSERT INTO sync_rows (payload) VALUES (?)")) {
+                    while (!stop.get()) {
+                        ps.setString(1, "zeile " + written.get());
+                        ps.executeUpdate();
+                        written.incrementAndGet();
+                        Thread.sleep(2);
+                    }
+                }
+            } catch (Throwable t) {
+                syncError.set(t);
+            }
+        }, "ersatz-sync");
+        sync.start();
+        long deadline = System.currentTimeMillis() + 5000;
+        while (written.get() == 0 && syncError.get() == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(1);
+        }
+        int writtenBefore = written.get();
+        int writtenAfter;
+        AtomicInteger drawn = new AtomicInteger();
+        try {
+            for (int i = 1; i <= 30; i++) {
+                DocumentNumberRegistry.Issued issued = DocumentNumberRegistry.issue(db, String.valueOf(3597800 + i),
+                        "gutschrift",
+                        () -> {
+                            try {
+                                Thread.sleep(20);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                            return Optional.empty();
+                        },
+                        () -> String.format("GS-2026-%04d", drawn.incrementAndGet()));
+                assertEquals(String.format("GS-2026-%04d", i), issued.number());
+            }
+            // Während einer Vergabe wartet der Sync (busy_timeout) - danach schreibt er normal weiter.
+            writtenAfter = written.get();
+            long resume = System.currentTimeMillis() + 5000;
+            while (written.get() <= writtenAfter && syncError.get() == null && System.currentTimeMillis() < resume) {
+                Thread.sleep(1);
+            }
+        } finally {
+            stop.set(true);
+            sync.join();
+        }
+        assertNull(syncError.get(), () -> "Der Ersatz-Sync ist gescheitert: " + syncError.get());
+        assertTrue(writtenBefore > 0, "Der Ersatz-Sync schrieb schon, als die Vergabe begann");
+        assertTrue(written.get() > writtenAfter, "Nach den Vergaben schreibt der Sync weiter");
+        assertEquals(30, drawn.get(), "Jede gezogene Nummer wurde auch vergeben - keine Lücke");
+    }
+
+    /** Die Vergabe hält die Schreibsperre, bevor sie liest und eine Nummer zieht. */
+    @Test
+    void nummernvergabeSperrtDieDatenbankVorDemZiehen() throws Exception {
+        Path db = syncDatabase(tmp);
+        AtomicReference<String> syncResult = new AtomicReference<>("");
+        DocumentNumberRegistry.Issued issued = DocumentNumberRegistry.issue(db, "3597878", "gutschrift", () -> {
+            try (Connection other = open(db); Statement st = other.createStatement()) {
+                st.execute("PRAGMA busy_timeout=0");
+                st.executeUpdate("INSERT INTO sync_rows (payload) VALUES ('dazwischen')");
+                syncResult.set("geschrieben");
+            } catch (SQLException e) {
+                syncResult.set("gesperrt: " + e.getMessage());
+            }
+            return Optional.empty();
+        }, () -> "GS-2026-0058");
+
+        assertEquals("GS-2026-0058", issued.number());
+        assertTrue(syncResult.get().startsWith("gesperrt"),
+                "Während der Vergabe darf niemand dazwischenschreiben: " + syncResult.get());
+    }
+
+    /** Hält der Sync die Sperre zu lange, bricht die Vergabe ab, bevor sie eine Nummer zieht. */
+    @Test
+    void belegteDatenbankVerbrauchtKeineNummer() throws Exception {
+        Path db = syncDatabase(tmp);
+        DocumentNumberRegistry.issue(db, "3597877", "gutschrift", Optional::empty, () -> "GS-2026-0057");
+        AtomicInteger drawn = new AtomicInteger();
+
+        try (Connection sync = open(db); Statement st = sync.createStatement()) {
+            st.execute("BEGIN IMMEDIATE");
+            st.executeUpdate("INSERT INTO sync_rows (payload) VALUES ('Sync schreibt gerade')");
+            long start = System.nanoTime();
+            DocumentNumberRegistry.DatabaseBusyException busy = assertThrows(DocumentNumberRegistry.DatabaseBusyException.class,
+                    () -> DocumentNumberRegistry.issue(db, "3597878", "gutschrift", Optional::empty, () -> {
+                        drawn.incrementAndGet();
+                        return "GS-2026-0058";
+                    }, 300));
+            long waitedMs = (System.nanoTime() - start) / 1_000_000;
+            assertTrue(waitedMs >= 250, "Die Vergabe wartet erst auf den Sync, bevor sie aufgibt (" + waitedMs + " ms)");
+            assertTrue(busy.getMessage().contains("Es wurde keine Belegnummer vergeben."), busy.getMessage());
+            st.execute("ROLLBACK");
+        }
+
+        assertEquals(0, drawn.get(), "Ohne Sperre wird keine Nummer gezogen - also auch keine verbraucht");
+        DocumentNumberRegistry.Issued issued = DocumentNumberRegistry.issue(db, "3597878", "gutschrift",
+                Optional::empty, () -> "GS-2026-0058");
+        assertEquals("GS-2026-0058", issued.number(), "Der nächste Versuch bekommt die nächste freie Nummer");
+        assertEquals("", issued.replaces(), "Der abgebrochene Versuch hat nichts im Register hinterlassen");
     }
 
     // ── Altbestand aus Export-Ordnern und Versandprotokoll ──

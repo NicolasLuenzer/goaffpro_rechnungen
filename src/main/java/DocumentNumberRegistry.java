@@ -4,6 +4,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
 import java.time.Instant;
 import java.util.Optional;
@@ -39,6 +40,21 @@ public final class DocumentNumberRegistry {
 
     private static final Object LOCK = new Object();
 
+    /** So lange wartet die Vergabe auf die Schreibsperre, wenn gerade der Sync schreibt. */
+    static final int LOCK_TIMEOUT_MS = 20_000;
+
+    /**
+     * Die Datenbank blieb belegt, solange die Vergabe auf die Schreibsperre wartete. Bis dahin
+     * wurde weder gelesen noch eine Nummer gezogen - ein neuer Versuch ist gefahrlos.
+     */
+    public static final class DatabaseBusyException extends Exception {
+        DatabaseBusyException(Throwable cause) {
+            super("Die Datenbank ist gerade belegt – vermutlich schreibt der GoAffPro-Sync. Bitte in einer Minute"
+                    + " erneut versuchen oder unter GoAffPro Sync „Sync pausieren“. Es wurde keine Belegnummer vergeben.",
+                    cause);
+        }
+    }
+
     private DocumentNumberRegistry() {
     }
 
@@ -49,10 +65,28 @@ public final class DocumentNumberRegistry {
      *                        liefert die vor Einführung des Registers vergebenen Nummern
      * @param neueStammnummer zieht die nächste fortlaufende Nummer; wird nur aufgerufen, wenn
      *                        weder Register noch Altbestand eine Stammnummer kennen
+     * @throws DatabaseBusyException wenn die Datenbank länger als {@link #LOCK_TIMEOUT_MS} belegt war
      */
     public static Issued issue(Path db, String paymentId, String kind,
                                Supplier<Optional<Existing>> altbestand,
                                Callable<String> neueStammnummer) throws Exception {
+        return issue(db, paymentId, kind, altbestand, neueStammnummer, LOCK_TIMEOUT_MS);
+    }
+
+    /**
+     * Die Schreibsperre kommt zuerst (BEGIN IMMEDIATE), erst danach wird gelesen und eine Nummer
+     * gezogen. Bisher begann die Transaktion lesend und brauchte die Sperre erst beim Eintragen.
+     * Schrieb der Sync dazwischen, ließ SQLite die Transaktion nicht mehr schreiben (SQLITE_BUSY
+     * bzw. BUSY_SNAPSHOT, ohne auf busy_timeout zu warten) - und die schon gezogene Nummer war
+     * verloren (NAS, 23.11.2026).
+     *
+     * Bewusst ein ausdrückliches BEGIN/COMMIT bei eingeschaltetem JDBC-Autocommit: Mit dem
+     * Transaktionsmodus IMMEDIATE von sqlite-jdbc begänne nach commit() sofort die nächste
+     * Schreibtransaktion - die könnte nach einem erfolgreichen Commit noch an BUSY scheitern.
+     */
+    static Issued issue(Path db, String paymentId, String kind,
+                        Supplier<Optional<Existing>> altbestand,
+                        Callable<String> neueStammnummer, int lockTimeoutMs) throws Exception {
         if (paymentId == null || paymentId.isBlank()) {
             throw new IllegalArgumentException("paymentId fehlt");
         }
@@ -60,18 +94,46 @@ public final class DocumentNumberRegistry {
             throw new IllegalArgumentException("Dokumentart fehlt");
         }
         synchronized (LOCK) {
-            try (Connection c = connect(db)) {
-                ensureTable(c);
-                c.setAutoCommit(false);
+            try (Connection c = connect(db, lockTimeoutMs)) {
+                beginImmediate(c);
                 try {
+                    ensureTable(c);
                     Issued issued = issueInTransaction(c, paymentId.trim(), kind.trim(), altbestand, neueStammnummer);
-                    c.commit();
+                    execute(c, "COMMIT");
                     return issued;
                 } catch (Exception e) {
-                    c.rollback();
+                    rollbackQuietly(c);
                     throw e;
                 }
             }
+        }
+    }
+
+    private static void beginImmediate(Connection c) throws Exception {
+        try {
+            execute(c, "BEGIN IMMEDIATE");
+        } catch (SQLException e) {
+            if (isBusy(e)) throw new DatabaseBusyException(e);
+            throw e;
+        }
+    }
+
+    /** SQLITE_BUSY samt erweiterter Codes wie BUSY_SNAPSHOT oder BUSY_RECOVERY. */
+    static boolean isBusy(SQLException e) {
+        return (e.getErrorCode() & 0xFF) == 5;
+    }
+
+    private static void execute(Connection c, String sql) throws SQLException {
+        try (Statement st = c.createStatement()) {
+            st.execute(sql);
+        }
+    }
+
+    private static void rollbackQuietly(Connection c) {
+        try {
+            execute(c, "ROLLBACK");
+        } catch (Exception ignored) {
+            // Beim Schließen der Verbindung verwirft SQLite die offene Transaktion ohnehin.
         }
     }
 
@@ -161,13 +223,16 @@ public final class DocumentNumberRegistry {
         }
     }
 
-    private static Connection connect(Path db) throws Exception {
+    private static Connection connect(Path db, int lockTimeoutMs) throws Exception {
         Path parent = db.toAbsolutePath().getParent();
         if (parent != null) Files.createDirectories(parent);
         Connection connection = DriverManager.getConnection("jdbc:sqlite:" + db.toAbsolutePath());
         try (Statement st = connection.createStatement()) {
-            // Der Sync-Thread schreibt in dieselbe Datei; kurz warten statt sofort SQLITE_BUSY.
-            st.execute("PRAGMA busy_timeout=10000");
+            // Der Sync-Thread schreibt in dieselbe Datei: So lange wartet BEGIN IMMEDIATE auf ihn.
+            st.execute("PRAGMA busy_timeout=" + Math.max(0, lockTimeoutMs));
+        } catch (SQLException e) {
+            connection.close();
+            throw e;
         }
         return connection;
     }
