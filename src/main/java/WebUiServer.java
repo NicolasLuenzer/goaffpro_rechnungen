@@ -71,6 +71,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -344,6 +345,150 @@ public class WebUiServer {
                 return t;
             });
 
+    // ── Fehlerprotokoll ──
+    // Fehler standen bisher nur in der Konsole des Containers oder kurz in einer Statuszeile, die
+    // das Polling nach spätestens einer Minute überschrieb. Jetzt sammelt sie eine Datei im
+    // Datenverzeichnis; die Oberfläche zeigt sie unter Einstellungen → Fehlerprotokoll.
+    private static final ErrorLog ERROR_LOG = new ErrorLog(WebUiServer::errorLogFile);
+
+    /** Ausnahme der laufenden Anfrage, damit sendResponse sie samt Stacktrace protokollieren kann. */
+    private static final ThreadLocal<Throwable> PENDING_ERROR = new ThreadLocal<>();
+
+    private static Path errorLogFile() {
+        Properties config;
+        try {
+            config = loadConfigWithUiSettings();
+        } catch (Exception e) {
+            config = new Properties();
+        }
+        return GoAffProSyncService.resolveDataDir(config).resolve(ErrorLog.FILENAME);
+    }
+
+    /** Werte, die nie im Protokoll stehen dürfen. */
+    private static List<String> knownSecrets() {
+        List<String> secrets = new ArrayList<>();
+        try {
+            Properties config = loadConfigWithUiSettings();
+            secrets.add(resolveGoaffproApiKey(config));
+            secrets.add(getSecretOrConfig(config, "SMTP_PASSWORD", "smtpPassword", ""));
+        } catch (Exception ignored) {
+            // Dann eben nur die Umgebung.
+        }
+        secrets.add(System.getenv("GOAFFPRO_API_KEY"));
+        secrets.add(System.getenv("SMTP_PASSWORD"));
+        return secrets;
+    }
+
+    /** Ersetzt e.printStackTrace() in Handlern: Konsole wie bisher, dazu der Stacktrace fürs Protokoll. */
+    private static void rememberError(Throwable t) {
+        if (t == null) return;
+        t.printStackTrace();
+        PENDING_ERROR.set(t);
+    }
+
+    private static String stackTraceText(Throwable t) {
+        if (t == null) return "";
+        java.io.StringWriter writer = new java.io.StringWriter();
+        t.printStackTrace(new java.io.PrintWriter(writer));
+        return writer.toString();
+    }
+
+    /** Fehler außerhalb einer Anfrage: Zeitpläne, Datensicherung, Mail an die Buchhaltung. */
+    private static void recordError(String source, String area, String action, String message, Throwable t) {
+        String text = message != null && !message.isBlank() ? message : GoAffProSyncService.describeThrowable(t);
+        ERROR_LOG.record(source, area, action, 0, text, stackTraceText(t), knownSecrets());
+    }
+
+    /** Bereich der Oberfläche zu einem API-Pfad - damit im Protokoll steht, wo es klemmte. */
+    private static String errorAreaFor(String path) {
+        String p = Objects.toString(path, "");
+        if (p.startsWith("/api/provisionen-goaffpro") || p.startsWith("/api/commissions")
+                || p.startsWith("/api/mail-log") || p.startsWith("/api/settings/recipient-mode")) return "Gutschriftservice";
+        if (p.startsWith("/api/settings")) return "Einstellungen";
+        if (p.startsWith("/api/analytics")) return "Auswertungen";
+        if (p.startsWith("/api/validation")) return "Validierungen";
+        if (p.startsWith("/api/sync")) return "GoAffPro Sync";
+        if (p.startsWith("/api/backup")) return "Datensicherung";
+        return "Allgemein";
+    }
+
+    /** Anfragezeile fürs Protokoll; Parameter, die nach Zugangsdaten klingen, ohne Wert. */
+    private static String errorActionFor(String method, URI uri) {
+        if (uri == null) return Objects.toString(method, "");
+        StringBuilder out = new StringBuilder(Objects.toString(method, "")).append(' ').append(uri.getPath());
+        String query = uri.getRawQuery();
+        if (query != null && !query.isBlank()) {
+            List<String> parts = new ArrayList<>();
+            for (String part : query.split("&")) {
+                int eq = part.indexOf('=');
+                String name = eq >= 0 ? part.substring(0, eq) : part;
+                boolean secret = name.toLowerCase(java.util.Locale.ROOT).matches(".*(key|token|pass|secret|auth).*");
+                parts.add(secret ? name + "=" + ErrorLog.REDACTED : part);
+            }
+            out.append('?').append(String.join("&", parts));
+        }
+        return out.toString();
+    }
+
+    /** Hält eine Fehlerantwort (ab HTTP 400) fest; die Fehlerprotokoll-Endpunkte selbst nicht. */
+    private static void recordErrorResponse(HttpExchange exchange, int status, String contentType, String body) {
+        Throwable cause = PENDING_ERROR.get();
+        PENDING_ERROR.remove();
+        try {
+            URI uri = exchange.getRequestURI();
+            String path = uri != null ? Objects.toString(uri.getPath(), "") : "";
+            if (!path.startsWith("/api/") || path.startsWith("/api/fehlerprotokoll")) return;
+            String message = Objects.toString(body, "");
+            if (contentType != null && contentType.contains("json")) {
+                try {
+                    JsonNode json = OBJECT_MAPPER.readTree(message);
+                    // Eine Rückfrage (z. B. Altbuchungen bestätigen) ist kein Fehler.
+                    if (json.path("confirmable").asBoolean(false)) return;
+                    if (json.hasNonNull("error")) message = json.get("error").asText();
+                } catch (Exception ignored) {
+                    // Kein JSON - dann der Rohtext.
+                }
+            }
+            if ((message.isBlank() || "null".equals(message)) && cause != null) {
+                message = GoAffProSyncService.describeThrowable(cause);
+            }
+            ERROR_LOG.record("Server", errorAreaFor(path), errorActionFor(exchange.getRequestMethod(), uri), status,
+                    message, stackTraceText(cause), knownSecrets());
+        } catch (Exception ignored) {
+            // Das Protokoll darf die Antwort nie gefährden.
+        }
+    }
+
+    /**
+     * Rahmen um jeden Handler. Was ein Handler nicht selbst abfing, endete bisher als
+     * abgebrochene Verbindung ("Failed to fetch") ohne jede Spur. Jetzt gibt es eine
+     * Fehlerantwort und einen Eintrag im Fehlerprotokoll.
+     */
+    private static HttpHandler logged(HttpHandler handler) {
+        return exchange -> {
+            PENDING_ERROR.remove();
+            try {
+                handler.handle(exchange);
+            } catch (Throwable t) {
+                t.printStackTrace();
+                if (exchange.getResponseCode() == -1) {
+                    PENDING_ERROR.set(t);
+                    try {
+                        sendResponse(exchange, 500, "application/json", "{\"error\":\""
+                                + escapeJson("Interner Fehler: " + GoAffProSyncService.describeThrowable(t)) + "\"}");
+                    } catch (Exception ignored) {
+                        // Verbindung schon weg.
+                    }
+                }
+                // Lief die Antwort schon, hat meist der Browser abgebrochen (z. B. ein Download) -
+                // das ist kein Fehler der Anwendung und kommt nicht ins Protokoll.
+                exchange.close();
+            } finally {
+                PENDING_ERROR.remove();
+            }
+        };
+    }
+
     public static void main(String[] args) throws IOException {
         HttpServer server;
         try {
@@ -385,50 +530,53 @@ public class WebUiServer {
                 throw e;
             }
         }
-        server.createContext("/", new UiHandler());
-        server.createContext("/api/executables", new ExecutablesHandler());
-        server.createContext("/api/provisionen-goaffpro/poll", new PollGoaffproHandler());
-        server.createContext("/api/settings", new SettingsHandler());
-        server.createContext("/api/settings/recipient-mode", new RecipientModeHandler());
-        server.createContext("/api/provisionen-goaffpro/export-pdf", new ExportPdfHandler());
-        server.createContext("/api/provisionen-goaffpro/invoice-details-pdf", new InvoiceDetailsPdfHandler());
-        server.createContext("/api/provisionen-goaffpro/invoice-preview-pdf", new InvoicePreviewPdfHandler());
-        server.createContext("/api/mail-log", new MailLogHandler());
-        server.createContext("/api/mail-log/download", new MailLogDownloadHandler());
-        server.createContext("/api/version", new VersionHandler());
-        server.createContext("/api/version/history", new VersionHistoryHandler());
-        server.createContext("/api/analytics/fetch", new AnalyticsFetchHandler());
-        server.createContext("/api/analytics/advisor-detail", new AnalyticsAdvisorDetailHandler());
-        server.createContext("/api/analytics/parties", new AnalyticsPartiesHandler());
-        server.createContext("/api/analytics/new-customers", new AnalyticsNewCustomersHandler());
-        server.createContext("/api/analytics/new-customers/leaders", new AnalyticsLeaderNewCustomersHandler());
-        server.createContext("/api/analytics/new-customers/leaders/weekly-mails/preview", new LeaderWeeklyMailPreviewHandler());
-        server.createContext("/api/analytics/new-customers/leaders/weekly-mails/send", new LeaderWeeklyMailSendHandler());
-        server.createContext("/api/sync/status", new GoAffProSyncStatusHandler());
-        server.createContext("/api/sync/inventory", new GoAffProSyncInventoryHandler());
-        server.createContext("/api/sync/runs", new GoAffProSyncRunsHandler());
-        server.createContext("/api/sync/log", new GoAffProSyncLogHandler());
-        server.createContext("/api/sync/akte/list", new GoAffProAkteListHandler());
-        server.createContext("/api/sync/akte", new GoAffProAkteHandler());
-        server.createContext("/api/sync/run", new GoAffProSyncRunHandler());
-        server.createContext("/api/sync/diagnostics/run", new GoAffProSyncDiagnosticsRunHandler());
-        server.createContext("/api/sync/diagnostics/latest", new GoAffProSyncDiagnosticsLatestHandler());
-        server.createContext("/api/sync/diagnostics/runs", new GoAffProSyncDiagnosticsRunsHandler());
-        server.createContext("/api/sync/pause", new GoAffProSyncPauseHandler());
-        server.createContext("/api/sync/resume", new GoAffProSyncResumeHandler());
-        server.createContext("/api/commissions/add-latest", new AddLatestCommissionHandler());
-        server.createContext("/api/commissions/remove", new RemoveCommissionHandler());
-        server.createContext("/api/commissions/rebuild-from-payments", new RebuildCommissionHistoryHandler());
-        server.createContext("/api/help", new HelpHandler());
-        server.createContext("/api/validation/advisors", new ValidationAdvisorsHandler());
-        server.createContext("/api/validation/advisors/tree", new ValidationAdvisorTreeHandler());
-        server.createContext("/api/validation/send-reminder", new ValidationReminderMailHandler());
-        server.createContext("/api/validation/reminder-log", new ValidationReminderLogHandler());
-        server.createContext("/api/backup/status", new BackupStatusHandler());
-        server.createContext("/api/backup/export", new BackupExportHandler());
-        server.createContext("/api/backup/download", new BackupDownloadHandler());
-        server.createContext("/api/backup/import/upload", new BackupImportUploadHandler());
-        server.createContext("/api/backup/import/apply", new BackupImportApplyHandler());
+        server.createContext("/", logged(new UiHandler()));
+        server.createContext("/api/executables", logged(new ExecutablesHandler()));
+        server.createContext("/api/provisionen-goaffpro/poll", logged(new PollGoaffproHandler()));
+        server.createContext("/api/settings", logged(new SettingsHandler()));
+        server.createContext("/api/settings/recipient-mode", logged(new RecipientModeHandler()));
+        server.createContext("/api/provisionen-goaffpro/export-pdf", logged(new ExportPdfHandler()));
+        server.createContext("/api/provisionen-goaffpro/invoice-details-pdf", logged(new InvoiceDetailsPdfHandler()));
+        server.createContext("/api/provisionen-goaffpro/invoice-preview-pdf", logged(new InvoicePreviewPdfHandler()));
+        server.createContext("/api/mail-log", logged(new MailLogHandler()));
+        server.createContext("/api/mail-log/download", logged(new MailLogDownloadHandler()));
+        server.createContext("/api/version", logged(new VersionHandler()));
+        server.createContext("/api/version/history", logged(new VersionHistoryHandler()));
+        server.createContext("/api/analytics/fetch", logged(new AnalyticsFetchHandler()));
+        server.createContext("/api/analytics/advisor-detail", logged(new AnalyticsAdvisorDetailHandler()));
+        server.createContext("/api/analytics/parties", logged(new AnalyticsPartiesHandler()));
+        server.createContext("/api/analytics/new-customers", logged(new AnalyticsNewCustomersHandler()));
+        server.createContext("/api/analytics/new-customers/leaders", logged(new AnalyticsLeaderNewCustomersHandler()));
+        server.createContext("/api/analytics/new-customers/leaders/weekly-mails/preview", logged(new LeaderWeeklyMailPreviewHandler()));
+        server.createContext("/api/analytics/new-customers/leaders/weekly-mails/send", logged(new LeaderWeeklyMailSendHandler()));
+        server.createContext("/api/sync/status", logged(new GoAffProSyncStatusHandler()));
+        server.createContext("/api/sync/inventory", logged(new GoAffProSyncInventoryHandler()));
+        server.createContext("/api/sync/runs", logged(new GoAffProSyncRunsHandler()));
+        server.createContext("/api/sync/log", logged(new GoAffProSyncLogHandler()));
+        server.createContext("/api/sync/akte/list", logged(new GoAffProAkteListHandler()));
+        server.createContext("/api/sync/akte", logged(new GoAffProAkteHandler()));
+        server.createContext("/api/sync/run", logged(new GoAffProSyncRunHandler()));
+        server.createContext("/api/sync/diagnostics/run", logged(new GoAffProSyncDiagnosticsRunHandler()));
+        server.createContext("/api/sync/diagnostics/latest", logged(new GoAffProSyncDiagnosticsLatestHandler()));
+        server.createContext("/api/sync/diagnostics/runs", logged(new GoAffProSyncDiagnosticsRunsHandler()));
+        server.createContext("/api/sync/pause", logged(new GoAffProSyncPauseHandler()));
+        server.createContext("/api/sync/resume", logged(new GoAffProSyncResumeHandler()));
+        server.createContext("/api/commissions/add-latest", logged(new AddLatestCommissionHandler()));
+        server.createContext("/api/commissions/remove", logged(new RemoveCommissionHandler()));
+        server.createContext("/api/commissions/rebuild-from-payments", logged(new RebuildCommissionHistoryHandler()));
+        server.createContext("/api/help", logged(new HelpHandler()));
+        server.createContext("/api/validation/advisors", logged(new ValidationAdvisorsHandler()));
+        server.createContext("/api/validation/advisors/tree", logged(new ValidationAdvisorTreeHandler()));
+        server.createContext("/api/validation/send-reminder", logged(new ValidationReminderMailHandler()));
+        server.createContext("/api/validation/reminder-log", logged(new ValidationReminderLogHandler()));
+        server.createContext("/api/backup/status", logged(new BackupStatusHandler()));
+        server.createContext("/api/backup/export", logged(new BackupExportHandler()));
+        server.createContext("/api/backup/download", logged(new BackupDownloadHandler()));
+        server.createContext("/api/backup/import/upload", logged(new BackupImportUploadHandler()));
+        server.createContext("/api/backup/import/apply", logged(new BackupImportApplyHandler()));
+        server.createContext("/api/fehlerprotokoll", logged(new ErrorLogHandler()));
+        server.createContext("/api/fehlerprotokoll/leeren", logged(new ErrorLogClearHandler()));
+        server.createContext("/api/fehlerprotokoll/download", logged(new ErrorLogDownloadHandler()));
         // Ohne Executor bearbeitet der Dispatcher-Thread alle Anfragen nacheinander - ein
         // grosser Download (Datensicherung) wuerde die gesamte Anwendung blockieren.
         server.setExecutor(Executors.newFixedThreadPool(8, r -> {
@@ -439,6 +587,9 @@ public class WebUiServer {
         server.start();
         // Damit "Sync pausieren" auch einen bereits laufenden Sync anhält
         GOAFFPRO_SYNC_SERVICE.setLiveSettingsSource(WebUiServer::loadConfigWithUiSettings);
+        // Abgebrochene Sync-Läufe zusätzlich ins Fehlerprotokoll der Anwendung.
+        GoAffProSyncService.setFailureListener((context, message, t) ->
+                recordError("Hintergrund", "GoAffPro Sync", context, message, t));
         startLeaderWeeklyMailScheduler();
         startGoAffProSyncScheduler();
 
@@ -474,6 +625,8 @@ public class WebUiServer {
                 }
             } catch (Exception e) {
                 System.err.println("GoAffPro Sync Scheduler: " + e.getMessage());
+                recordError("Hintergrund", "GoAffPro Sync", "Zeitplan (stündlich/nächtlich)",
+                        "Sync-Zeitplan: " + GoAffProSyncService.describeThrowable(e), e);
             }
         }, 90, 60, TimeUnit.SECONDS);
     }
@@ -490,6 +643,8 @@ public class WebUiServer {
                 runLeaderWeeklyMailSchedulerTick();
             } catch (Exception e) {
                 System.err.println("Führungskräfte-Wochenmail-Scheduler: " + e.getMessage());
+                recordError("Hintergrund", "Auswertungen", "Wochenmail an Führungskräfte (Zeitplan)",
+                        "Wochenmail-Zeitplan: " + GoAffProSyncService.describeThrowable(e), e);
             }
         }, 60, 60, TimeUnit.SECONDS);
     }
@@ -764,6 +919,7 @@ public class WebUiServer {
             } catch (Exception e) {
                 Map<String, String> err = new HashMap<>();
                 err.put("error", e.getMessage());
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", OBJECT_MAPPER.writeValueAsString(err));
             }
         }
@@ -1157,6 +1313,7 @@ public class WebUiServer {
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
                     sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
                 } catch (Exception e) {
+                    rememberError(e);
                     sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
                 }
                 return;
@@ -1188,7 +1345,7 @@ public class WebUiServer {
                 persistSettings(config);
                 sendResponse(exchange, 200, "application/json", "{\"emailRecipientMode\":\"" + mode + "\"}");
             } catch (Exception e) {
-                e.printStackTrace();
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1252,6 +1409,7 @@ public class WebUiServer {
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1300,6 +1458,7 @@ public class WebUiServer {
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1334,6 +1493,7 @@ public class WebUiServer {
                 payload.put("commissionDaySummary", buildCommissionDaySummary(config));
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1362,6 +1522,7 @@ public class WebUiServer {
                 payload.put("rows", rows);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1390,6 +1551,7 @@ public class WebUiServer {
                 payload.put("rows", rows);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1415,6 +1577,7 @@ public class WebUiServer {
                 payload.put("content", text);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1435,6 +1598,7 @@ public class WebUiServer {
                 Properties config = loadConfigWithUiSettings();
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.status(config)));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1455,6 +1619,7 @@ public class WebUiServer {
                 Properties config = loadConfigWithUiSettings();
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.inventory(config)));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1476,6 +1641,7 @@ public class WebUiServer {
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(
                         GOAFFPRO_SYNC_SERVICE.akteList(loadConfigWithUiSettings())));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1501,6 +1667,7 @@ public class WebUiServer {
                         GOAFFPRO_SYNC_SERVICE.akte(loadConfigWithUiSettings(),
                                 Objects.toString(query.get("id"), "").trim(), limit, offset)));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1537,9 +1704,219 @@ public class WebUiServer {
                 sendResponse(exchange, 200, "application/json",
                         OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.log(config, limit, severity)));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
+    }
+
+    // ── Fehlerprotokoll: lesen, aus dem Browser melden, leeren, herunterladen ──
+
+    /** So viele Sync-Fehler hängt der Kopiertext höchstens an; vollständig stehen sie im Sync-Bereich. */
+    private static final int ERROR_LOG_SYNC_APPENDIX_MAX = 10;
+    private static final int ERROR_LOG_SYNC_APPENDIX_DAYS = 7;
+    private static final int ERROR_LOG_SYNC_DETAIL_CHARS = 3000;
+
+    private static class ErrorLogHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            String method = exchange.getRequestMethod();
+            if ("OPTIONS".equalsIgnoreCase(method)) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            try {
+                if ("GET".equalsIgnoreCase(method)) {
+                    Map<String, String> query = parseQueryParams(exchange.getRequestURI());
+                    List<ErrorLog.Entry> entries = ERROR_LOG.entries();
+                    Object payload = "1".equals(query.get("kurz"))
+                            ? errorLogSummary(entries, query.get("seit"))
+                            : errorLogPayload(entries);
+                    sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
+                    return;
+                }
+                if ("POST".equalsIgnoreCase(method)) {
+                    // Meldung aus dem Browser: ein JavaScript-Fehler oder eine unlesbare Server-Antwort.
+                    JsonNode body = OBJECT_MAPPER.readTree(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+                    String message = asText(body, "message").trim();
+                    if (message.isEmpty()) {
+                        sendResponse(exchange, 400, "application/json", "{\"error\":\"message fehlt\"}");
+                        return;
+                    }
+                    String area = asText(body, "area").trim();
+                    ERROR_LOG.record("Browser", area.isEmpty() ? "Oberfläche" : area, asText(body, "action").trim(), 0,
+                            message, asText(body, "detail"), knownSecrets());
+                    sendResponse(exchange, 200, "application/json", "{\"ok\":true}");
+                    return;
+                }
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+            } catch (Exception e) {
+                rememberError(e);
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class ErrorLogClearHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 200, "application/json", "{}");
+                return;
+            }
+            if (!"POST".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                ERROR_LOG.clear();
+                sendResponse(exchange, 200, "application/json", "{\"ok\":true}");
+            } catch (Exception e) {
+                rememberError(e);
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    private static class ErrorLogDownloadHandler implements HttpHandler {
+        @Override
+        public void handle(HttpExchange exchange) throws IOException {
+            if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                sendResponse(exchange, 405, "application/json", "{\"error\":\"Method not allowed\"}");
+                return;
+            }
+            try {
+                String text = errorLogText(ERROR_LOG.entries(), recentSyncErrors());
+                String stamp = ZonedDateTime.now(BERLIN_ZONE).format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HHmm"));
+                byte[] bytes = text.getBytes(StandardCharsets.UTF_8);
+                exchange.getResponseHeaders().set("Content-Type", "text/plain; charset=utf-8");
+                exchange.getResponseHeaders().set("Content-Disposition", "attachment; filename=\"fehlerprotokoll_" + stamp + ".txt\"");
+                exchange.getResponseHeaders().set("Cache-Control", "no-store");
+                exchange.sendResponseHeaders(200, bytes.length);
+                try (OutputStream os = exchange.getResponseBody()) {
+                    os.write(bytes);
+                }
+            } catch (Exception e) {
+                rememberError(e);
+                sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+            }
+        }
+    }
+
+    /** Für die Kopfzeile: wie viele Einträge kamen nach dem zuletzt angesehenen hinzu. */
+    private static Map<String, Object> errorLogSummary(List<ErrorLog.Entry> entries, String seenUntil) {
+        Instant seen = null;
+        try {
+            if (seenUntil != null && !seenUntil.isBlank()) seen = Instant.parse(seenUntil.trim());
+        } catch (Exception ignored) {
+            // Unlesbar: dann gilt alles als neu.
+        }
+        long unseen = 0;
+        for (ErrorLog.Entry e : entries) {
+            if (seen == null || e.lastAt().isAfter(seen)) unseen++;
+        }
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("total", entries.size());
+        payload.put("unseen", unseen);
+        payload.put("newest", entries.isEmpty() ? "" : entries.get(0).lastAt().toString());
+        return payload;
+    }
+
+    private static Map<String, Object> errorLogPayload(List<ErrorLog.Entry> entries) {
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (ErrorLog.Entry e : entries) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", e.id());
+            row.put("firstAt", ErrorLog.LOCAL_TIME.format(e.firstAt()));
+            row.put("lastAt", ErrorLog.LOCAL_TIME.format(e.lastAt()));
+            row.put("count", e.count());
+            row.put("source", e.source());
+            row.put("area", e.area());
+            row.put("action", e.action());
+            row.put("status", e.status());
+            row.put("message", e.message());
+            row.put("detail", e.detail());
+            rows.add(row);
+        }
+        List<Map<String, Object>> syncErrors = recentSyncErrors();
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("entries", rows);
+        payload.put("total", entries.size());
+        payload.put("newest", entries.isEmpty() ? "" : entries.get(0).lastAt().toString());
+        payload.put("file", ERROR_LOG.file().toString());
+        payload.put("syncErrorCount", syncErrors.size());
+        payload.put("text", errorLogText(entries, syncErrors));
+        return payload;
+    }
+
+    /**
+     * Die jüngsten Sync-Fehler für den Anhang des Kopiertexts: höchstens sieben Tage alt und nicht
+     * älter als das letzte Leeren - sonst stünden längst erledigte Fehler ewig im Protokoll.
+     */
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> recentSyncErrors() {
+        try {
+            Properties config = loadConfigWithUiSettings();
+            Map<String, Object> log = GOAFFPRO_SYNC_SERVICE.log(config, ERROR_LOG_SYNC_APPENDIX_MAX, "error");
+            Instant from = Instant.now().minus(java.time.Duration.ofDays(ERROR_LOG_SYNC_APPENDIX_DAYS));
+            Instant cleared = ERROR_LOG.clearedAt();
+            if (cleared != null && cleared.isAfter(from)) from = cleared;
+            List<Map<String, Object>> result = new ArrayList<>();
+            if (log.get("rows") instanceof List<?> rows) {
+                for (Object o : rows) {
+                    if (!(o instanceof Map<?, ?> row)) continue;
+                    Instant ts = parseInstantLenient(Objects.toString(row.get("ts"), ""));
+                    if (ts != null && ts.isBefore(from)) continue;
+                    result.add((Map<String, Object>) row);
+                }
+            }
+            return result;
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private static Instant parseInstantLenient(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return Instant.parse(value.trim());
+        } catch (Exception ignored) {
+        }
+        try {
+            return OffsetDateTime.parse(value.trim()).toInstant();
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    /** Kopier- und Downloadtext: Kopf mit Version und System, Einträge, Anhang mit Sync-Fehlern. */
+    private static String errorLogText(List<ErrorLog.Entry> entries, List<Map<String, Object>> syncErrors) {
+        List<String> header = new ArrayList<>();
+        header.add("Erzeugt:  " + ErrorLog.LOCAL_TIME.format(Instant.now()) + " (Europe/Berlin)");
+        String commit = Objects.toString(BUILD_INFO.commit(), "").trim();
+        header.add("Version:  " + APP_VERSION + (commit.isEmpty() ? "" : " · Commit " + commit));
+        header.add("System:   Java " + System.getProperty("java.version") + " · " + System.getProperty("os.name")
+                + " " + System.getProperty("os.arch"));
+        header.add("Datei:    " + ERROR_LOG.file());
+        header.add("Einträge: " + entries.size()
+                + (syncErrors.isEmpty() ? "" : " · dazu " + syncErrors.size() + " Sync-Fehler im Anhang"));
+        StringBuilder text = new StringBuilder(ErrorLog.formatText(entries, header));
+        if (!syncErrors.isEmpty()) {
+            text.append("\n--- Anhang: jüngste Sync-Fehler (vollständig unter GoAffPro Sync → Fehlerprotokoll) ---\n");
+            for (Map<String, Object> row : syncErrors) {
+                text.append('\n').append('[').append(Objects.toString(row.get("tsLocal"), "")).append("] Sync");
+                String runId = Objects.toString(row.get("runId"), "0");
+                if (!"0".equals(runId) && !runId.isBlank()) text.append(" · Lauf #").append(runId);
+                String endpoint = Objects.toString(row.get("endpointKey"), "");
+                if (!endpoint.isBlank()) text.append(" · ").append(endpoint);
+                text.append('\n').append("  ").append(Objects.toString(row.get("message"), "")).append('\n');
+                String detail = ErrorLog.clip(Objects.toString(row.get("detail"), ""), ERROR_LOG_SYNC_DETAIL_CHARS);
+                for (String line : detail.split("\\R")) {
+                    if (!line.isBlank()) text.append("    ").append(line).append('\n');
+                }
+            }
+        }
+        return ErrorLog.redact(text.toString(), knownSecrets());
     }
 
     private static class GoAffProSyncRunsHandler implements HttpHandler {
@@ -1565,6 +1942,7 @@ public class WebUiServer {
                 }
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.runs(config, limit)));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1663,6 +2041,7 @@ public class WebUiServer {
                 sendResponse(exchange, 200, "application/json",
                         OBJECT_MAPPER.writeValueAsString(backupStatusPayload(loadConfigWithUiSettings())));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1710,6 +2089,8 @@ public class WebUiServer {
                     } catch (Throwable t) {
                         System.err.println("GoAffPro Sicherung fehlgeschlagen: " + GoAffProSyncService.describeThrowable(t));
                         t.printStackTrace();
+                        recordError("Hintergrund", "Datensicherung", "Sicherung erstellen",
+                                "Sicherung fehlgeschlagen: " + GoAffProSyncService.describeThrowable(t), t);
                         finishBackupState("export", "error", GoAffProSyncService.describeThrowable(t), null);
                     } finally {
                         GOAFFPRO_SYNC_SERVICE.endMaintenance();
@@ -1720,6 +2101,7 @@ public class WebUiServer {
                 payload.put("message", "Sicherung wird erstellt.");
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1750,6 +2132,7 @@ public class WebUiServer {
                     Files.copy(file, os);
                 }
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1872,6 +2255,8 @@ public class WebUiServer {
                     } catch (Throwable t) {
                         System.err.println("GoAffPro Import fehlgeschlagen: " + GoAffProSyncService.describeThrowable(t));
                         t.printStackTrace();
+                        recordError("Hintergrund", "Datensicherung", "Import",
+                                "Import fehlgeschlagen: " + GoAffProSyncService.describeThrowable(t), t);
                         finishBackupState("import", "error", GoAffProSyncService.describeThrowable(t), null);
                     } finally {
                         GOAFFPRO_SYNC_SERVICE.endMaintenance();
@@ -1882,6 +2267,7 @@ public class WebUiServer {
                 payload.put("message", "Import wird ausgeführt.");
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1907,6 +2293,7 @@ public class WebUiServer {
                 Map<String, Object> payload = GOAFFPRO_SYNC_SERVICE.startAsync(config, apiKey, mode);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1938,6 +2325,7 @@ public class WebUiServer {
                 Map<String, Object> payload = GOAFFPRO_SYNC_SERVICE.startDiagnosticsAsync(config, apiKey, endpoints);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1958,6 +2346,7 @@ public class WebUiServer {
                 Properties config = loadConfigWithUiSettings();
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.diagnosticsLatest(config)));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -1986,6 +2375,7 @@ public class WebUiServer {
                 }
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(GOAFFPRO_SYNC_SERVICE.diagnosticRuns(config, limit)));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -2022,6 +2412,7 @@ public class WebUiServer {
             payload.put("message", enabled ? "GoAffPro Sync fortgesetzt." : "GoAffPro Sync pausiert.");
             sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
         } catch (Exception e) {
+            rememberError(e);
             sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
         }
     }
@@ -2333,6 +2724,7 @@ public class WebUiServer {
 
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -2468,6 +2860,7 @@ public class WebUiServer {
                 payload.put("warnings", warnings);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -2514,6 +2907,7 @@ public class WebUiServer {
                 attachDataSource(payload, config, "showcases");
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -2577,6 +2971,7 @@ public class WebUiServer {
                 attachDataSource(payload, config, "orders");
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -2646,6 +3041,7 @@ public class WebUiServer {
 
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -2676,7 +3072,7 @@ public class WebUiServer {
                 Map<String, Object> payload = buildLeaderWeeklyMailPayloadFromApi(config, referenceDate, productionMode);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
-                e.printStackTrace();
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -2706,7 +3102,7 @@ public class WebUiServer {
                 Map<String, Object> payload = sendLeaderWeeklyMails(config, referenceDate, productionRequested, false);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
-                e.printStackTrace();
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -4243,6 +4639,7 @@ public class WebUiServer {
                 payload.put("byPayment", byPayment);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -4285,6 +4682,7 @@ public class WebUiServer {
                 exchange.sendResponseHeaders(200, Files.size(p));
                 try (OutputStream os = exchange.getResponseBody()) { Files.copy(p, os); }
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -4373,6 +4771,7 @@ public class WebUiServer {
                 payload.put("settingsDirectory", resolveSettingsDirectory(config).toString());
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -4424,10 +4823,15 @@ public class WebUiServer {
     }
 
 
-    /** Alles, was Beleg und Vorschau aus GoAffPro brauchen - rein lesend, ohne Nummernvergabe. */
+    /**
+     * Alles, was Beleg und Vorschau aus GoAffPro brauchen - rein lesend, ohne Nummernvergabe.
+     * {@code listedBeforeStart}: Altbuchungen ohne Ausgleich, die nach Bestätigung auf dem Beleg stehen.
+     */
     private record DocumentRun(String detailsUrl, JsonNode response, JsonNode payment, JsonNode affiliate,
                                DocumentKindDecision decision, DocumentKind kind, JsonNode docPayment,
-                               JsonNode docResponse, int hiddenBeforeStart, String periodLabel) {
+                               JsonNode docResponse, int hiddenBeforeStart, int listedBeforeStart,
+                               double listedBeforeStartAmount, List<String> listedBeforeStartLabels,
+                               String periodLabel) {
     }
 
     /** Abbruch beim Vorbereiten, mit HTTP-Status und fertigem JSON-Body für die Antwort. */
@@ -4447,6 +4851,16 @@ public class WebUiServer {
      * Erst danach darf eine Belegnummer gezogen werden – generateNextDocumentNumber persistiert sofort.
      */
     private static DocumentRun prepareDocumentRun(String paymentId, Properties config) throws Exception {
+        return prepareDocumentRun(paymentId, config, false);
+    }
+
+    /**
+     * @param listUnbalancedBeforeStart bestätigt: Altbuchungen vor dem Provisionsstart, die sich
+     *     nicht einzeln aufheben, dürfen auf dem Beleg stehen. Ohne Bestätigung endet die
+     *     Vorbereitung dann mit einer Rückfrage (HTTP 409, confirmable).
+     */
+    private static DocumentRun prepareDocumentRun(String paymentId, Properties config, boolean listUnbalancedBeforeStart)
+            throws Exception {
         String apiKey = requireGoaffproApiKey(config);
         String detailsUrl = "https://api.goaffpro.com/v1/admin/payments?id=" + paymentId
                 + "&fields=id,affiliate_id,amount,currency,payment_method,payment_details,affiliate_message,admin_note,transactions,created_at";
@@ -4473,13 +4887,18 @@ public class WebUiServer {
         JsonNode docPayment = payment;
         JsonNode docResponse = response;
         int hiddenBeforeStart = 0;
+        int listedBeforeStart = 0;
+        double listedBeforeStartAmount = 0.0;
+        List<String> listedBeforeStartLabels = List.of();
         if (kind == DocumentKind.GUTSCHRIFT) {
-            StartDateSplit startSplit = splitBeforeGutschriftStart(payment, config);
+            StartDateSplit startSplit = splitBeforeGutschriftStart(payment, config, listUnbalancedBeforeStart);
             String blockReason = gutschriftStartBlockReason(startSplit, paymentId, config);
             if (blockReason != null) {
-                throw new DocumentRunException(409,
-                        "{\"error\":\"" + escapeJson(blockReason) + "\",\"code\":\"vor-provisionsstart\"}");
+                throw new DocumentRunException(409, startBlockResponseBody(startSplit, paymentId, blockReason, config));
             }
+            listedBeforeStart = startSplit.listedCount();
+            listedBeforeStartAmount = startSplit.listedAmount();
+            if (startSplit.listed()) listedBeforeStartLabels = startSplit.unbalanced();
             hiddenBeforeStart = startSplit.hiddenCount();
             if (hiddenBeforeStart > 0) {
                 docPayment = startSplit.visiblePayment();
@@ -4491,7 +4910,8 @@ public class WebUiServer {
             }
         }
         return new DocumentRun(detailsUrl, response, payment, affiliate, decision, kind, docPayment, docResponse,
-                hiddenBeforeStart, buildPaymentPeriodLabel(docPayment));
+                hiddenBeforeStart, listedBeforeStart, listedBeforeStartAmount, listedBeforeStartLabels,
+                buildPaymentPeriodLabel(docPayment));
     }
 
     private static class InvoiceDetailsPdfHandler implements HttpHandler {
@@ -4511,6 +4931,8 @@ public class WebUiServer {
                 String paymentId = asText(body, "paymentId").trim();
                 String requestedDir = asText(body, "pdfExportPath").trim();
                 Boolean includeEInvoiceArtifactsRequest = body.has("includeEInvoiceArtifacts") ? body.get("includeEInvoiceArtifacts").asBoolean() : null;
+                // Ausdrücklich bestätigt: Altbuchungen ohne Ausgleich dürfen auf die Gutschrift.
+                boolean confirmUnbalancedBeforeStart = body.path("confirmUnbalancedBeforeStart").asBoolean(false);
                 if (paymentId.isEmpty()) {
                     sendResponse(exchange, 400, "application/json", "{\"error\":\"paymentId fehlt\"}");
                     return;
@@ -4522,7 +4944,7 @@ public class WebUiServer {
 
                 DocumentRun run;
                 try {
-                    run = prepareDocumentRun(paymentId, config);
+                    run = prepareDocumentRun(paymentId, config, confirmUnbalancedBeforeStart);
                 } catch (DocumentRunException e) {
                     sendResponse(exchange, e.status, "application/json", e.body);
                     return;
@@ -4579,7 +5001,8 @@ public class WebUiServer {
                 Path eInvoicePdfPath = eInvoiceAttachAndStoreEnabled ? runExportDir.resolve(kind.filePrefix + "_" + sanitizeFilename(gutschriftNr) + "_" + timestamp + ".pdf") : null;
                 // Die Provisionsübersicht steht als Anlage im Gutschrift-PDF. Ein eigenes PDF gibt es
                 // nur noch, wenn kein Gutschrift-PDF entsteht oder der alte Renderer sie nicht kennt.
-                CommissionOverview overview = buildCommissionOverview(docResponse, affiliate, config, gutschriftNr, replacesNr, kind, hiddenBeforeStart);
+                CommissionOverview overview = buildCommissionOverview(docResponse, affiliate, config, gutschriftNr, replacesNr, kind,
+                        hiddenBeforeStart, run.listedBeforeStart(), run.listedBeforeStartAmount());
                 boolean overviewInDocumentPdf = eInvoicePdfPath != null && !usesLegacyEInvoiceRenderer(kind);
                 Path pdfPath = overviewInDocumentPdf ? null : runExportDir.resolve(baseFilename + ".pdf");
                 if (pdfPath != null) {
@@ -4639,6 +5062,8 @@ public class WebUiServer {
                         } catch (Exception mailError) {
                             // Die Beraterin hat ihren Beleg schon - ein Fehler hier darf das nicht verschleiern.
                             accountingMailMessage = "Mail an Buchhaltung fehlgeschlagen: " + mailError.getMessage();
+                            recordError("Server", "Gutschriftservice", "Mail an Buchhaltung · Zahllauf " + paymentId,
+                                    accountingMailMessage + " (" + gutschriftNr + ")", mailError);
                         }
                     }
                 }
@@ -4678,6 +5103,9 @@ public class WebUiServer {
                 payload.put("eInvoiceStatus", eInvoiceStatus);
                 payload.put("eInvoiceMessage", eInvoiceMessage);
                 payload.put("hiddenBeforeStartCount", hiddenBeforeStart);
+                payload.put("listedBeforeStartCount", run.listedBeforeStart());
+                payload.put("listedBeforeStartHint", listedBeforeStartHint(run.listedBeforeStart(),
+                        run.listedBeforeStartAmount(), run.listedBeforeStartLabels(), config));
                 payload.put("gutschriftTransactionStartDate", gutschriftTransactionStartDateRaw(config));
                 payload.put("requestUrl", detailsUrl);
                 payload.put("file", mainPdfPath.toString());
@@ -4691,7 +5119,7 @@ public class WebUiServer {
                 payload.put("includeEInvoiceArtifacts", eInvoiceAttachAndStoreEnabled);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
-                e.printStackTrace();
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -4724,13 +5152,16 @@ public class WebUiServer {
                 Properties config = loadConfigWithUiSettings();
                 DocumentRun run;
                 try {
-                    run = prepareDocumentRun(paymentId, config);
+                    // Die Vorschau zeigt den Beleg so, wie er nach der Rückfrage entstünde - mit
+                    // Altbuchungen ohne Ausgleich. Darauf weist der Kopf X-Beleg-Hinweis hin.
+                    run = prepareDocumentRun(paymentId, config, true);
                 } catch (DocumentRunException e) {
                     sendResponse(exchange, e.status, "application/json", e.body);
                     return;
                 }
                 CommissionOverview overview = buildCommissionOverview(run.docResponse(), run.affiliate(), config,
-                        DRAFT_DOCUMENT_NUMBER, "", run.kind(), run.hiddenBeforeStart());
+                        DRAFT_DOCUMENT_NUMBER, "", run.kind(), run.hiddenBeforeStart(),
+                        run.listedBeforeStart(), run.listedBeforeStartAmount());
                 byte[] pdf = renderDocumentPdf(null, null, run.docPayment(), run.affiliate(), config, DRAFT_DOCUMENT_NUMBER,
                         run.periodLabel(), resolveTaxTreatment(run.affiliate()), run.kind(), "", overview, true);
 
@@ -4738,12 +5169,20 @@ public class WebUiServer {
                 exchange.getResponseHeaders().set("Content-Disposition", "inline; filename=\"vorschau_" + paymentId + ".pdf\"");
                 exchange.getResponseHeaders().set("Cache-Control", "no-store");
                 exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+                String hint = listedBeforeStartHint(run.listedBeforeStart(), run.listedBeforeStartAmount(),
+                        run.listedBeforeStartLabels(), config);
+                if (!hint.isEmpty()) {
+                    // Kopfzeilen tragen nur ASCII: URL-kodiert, im Browser mit decodeURIComponent lesbar.
+                    exchange.getResponseHeaders().set("Access-Control-Expose-Headers", "X-Beleg-Hinweis");
+                    exchange.getResponseHeaders().set("X-Beleg-Hinweis",
+                            java.net.URLEncoder.encode(hint, StandardCharsets.UTF_8).replace("+", "%20"));
+                }
                 exchange.sendResponseHeaders(200, pdf.length);
                 try (OutputStream os = exchange.getResponseBody()) {
                     os.write(pdf);
                 }
             } catch (Exception e) {
-                e.printStackTrace();
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -4964,6 +5403,7 @@ public class WebUiServer {
                 payload.put("byAdvisor", byAdvisor);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -5012,7 +5452,7 @@ public class WebUiServer {
                 payload.put("toEmail", toEmail);
                 sendResponse(exchange, 200, "application/json", OBJECT_MAPPER.writeValueAsString(payload));
             } catch (Exception e) {
-                e.printStackTrace();
+                rememberError(e);
                 sendResponse(exchange, 500, "application/json", "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             }
         }
@@ -7184,7 +7624,8 @@ public class WebUiServer {
                 if (bmg != null) bmg = -Math.abs(bmg);
             }
         }
-        String typeLabel = direct ? "Direkt (Order)" : "Team (Reward)";
+        String typeLabel = direct ? "Direkt (Order)"
+                : isManualAdjustment(tx) ? "Team (Reward) · manuelle Anpassung" : "Team (Reward)";
         if (storno) {
             typeLabel += " · Storno";
         } else if (change) {
@@ -7255,6 +7696,17 @@ public class WebUiServer {
     private static CommissionOverview buildCommissionOverview(JsonNode docResponse, JsonNode affiliate, Properties config,
                                                               String number, String replacesNr, DocumentKind kind,
                                                               int hiddenBeforeStart) {
+        return buildCommissionOverview(docResponse, affiliate, config, number, replacesNr, kind, hiddenBeforeStart, 0, 0.0);
+    }
+
+    /**
+     * @param listedBeforeStart Altbuchungen vor dem Provisionsstart ohne Ausgleich, die nach
+     *     Bestätigung in den Einzeltransaktionen stehen; {@code listedBeforeStartAmount} ihr Saldo
+     */
+    private static CommissionOverview buildCommissionOverview(JsonNode docResponse, JsonNode affiliate, Properties config,
+                                                              String number, String replacesNr, DocumentKind kind,
+                                                              int hiddenBeforeStart, int listedBeforeStart,
+                                                              double listedBeforeStartAmount) {
         JsonNode payments = docResponse != null ? docResponse.get("payments") : null;
         JsonNode payment = payments != null && payments.isArray() && payments.size() > 0
                 ? payments.get(0) : OBJECT_MAPPER.createObjectNode();
@@ -7326,6 +7778,13 @@ public class WebUiServer {
             keyFigures.add(new String[]{"Nicht aufgeführt (vor " + start + ")",
                     hiddenBeforeStart + (hiddenBeforeStart == 1 ? " stornierte Buchung" : " stornierte Buchungen")
                             + ", Saldo " + euroCents(0.0)});
+        }
+        if (listedBeforeStart > 0) {
+            // Nach Rückfrage bestätigt: Altbuchungen, die sich nicht einzeln aufheben, stehen mit
+            // Datum in den Einzeltransaktionen - sonst passte die Summe nicht zur Auszahlung.
+            keyFigures.add(new String[]{"Aufgeführt trotz Datum vor " + gutschriftStartDateLabel(config),
+                    listedBeforeStart + (listedBeforeStart == 1 ? " Buchung" : " Buchungen")
+                            + " ohne Ausgleich, Saldo " + euroCents(listedBeforeStartAmount)});
         }
 
         StringBuilder html = new StringBuilder(4096 + rows.size() * 400);
@@ -8676,19 +9135,36 @@ public class WebUiServer {
 
     /**
      * Ergebnis der Bereinigung eines Gutschrift-Zahllaufs. {@code beforeStartCount} zählt die
-     * Buchungen in Gruppen, die vor dem Start beginnen; ausgeblendet werden sie nur, wenn jede
-     * dieser Gruppen ausgeglichen ist. {@code unbalanced} nennt sonst die betroffenen
-     * Bestellungen und Belohnungen mit ihrem Restsaldo.
+     * Buchungen in Gruppen, die vor dem Start beginnen. Ausgeblendet ({@code hiddenCount}) werden
+     * nur Gruppen, die sich zu 0 aufheben. {@code unbalanced} nennt die übrigen Altgruppen mit
+     * ihrem Restsaldo ({@code unbalancedCount} Buchungen, zusammen {@code unbalancedAmount}).
+     * Ohne Bestätigung bleibt der Zahllauf dann unverändert und die Erstellung fragt nach; mit
+     * Bestätigung ({@code listed}) stehen diese Buchungen mit Datum auf dem Beleg.
      */
     private record StartDateSplit(JsonNode visiblePayment, int beforeStartCount, double beforeStartAmount,
-                                  List<String> unbalanced) {
+                                  List<String> unbalanced, int unbalancedCount, double unbalancedAmount,
+                                  int hiddenCount, boolean listed) {
         boolean balanced() {
             return unbalanced.isEmpty();
         }
 
-        int hiddenCount() {
-            return balanced() ? beforeStartCount : 0;
+        /** Restsaldo vor dem Start, noch nicht bestätigt: Die Erstellung muss nachfragen. */
+        boolean needsConfirmation() {
+            return !balanced() && !listed;
         }
+
+        /** Buchungen vor dem Start, die nach Bestätigung auf dem Beleg stehen. */
+        int listedCount() {
+            return listed ? unbalancedCount : 0;
+        }
+
+        double listedAmount() {
+            return listed ? unbalancedAmount : 0.0;
+        }
+    }
+
+    private static StartDateSplit splitBeforeGutschriftStart(JsonNode payment, Properties config) {
+        return splitBeforeGutschriftStart(payment, config, false);
     }
 
     /**
@@ -8699,12 +9175,17 @@ public class WebUiServer {
      *
      * Ausgeblendet wird nur, was sich zu 0 aufhebt - der Auszahlungsbetrag bleibt dadurch
      * unverändert und Gutschrift, Provisionsnachweis und ZUGFeRD-Datei passen weiter zusammen.
+     *
+     * Altgruppen mit Restsaldo (z. B. eine Provisionskorrektur aus dem Februar, ausgeglichen
+     * durch eine manuelle Anpassung) bleiben ohne {@code listUnbalanced} unangetastet - der
+     * Aufrufer fragt nach. Mit Bestätigung verschwinden nur die ausgeglichenen Gruppen; die
+     * übrigen stehen mit Datum auf dem Beleg, und die Summe passt weiter zur Auszahlung.
      */
-    private static StartDateSplit splitBeforeGutschriftStart(JsonNode payment, Properties config) {
+    private static StartDateSplit splitBeforeGutschriftStart(JsonNode payment, Properties config, boolean listUnbalanced) {
         Instant start = gutschriftTransactionStartDate(config).atStartOfDay(BERLIN_ZONE).toInstant();
         JsonNode transactions = payment != null ? payment.get("transactions") : null;
         if (transactions == null || !transactions.isArray() || transactions.isEmpty()) {
-            return new StartDateSplit(payment, 0, 0.0, List.of());
+            return new StartDateSplit(payment, 0, 0.0, List.of(), 0, 0.0, 0, false);
         }
 
         Map<String, Instant> earliest = new HashMap<>();
@@ -8728,32 +9209,47 @@ public class WebUiServer {
             if (first != null && first.isBefore(start)) beforeStart.add(key);
         }
         if (beforeStart.isEmpty()) {
-            return new StartDateSplit(payment, 0, 0.0, List.of());
+            return new StartDateSplit(payment, 0, 0.0, List.of(), 0, 0.0, 0, false);
         }
 
         double beforeStartAmount = 0.0;
+        double unbalancedAmount = 0.0;
         List<String> unbalanced = new ArrayList<>();
+        Set<String> unbalancedKeys = new HashSet<>();
         for (String key : beforeStart) {
             double saldo = balance.get(key);
             beforeStartAmount += saldo;
             if (Math.abs(saldo) >= BALANCE_TOLERANCE) {
                 unbalanced.add(labels.get(key) + ": " + euroStatic(saldo));
+                unbalancedKeys.add(key);
+                unbalancedAmount += saldo;
             }
         }
 
         ArrayNode visible = OBJECT_MAPPER.createArrayNode();
         int beforeStartCount = 0;
+        int unbalancedCount = 0;
         for (JsonNode tx : transactions) {
-            if (beforeStart.contains(transactionGroupKey(tx))) beforeStartCount++;
-            else visible.add(tx);
+            String key = transactionGroupKey(tx);
+            if (!beforeStart.contains(key)) {
+                visible.add(tx);
+                continue;
+            }
+            beforeStartCount++;
+            if (unbalancedKeys.contains(key)) {
+                unbalancedCount++;
+                visible.add(tx);
+            }
         }
-        if (!unbalanced.isEmpty()) {
-            // Nichts ausblenden: Der Zahllauf bleibt, wie er ist, der Aufrufer bricht ab.
-            return new StartDateSplit(payment, beforeStartCount, beforeStartAmount, List.copyOf(unbalanced));
+        if (!unbalanced.isEmpty() && !listUnbalanced) {
+            // Nichts ausblenden: Der Zahllauf bleibt, wie er ist; der Aufrufer fragt nach.
+            return new StartDateSplit(payment, beforeStartCount, beforeStartAmount, List.copyOf(unbalanced),
+                    unbalancedCount, unbalancedAmount, 0, false);
         }
         ObjectNode cleaned = payment.deepCopy();
         cleaned.set("transactions", visible);
-        return new StartDateSplit(cleaned, beforeStartCount, beforeStartAmount, List.of());
+        return new StartDateSplit(cleaned, beforeStartCount, beforeStartAmount, List.copyOf(unbalanced),
+                unbalancedCount, unbalancedAmount, beforeStartCount - unbalancedCount, !unbalanced.isEmpty());
     }
 
     /** Buchung, Änderung und Storno einer Provision teilen sich entity_type und entity_id. */
@@ -8767,20 +9263,35 @@ public class WebUiServer {
     private static String transactionGroupLabel(JsonNode tx) {
         String orderNumber = asText(tx.path("metadata"), "order_number").trim();
         if ("rewards".equalsIgnoreCase(asText(tx, "entity_type"))) {
-            return "Belohnung " + asText(tx, "entity_id") + (orderNumber.isBlank() ? "" : " zu " + orderNumber);
+            return "Belohnung " + asText(tx, "entity_id") + (isManualAdjustment(tx) ? " (manuelle Anpassung)" : "")
+                    + (orderNumber.isBlank() ? "" : " zu " + orderNumber);
         }
         return "Bestellung " + (orderNumber.isBlank() ? asText(tx, "entity_id") : orderNumber);
     }
 
+    /** Von Hand erfasste Gutschriften und Belastungen bucht GoAffPro als Belohnung vom Typ wallet_adjustment. */
+    private static boolean isManualAdjustment(JsonNode tx) {
+        return "wallet_adjustment".equalsIgnoreCase(asText(tx.path("metadata"), "reward_type").trim());
+    }
+
+    private static String gutschriftStartDateLabel(Properties config) {
+        return gutschriftTransactionStartDate(config).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+    }
+
+    /** Die betroffenen Altgruppen für Meldungen, höchstens zehn. */
+    private static String unbalancedList(StartDateSplit split, String separator) {
+        List<String> all = split.unbalanced();
+        int shown = Math.min(all.size(), 10);
+        return String.join(separator, all.subList(0, shown)) + (all.size() > shown ? separator + "..." : "");
+    }
+
     /** Meldung für den Abbruch, oder null, wenn die Gutschrift erstellt werden darf. */
     private static String gutschriftStartBlockReason(StartDateSplit split, String paymentId, Properties config) {
-        String start = gutschriftTransactionStartDate(config).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
-        if (!split.balanced()) {
-            List<String> all = split.unbalanced();
-            int shown = Math.min(all.size(), 10);
-            String list = String.join("; ", all.subList(0, shown)) + (all.size() > shown ? "; ..." : "");
-            return "Gutschrift nicht erstellt: Zahllauf " + paymentId + " enthält Provisionen vor dem " + start
-                    + ", die nicht vollständig storniert sind (" + list + "). Bitte in GoAffPro prüfen."
+        String start = gutschriftStartDateLabel(config);
+        if (split.needsConfirmation()) {
+            return "Gutschrift nicht erstellt: Zahllauf " + paymentId + " enthält Buchungen vor dem " + start
+                    + ", die sich nicht einzeln aufheben (" + unbalancedList(split, "; ") + "; zusammen "
+                    + euroStatic(split.unbalancedAmount()) + "). Sie stehen nur nach Bestätigung auf der Gutschrift."
                     + " Es wurde keine Belegnummer vergeben.";
         }
         if (split.hiddenCount() > 0 && split.visiblePayment().path("transactions").isEmpty()) {
@@ -8788,6 +9299,44 @@ public class WebUiServer {
                     + " Provisionen vor dem " + start + ". Es wurde keine Belegnummer vergeben.";
         }
         return null;
+    }
+
+    /** Die Rückfrage, die die Oberfläche vor dem Erstellen stellt. */
+    private static String gutschriftStartQuestion(StartDateSplit split, String paymentId, Properties config) {
+        return "Zahllauf " + paymentId + " enthält Buchungen vor dem " + gutschriftStartDateLabel(config)
+                + ", die sich nicht einzeln aufheben:\n• " + unbalancedList(split, "\n• ")
+                + "\nZusammen: " + euroStatic(split.unbalancedAmount()) + "\n\n"
+                + "Trotzdem erstellen? Die Buchungen stehen dann mit Datum in der Provisionsübersicht, und der"
+                + " Zeitraum der Gutschrift beginnt mit der ältesten von ihnen.";
+    }
+
+    /**
+     * Antwort, wenn die Erstellung nicht weiterkommt. Bei Restsaldo ist es eine Rückfrage, die
+     * die Oberfläche bestätigen kann ({@code confirmable}); eine Gutschrift ohne jede Buchung nicht.
+     */
+    private static String startBlockResponseBody(StartDateSplit split, String paymentId, String blockReason,
+                                                 Properties config) throws IOException {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", blockReason);
+        if (split.needsConfirmation()) {
+            body.put("code", "vor-provisionsstart-bestaetigen");
+            body.put("confirmable", true);
+            body.put("question", gutschriftStartQuestion(split, paymentId, config));
+            body.put("startDate", gutschriftStartDateLabel(config));
+            body.put("unbalanced", split.unbalanced());
+            body.put("unbalancedCount", split.unbalancedCount());
+            body.put("unbalancedAmount", Math.round(split.unbalancedAmount() * 100.0) / 100.0);
+        } else {
+            body.put("code", "vor-provisionsstart");
+        }
+        return OBJECT_MAPPER.writeValueAsString(body);
+    }
+
+    /** Hinweis für Vorschau und Ergebnis, wenn Altbuchungen auf dem Beleg stehen. */
+    private static String listedBeforeStartHint(int count, double amount, List<String> labels, Properties config) {
+        if (count <= 0) return "";
+        return count + (count == 1 ? " Buchung" : " Buchungen") + " vor dem " + gutschriftStartDateLabel(config)
+                + " ohne Ausgleich aufgeführt (" + String.join("; ", labels) + "; zusammen " + euroStatic(amount) + ")";
     }
 
     private static String generateNextDocumentNumber(Properties config, DocumentKind kind) throws IOException {
@@ -9565,15 +10114,20 @@ private static String toGermanDate(String input) {
     }
 
     private static void sendResponse(HttpExchange exchange, int status, String contentType, String body) throws IOException {
-        exchange.getResponseHeaders().set("Content-Type", contentType);
-        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
-        exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-        exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
+        try {
+            exchange.getResponseHeaders().set("Content-Type", contentType);
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+            exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+            exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type");
 
-        byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.sendResponseHeaders(status, bytes.length);
-        try (OutputStream os = exchange.getResponseBody()) {
-            os.write(bytes);
+            byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(status, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
+        } finally {
+            // Erst antworten, dann protokollieren: Der Browser wartet nicht auf die Datei.
+            if (status >= 400) recordErrorResponse(exchange, status, contentType, body);
         }
     }
 

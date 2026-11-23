@@ -236,6 +236,24 @@
        zusätzliche Aussage. */
     .warning-banner { margin: 10px 0; padding: 11px 14px; border: 1px solid var(--clr-error-border); background: var(--clr-error-bg); color: var(--clr-error); border-radius: var(--radius-sm); font-weight: 600; }
     .banner-icon { width: 16px; height: 16px; flex: none; vertical-align: -3px; margin-right: 6px; }
+    /* Meldung zu einer Aktion: Sie bleibt stehen, bis man sie schließt. Die graue Statuszeile
+       darüber überschreibt das Polling jede Minute - eine Fehlermeldung dort sah man oft gar nicht. */
+    .app-notice { display:flex; align-items:flex-start; gap:10px; margin:10px 0; padding:11px 14px; border:1px solid; border-radius:var(--radius-sm); line-height:1.45; }
+    .app-notice[hidden] { display:none; }
+    .app-notice.error { background:var(--clr-error-bg); color:var(--clr-error); border-color:var(--clr-error-border); }
+    .app-notice.warn { background:var(--clr-warn-bg); color:var(--clr-warn); border-color:var(--clr-warn-border); }
+    .app-notice .banner-icon { margin:2px 0 0; }
+    .app-notice-text { flex:1; min-width:0; overflow-wrap:anywhere; }
+    .app-notice-text strong { font-weight:650; }
+    .app-notice-actions { display:flex; flex-wrap:wrap; gap:6px; flex:none; }
+    .app-notice-actions button { padding:4px 10px; font-size:var(--fs-sm); }
+    .header-error-btn { display:inline-flex; align-items:center; background: var(--clr-error-bg) !important; color: var(--clr-error) !important; border-color: var(--clr-error-border) !important; }
+    .header-error-btn:hover { background: #f8dede !important; border-color: var(--clr-error) !important; }
+    .header-error-btn[hidden] { display:none; }
+    .error-log-table td { vertical-align: top; }
+    .error-log-table pre { white-space:pre-wrap; overflow-wrap:anywhere; font-family:ui-monospace,Consolas,monospace; font-size:12px; line-height:1.4; margin:6px 0 0; max-height:320px; overflow:auto; background:var(--clr-surface-2); border:1px solid var(--clr-border); border-radius:var(--radius-sm); padding:8px; }
+    .error-log-table summary { cursor:pointer; color:var(--clr-info); font-size:var(--fs-sm); margin-top:4px; }
+    .error-log-meta { color:var(--clr-muted); font-size:var(--fs-sm); }
     .recipient-advisor-label { color: var(--clr-text); font-weight: 700; }
     .text-error { color: var(--clr-error); }
     /* Hinweis statt Warnung: bewusste Drosselungen sind keine Stoerung. */
@@ -353,6 +371,8 @@
 
     /* ── Column Resizer ── */
     .col-resizer { position:absolute; top:0; right:-2px; width:8px; height:100%; cursor:col-resize; user-select:none; }
+    /* Der Griff der letzten Spalte ragte 2px über die Tabelle und erzwang einen Scrollbalken. */
+    th:last-child > .col-resizer { right:0; }
     .col-resizer:hover, th.resizing .col-resizer { background:var(--clr-focus-ring); }
 
     /* ── Email Editor ── */
@@ -648,6 +668,7 @@
     </div>
     <button id="hamburgerBtn" class="hamburger-btn" type="button" aria-label="Navigation öffnen" title="Navigation"><svg viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
     <div class="header-spacer"></div>
+    <button id="headerErrorBtn" class="header-btn header-error-btn" type="button" hidden title="Fehlerprotokoll öffnen"></button>
     <button id="headerSettingsBtn" class="header-btn" type="button">Einstellungen</button>
     <button id="headerHelpBtn" class="header-btn" type="button">Hilfe</button>
     <div id="appVersion" class="app-version" title="Klicken für Versionshistorie">Version: lädt…</div>
@@ -706,6 +727,20 @@
       <p class="settings-hint">Jede Gutschrift, die an die Beraterin verschickt wird, geht zusätzlich als eigene Mail mit PDF und E-Rechnung an die Buchhaltung. Im Testmodus (Versand an Kontakt-E-Mail) nicht.</p>
     </div>
 
+    <div id="errorLogSection" class="settings-group" style="background:#fff;max-width:1200px;margin-bottom:16px;">
+      <h3>Fehlerprotokoll</h3>
+      <p class="settings-hint">Hier sammelt der Assistent Fehler aus allen Bereichen: Antworten des Servers, Fehler im Browser und abgebrochene Zeitpläne. Bei einem Problem „Kopieren“ klicken und den Text mit einer kurzen Beschreibung weitergeben. Gleiche Fehler kurz hintereinander werden zusammengefasst; der Kopiertext enthält zusätzlich die jüngsten Sync-Fehler. API-Schlüssel und SMTP-Passwort werden nie gespeichert, Namen, E-Mail-Adressen und Beträge aus Fehlermeldungen aber schon.</p>
+      <div class="toolbar">
+        <button id="errorLogCopyBtn" type="button">Kopieren</button>
+        <button id="errorLogDownloadBtn" class="secondary" type="button">Herunterladen</button>
+        <button id="errorLogRefreshBtn" class="secondary" type="button">Aktualisieren</button>
+        <button id="errorLogClearBtn" class="secondary" type="button">Leeren</button>
+        <span id="errorLogStatus" class="status" role="status">Noch nicht geladen.</span>
+      </div>
+      <div class="table-scroll"><table class="error-log-table"><thead><tr><th>Zeit</th><th>Herkunft</th><th>Meldung</th></tr></thead><tbody id="errorLogBody"></tbody></table></div>
+      <textarea id="errorLogManualBox" readonly aria-label="Fehlerprotokoll als Text" style="display:none;width:100%;min-height:220px;margin-top:10px;font-family:ui-monospace,Consolas,monospace;font-size:12px;"></textarea>
+    </div>
+
   </div>
 
   <script>
@@ -743,25 +778,245 @@
     let syncDiagnosticsPollTimer = null;
     let syncFastPollTimer = null;
 
+    // Netzwerkfehler ("Failed to fetch") sagen nichts - der Server ist dann schlicht nicht erreichbar.
+    async function apiFetch(path, options) {
+      try {
+        return await fetch(`${API_BASE}${path}`, options);
+      } catch (e) {
+        throw new Error(`Server nicht erreichbar (${e && e.message ? e.message : e})`);
+      }
+    }
+
+    /**
+     * Liest eine API-Antwort. Kommt HTML statt JSON (etwa die Fehlerseite eines Proxys), gab es
+     * bisher nur "Unexpected token <" - jetzt eine lesbare Meldung samt Eintrag im Fehlerprotokoll.
+     */
+    async function readApiJson(response, path) {
+      const text = await response.text();
+      try {
+        return text ? JSON.parse(text) : {};
+      } catch (e) {
+        const message = `Unerwartete Antwort vom Server (HTTP ${response.status}) bei ${path.split('?')[0]}`;
+        reportClientError(message, text.slice(0, 2000), path);
+        throw new Error(message);
+      }
+    }
+
     async function apiGet(path) {
-      const response = await fetch(`${API_BASE}${path}`);
-      const json = await response.json();
-      if (!response.ok) throw new Error(json.error || 'API-Fehler');
+      const response = await apiFetch(path);
+      const json = await readApiJson(response, path);
+      if (!response.ok) {
+        scheduleErrorBadgeRefresh();
+        throw new Error(json.error || 'API-Fehler');
+      }
       return json;
     }
 
     async function apiPost(path, payload) {
-      const response = await fetch(`${API_BASE}${path}`, {
+      const response = await apiFetch(path, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
-      const json = await response.json();
+      const json = await readApiJson(response, path);
       if (!response.ok) {
         const error = new Error(json.error || 'API-Fehler');
         error.code = json.code || '';
         error.details = json;
+        if (!json.confirmable) scheduleErrorBadgeRefresh();
         throw error;
       }
       return json;
+    }
+
+    // ── Meldungen und Fehlerprotokoll ──
+    const ERROR_LOG_SEEN_KEY = 'vemmina.fehlerprotokoll.gesehenBis';
+    const WARN_ICON_SVG = '<svg class="banner-icon" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M8 2.2 14.6 13.6H1.4z"/><path d="M8 6.6v3.2M8 11.9v.1"/></svg>';
+    let errorLogText = '';
+    let errorBadgeTimer = null;
+    const reportedClientErrors = new Map();
+
+    // localStorage kann fehlen (privates Fenster, gesperrte Website-Daten) - dann gilt eben alles als neu.
+    function readErrorLogSeen() {
+      try { return localStorage.getItem(ERROR_LOG_SEEN_KEY) || ''; } catch (e) { return ''; }
+    }
+
+    function writeErrorLogSeen(value) {
+      try { if (value) localStorage.setItem(ERROR_LOG_SEEN_KEY, value); } catch (e) { /* siehe oben */ }
+    }
+
+    /**
+     * Meldung zu einer Aktion, die stehen bleibt, bis man sie schließt. kind: 'error' oder 'warn'.
+     * html muss bereits escaped sein. source merkt sich, wer sie gesetzt hat: Das Polling räumt so
+     * nur seine eigene Meldung wieder weg, nicht die einer Vorschau.
+     */
+    function showNotice(id, kind, html, { withLogLink = false, source = '' } = {}) {
+      const box = document.getElementById(id);
+      if (!box) return;
+      box.className = `app-notice ${kind === 'warn' ? 'warn' : 'error'}`;
+      box.dataset.source = source;
+      box.innerHTML = `${WARN_ICON_SVG}<div class="app-notice-text">${html}</div><div class="app-notice-actions">`
+        + (withLogLink ? '<button type="button" class="secondary" data-notice-action="log">Fehlerprotokoll</button>' : '')
+        + '<button type="button" class="secondary" data-notice-action="close">Schließen</button></div>';
+      box.hidden = false;
+      box.querySelector('[data-notice-action="close"]')?.addEventListener('click', () => hideNotice(id));
+      box.querySelector('[data-notice-action="log"]')?.addEventListener('click', openErrorLog);
+    }
+
+    function hideNotice(id, source) {
+      const box = document.getElementById(id);
+      if (!box || box.hidden) return;
+      if (source !== undefined && box.dataset.source !== source) return;
+      box.hidden = true;
+      box.innerHTML = '';
+    }
+
+    function activeAreaLabel() {
+      const active = document.querySelector('#sideNav .side-nav-item.active');
+      const label = active ? active.textContent.trim() : '';
+      return label ? `Oberfläche · ${label}` : 'Oberfläche';
+    }
+
+    /** Meldet einen Fehler aus dem Browser ans Fehlerprotokoll; gleiche Meldungen höchstens einmal pro Minute. */
+    function reportClientError(message, detail = '', action = '') {
+      const text = String(message || '').slice(0, 2000);
+      if (!text) return;
+      const now = Date.now();
+      const last = reportedClientErrors.get(text);
+      if (last && now - last < 60000) return;
+      reportedClientErrors.set(text, now);
+      fetch(`${API_BASE}/api/fehlerprotokoll`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text, detail: String(detail || '').slice(0, 12000), area: activeAreaLabel(), action: action || '' })
+      }).then(() => scheduleErrorBadgeRefresh()).catch(() => { /* Server nicht erreichbar: nichts zu tun */ });
+    }
+
+    // Was im Browser schiefgeht, sah bisher niemand - jetzt steht es im Fehlerprotokoll.
+    window.addEventListener('error', (event) => {
+      if (!event || (!event.error && !event.message)) return;
+      const file = event.filename ? String(event.filename).split('/').pop() : '';
+      const where = file ? ` (${file}:${event.lineno}:${event.colno})` : '';
+      reportClientError(`JavaScript-Fehler: ${event.message || event.error}${where}`, (event.error && event.error.stack) || '');
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      const reason = event ? event.reason : null;
+      const message = reason && reason.message ? reason.message : String(reason);
+      reportClientError(`Unbehandelter Fehler: ${message}`, (reason && reason.stack) || '');
+    });
+
+    function scheduleErrorBadgeRefresh() {
+      if (errorBadgeTimer) clearTimeout(errorBadgeTimer);
+      errorBadgeTimer = setTimeout(refreshErrorBadge, 1500);
+    }
+
+    /** Roter Knopf in der Kopfzeile, solange es Einträge gibt, die noch niemand angesehen hat. */
+    async function refreshErrorBadge() {
+      errorBadgeTimer = null;
+      const btn = document.getElementById('headerErrorBtn');
+      if (!btn) return;
+      try {
+        // Bewusst ohne apiGet: Ein Fehler hier soll nicht wieder eine Aktualisierung auslösen.
+        const response = await fetch(`${API_BASE}/api/fehlerprotokoll?kurz=1&seit=${encodeURIComponent(readErrorLogSeen())}`);
+        if (!response.ok) return;
+        const data = await response.json();
+        const unseen = Number(data.unseen) || 0;
+        btn.hidden = unseen === 0;
+        btn.innerHTML = `${WARN_ICON_SVG}${unseen === 1 ? '1 neuer Fehler' : `${unseen} neue Fehler`}`;
+      } catch (e) {
+        // Die Kopfzeile bleibt dann, wie sie ist.
+      }
+    }
+
+    function openErrorLog() {
+      openSettingsOverlay();
+      document.getElementById('errorLogSection')?.scrollIntoView({ block: 'start' });
+    }
+
+    function errorLogRowHtml(entry) {
+      const count = Number(entry.count) || 1;
+      const when = escapeHtml(entry.firstAt)
+        + (count > 1 ? `<div class="error-log-meta">${count}× · zuletzt ${escapeHtml(entry.lastAt)}</div>` : '');
+      const status = Number(entry.status) > 0 ? ` · HTTP ${escapeHtml(String(entry.status))}` : '';
+      const origin = `${escapeHtml(entry.source)}<div class="error-log-meta">${escapeHtml(entry.area)}${status}</div>`;
+      const details = [entry.action ? `Anfrage: ${entry.action}` : '', entry.detail || ''].filter(Boolean).join('\n\n');
+      const detailHtml = details ? `<details><summary>Technische Details</summary><pre>${escapeHtml(details)}</pre></details>` : '';
+      return `<tr><td>${when}</td><td>${origin}</td><td>${escapeHtml(entry.message)}${detailHtml}</td></tr>`;
+    }
+
+    async function loadErrorLog() {
+      const body = document.getElementById('errorLogBody');
+      const info = document.getElementById('errorLogStatus');
+      if (!body) return;
+      if (info) info.textContent = 'Lade Fehlerprotokoll …';
+      try {
+        const data = await apiGet('/api/fehlerprotokoll');
+        const entries = Array.isArray(data.entries) ? data.entries : [];
+        errorLogText = String(data.text || '');
+        body.innerHTML = entries.length
+          ? entries.map(errorLogRowHtml).join('')
+          : '<tr><td colspan="3">Keine Fehler protokolliert.</td></tr>';
+        // Beim Seitenaufbau war die Tabelle leer und wurde ausgeblendet - jetzt hat sie Zeilen.
+        updateEmptyTablesVisibility(document.getElementById('errorLogSection') || document);
+        const sync = Number(data.syncErrorCount) || 0;
+        if (info) {
+          info.textContent = `${entries.length} ${entries.length === 1 ? 'Eintrag' : 'Einträge'}`
+            + (sync > 0 ? `, dazu ${sync} Sync-Fehler im Kopiertext` : '') + '.';
+          info.title = data.file ? `Datei: ${data.file}` : '';
+        }
+        // Angesehen ist angesehen: Der rote Knopf in der Kopfzeile verschwindet.
+        if (data.newest) writeErrorLogSeen(data.newest);
+        refreshErrorBadge();
+      } catch (error) {
+        errorLogText = '';
+        body.innerHTML = `<tr><td colspan="3">Fehlerprotokoll nicht lesbar: ${escapeHtml(String(error.message || error))}</td></tr>`;
+        updateEmptyTablesVisibility(document.getElementById('errorLogSection') || document);
+        if (info) info.textContent = 'Fehlerprotokoll konnte nicht geladen werden.';
+      }
+    }
+
+    async function copyErrorLog() {
+      const info = document.getElementById('errorLogStatus');
+      const box = document.getElementById('errorLogManualBox');
+      await loadErrorLog(); // frisch laden: Der Text soll auch den Fehler von eben enthalten
+      if (!errorLogText) return;
+      const lines = errorLogText.split('\n').length;
+      const result = await copyTextToClipboard(errorLogText);
+      if (result === 'manual') {
+        if (box) {
+          box.style.display = '';
+          box.value = errorLogText;
+          box.focus();
+          box.select();
+        }
+        if (info) {
+          info.textContent = 'Automatisches Kopieren hat nicht geklappt – die Zwischenablage ist nur über https oder localhost erreichbar. '
+            + 'Der Text steht unten, bitte mit Strg+A und Strg+C kopieren – oder „Herunterladen“ nehmen.';
+        }
+        return;
+      }
+      if (box) box.style.display = 'none';
+      if (info) info.textContent = `In die Zwischenablage kopiert (${lines.toLocaleString('de-DE')} Zeilen).`;
+    }
+
+    function downloadErrorLog() {
+      const link = document.createElement('a');
+      link.href = `${API_BASE}/api/fehlerprotokoll/download`;
+      link.download = '';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+
+    async function clearErrorLog() {
+      const info = document.getElementById('errorLogStatus');
+      if (!window.confirm('Fehlerprotokoll leeren? Alle Einträge werden gelöscht. Wer sie noch braucht, kopiert oder lädt sie vorher herunter.')) return;
+      try {
+        await apiPost('/api/fehlerprotokoll/leeren', {});
+        writeErrorLogSeen(new Date().toISOString());
+        await loadErrorLog();
+        if (info) info.textContent = 'Fehlerprotokoll geleert.';
+      } catch (error) {
+        if (info) info.textContent = `Leeren fehlgeschlagen: ${error.message}`;
+      }
     }
 
     async function fetchExecutables() { return apiGet('/api/executables'); }
@@ -823,6 +1078,7 @@
     function openSettingsOverlay() {
       document.getElementById('mainLayout').style.display = 'none';
       document.getElementById('settingsOverlay').style.display = 'block';
+      loadErrorLog();
     }
 
     function closeSettingsOverlay() {
@@ -890,6 +1146,7 @@
               <label title="Die Provisionsübersicht steht als Anlage im Gutschrift-PDF. Wenn deaktiviert, entsteht nur die Provisionsübersicht als eigenes PDF (plus JSON-Ablage)."><input id="includeEInvoiceArtifacts" type="checkbox" checked /> E-Gutschrift (ZUGFeRD + Gutschrift-PDF) mitschicken & ablegen</label>
             </div>
             <p id="pollStatus" class="status">Noch nicht gestartet.</p>
+            <div id="workspaceNotice" class="app-notice" role="alert" hidden></div>
             <div id="exportedFiles" class="files"></div>
 
             <!-- Eigener Scroll-Container: Ohne ihn schob die breite Tabelle die ganze Seite zur
@@ -4933,13 +5190,21 @@
       const straddling = [];
       // Belege mit unvollständiger Anschrift der Beraterin - erzeugt, aber nachzupflegen.
       const incompleteAddress = [];
+      // Nach Rückfrage erstellt: Altbuchungen vor dem Provisionsstart stehen auf dem Beleg.
+      const listedOld = [];
       const counts = { gutschrift: 0, rechnung: 0 };
+      hideNotice('workspaceNotice');
 
       for (let i = 0; i < paymentIds.length; i++) {
         const paymentId = paymentIds[i];
         status.textContent = `Erzeuge Beleg ${i + 1}/${paymentIds.length} für Payment-ID ${paymentId} ...`;
         try {
-          const data = await postInvoiceDetailsExport(paymentId);
+          const data = await postInvoiceDetailsExportConfirmed(paymentId);
+          if (!data) {
+            failed.push({ paymentId, message: 'Nicht erstellt: Die Rückfrage zu den Altbuchungen wurde abgebrochen.' });
+            continue;
+          }
+          if (data.listedBeforeStartHint) listedOld.push({ paymentId, hint: data.listedBeforeStartHint });
           if (data.documentKind && counts[data.documentKind] !== undefined) counts[data.documentKind]++;
           if (Number(data.beforeCutoffCount) > 0 && Number(data.fromCutoffCount) > 0) {
             straddling.push({ paymentId, data });
@@ -4959,7 +5224,7 @@
         }
       }
 
-      renderInvoiceExportResult(filesBox, createdFiles, failed, straddling, incompleteAddress);
+      renderInvoiceExportResult(filesBox, createdFiles, failed, straddling, incompleteAddress, listedOld);
 
       const summary = describeCreatedDocuments(counts, createdFiles.length);
       if (failed.length === 0) {
@@ -4968,6 +5233,34 @@
         status.textContent = `Keine Belege erstellt. Fehler bei ${failed.length} Payment-ID(s).`;
       } else {
         status.textContent = `${summary}, ${failed.length} Fehler.`;
+      }
+      if (failed.length > 0) {
+        showNotice('workspaceNotice', 'error',
+          `<strong>Belegerstellung:</strong> ${failed.length} ${failed.length === 1 ? 'Zahllauf' : 'Zahlläufe'} mit Fehler – die Gründe stehen in der Liste unter dieser Meldung.`,
+          { withLogLink: true });
+      }
+    }
+
+    /** Name der Beraterin zu einem Zahllauf aus der Tabelle - für Meldungen und Rückfragen. */
+    function advisorNameForPayment(paymentId) {
+      const row = tableState.rows.find(r => String(r.paymentId) === String(paymentId));
+      return row && row.affiliateName ? String(row.affiliateName) : '';
+    }
+
+    /**
+     * Erstellt den Beleg. Meldet der Server Altbuchungen vor dem Provisionsstart, die sich nicht
+     * einzeln aufheben, fragt das Programm einmal nach und schickt die Bestätigung mit.
+     * Rückgabe null: Die Rückfrage wurde abgebrochen.
+     */
+    async function postInvoiceDetailsExportConfirmed(paymentId) {
+      try {
+        return await postInvoiceDetailsExport(paymentId);
+      } catch (error) {
+        if (error.code !== 'vor-provisionsstart-bestaetigen') throw error;
+        const name = advisorNameForPayment(paymentId);
+        const question = (error.details && error.details.question) || error.message;
+        if (!window.confirm(`${name ? name + '\n\n' : ''}${question}`)) return null;
+        return postInvoiceDetailsExport(paymentId, { confirmUnbalancedBeforeStart: true });
       }
     }
 
@@ -4979,7 +5272,7 @@
       return `${parts.join(' und ')} erstellt`;
     }
 
-    function renderInvoiceExportResult(filesBox, createdFiles, failed, straddling, incompleteAddress) {
+    function renderInvoiceExportResult(filesBox, createdFiles, failed, straddling, incompleteAddress, listedOld) {
       if (!filesBox) return;
       const okHtml = createdFiles.length > 0
         ? `<strong>Exportierte Dateien (PDF, JSON, ZUGFeRD):</strong><br>${createdFiles.map(f => `<code>${escapeHtml(String(f))}</code>`).join('<br>')}`
@@ -5008,17 +5301,44 @@
                 + ` · es fehlt: ${escapeHtml(String(d.addressMissing || ''))}`;
             }).join('<br>')
         : '';
-      filesBox.innerHTML = `${okHtml}${failHtml}${straddleHtml}${addressHtml}`;
+      const oldList = Array.isArray(listedOld) ? listedOld : [];
+      const oldHtml = oldList.length > 0
+        ? `<br><br><strong>Hinweis: ${oldList.length} Beleg(e) führen nach Rückfrage Altbuchungen vor dem Provisionsstart auf</strong><br>`
+          + oldList.map(m => `<code>${escapeHtml(String(m.paymentId))}</code> · ${escapeHtml(String(m.hint || ''))}`).join('<br>')
+        : '';
+      filesBox.innerHTML = `${okHtml}${failHtml}${straddleHtml}${addressHtml}${oldHtml}`;
     }
 
 
     // Die Dokumentart leitet der Server allein aus dem Auszahlungsdatum ab; es gibt bewusst
     // keinen manuellen Schalter. Die Stellschraube ist der Stichtag in den Einstellungen.
-    async function postInvoiceDetailsExport(paymentId) {
+    async function postInvoiceDetailsExport(paymentId, extra = {}) {
       return apiPost('/api/provisionen-goaffpro/invoice-details-pdf', {
         paymentId,
-        includeEInvoiceArtifacts: !!document.getElementById('includeEInvoiceArtifacts')?.checked
+        includeEInvoiceArtifacts: !!document.getElementById('includeEInvoiceArtifacts')?.checked,
+        ...extra
       });
+    }
+
+    function paymentLabel(paymentId) {
+      const name = advisorNameForPayment(paymentId);
+      return `Zahllauf ${paymentId}${name ? ` (${name})` : ''}`;
+    }
+
+    // Statt das Vorschaufenster kommentarlos zu schließen: Dort steht jetzt, warum es keine Vorschau gibt.
+    function showErrorInWindow(win, message) {
+      try {
+        win.document.open();
+        win.document.write('<!doctype html><html lang="de"><head><meta charset="utf-8"><title>Vorschau nicht möglich</title></head>'
+          + '<body style="font-family:system-ui,sans-serif;max-width:720px;margin:40px auto;padding:0 16px;line-height:1.5;color:#1d2327">'
+          + '<h1 style="font-size:20px;color:#9a3434">Vorschau nicht möglich</h1>'
+          + `<p>${escapeHtml(message)}</p>`
+          + '<p style="color:#586670">Die Meldung steht auch im Assistenten über der Tabelle, technische Details unter Einstellungen → Fehlerprotokoll. Dieses Fenster kann geschlossen werden.</p>'
+          + '</body></html>');
+        win.document.close();
+      } catch (e) {
+        try { win.close(); } catch (ignored) { /* schon zu */ }
+      }
     }
 
     // Vorschau zur Sichtprüfung: Der Server rendert den Beleg als ENTWURF, ohne Nummer, Datei,
@@ -5030,18 +5350,31 @@
       if (win) win.document.write('<p style="font-family:sans-serif;padding:16px">Vorschau wird erstellt …</p>');
       const original = btn ? btn.textContent : '';
       if (btn) { btn.disabled = true; btn.textContent = 'Läuft...'; }
+      const label = paymentLabel(paymentId);
       try {
-        const response = await fetch(`${API_BASE}/api/provisionen-goaffpro/invoice-preview-pdf?paymentId=${encodeURIComponent(paymentId)}`);
+        const response = await apiFetch(`/api/provisionen-goaffpro/invoice-preview-pdf?paymentId=${encodeURIComponent(paymentId)}`);
         if (!response.ok) {
           const json = await response.json().catch(() => ({}));
           throw new Error(json.error || `HTTP ${response.status}`);
         }
+        // Altbuchungen ohne Ausgleich: Die Vorschau zeigt sie, beim Erstellen kommt die Rückfrage.
+        let hint = response.headers.get('X-Beleg-Hinweis') || '';
+        try { hint = decodeURIComponent(hint); } catch (e) { /* dann roh */ }
         const url = URL.createObjectURL(await response.blob());
         if (win) win.location.href = url; else window.open(url, '_blank');
-        if (status) status.textContent = `Vorschau für Zahllauf ${paymentId} geöffnet (ENTWURF – keine Nummer verbraucht, nichts versendet).`;
+        if (status) status.textContent = `Vorschau für ${label} geöffnet (ENTWURF – keine Nummer verbraucht, nichts versendet).`;
+        if (hint) {
+          showNotice('workspaceNotice', 'warn',
+            `<strong>Vorschau ${escapeHtml(label)}:</strong> ${escapeHtml(hint)}. Vor dem Erstellen der Gutschrift kommt dazu eine Rückfrage.`);
+        } else {
+          hideNotice('workspaceNotice');
+        }
       } catch (error) {
-        if (win) win.close();
-        if (status) status.textContent = `Vorschau fehlgeschlagen: ${error.message}`;
+        const message = `Vorschau für ${label} nicht möglich: ${error.message}`;
+        if (win) showErrorInWindow(win, message);
+        if (status) status.textContent = 'Vorschau fehlgeschlagen – der Grund steht im roten Hinweis.';
+        showNotice('workspaceNotice', 'error', escapeHtml(message), { withLogLink: true });
+        scheduleErrorBadgeRefresh();
       } finally {
         if (btn) { btn.disabled = false; btn.textContent = original || 'Vorschau'; }
       }
@@ -5057,11 +5390,18 @@
             return;
           }
         }
-        const data = await postInvoiceDetailsExport(paymentId);
+        const data = await postInvoiceDetailsExportConfirmed(paymentId);
+        if (!data) {
+          status.textContent = `Nicht erstellt: Rückfrage für ${paymentLabel(paymentId)} abgebrochen. Es wurde keine Belegnummer vergeben.`;
+          return;
+        }
+        hideNotice('workspaceNotice');
         await loadMailLog();
         renderTable();
         const label = `${data.documentKindLabel || 'Beleg'} ${data.documentNumber || ''}`.trim();
         const hints = [];
+        // Nach Rückfrage: Altbuchungen vor dem Provisionsstart stehen auf dem Beleg.
+        if (data.listedBeforeStartHint) hints.push(data.listedBeforeStartHint);
         // Erneut erzeugt: neue Version derselben Nummer, die den vorherigen Beleg ersetzt.
         if (data.replacesDocumentNumber) hints.push(`ersetzt ${data.replacesDocumentNumber}`);
         if (data.accountingMailMessage) hints.push(data.accountingMailMessage);
@@ -5084,7 +5424,9 @@
           ? `${label} erstellt und geöffnet: ${data.file}${hintText}`
           : `${label} erstellt: ${data.file}${data.jsonFile ? ' | ' + data.jsonFile : ''}${data.zugferdFile ? ' | ' + data.zugferdFile : ''}${data.eInvoiceViewPdfFile && data.eInvoiceViewPdfFile !== data.file ? ' | ' + data.eInvoiceViewPdfFile : ''}${data.openMessage ? ' (' + data.openMessage + ')' : ''}${hintText}`;
       } catch (error) {
-        status.textContent = `Fehler bei der Belegerstellung: ${error.message}`;
+        status.textContent = 'Belegerstellung fehlgeschlagen – der Grund steht im roten Hinweis.';
+        showNotice('workspaceNotice', 'error',
+          `<strong>${escapeHtml(paymentLabel(paymentId))}:</strong> ${escapeHtml(error.message)}`, { withLogLink: true });
       }
     }
 
@@ -5490,8 +5832,16 @@
         updateCommissionSelect(data.lastImportedComissionHistory, data.lastImportedComission, data.commissionHistoryLabels);
         renderCommissionHistoryEditor(data.lastImportedComissionHistory, data.commissionHistoryLabels);
         status.textContent = data.message || 'Polling erfolgreich.';
+        // Klappt es wieder, verschwindet die eigene Fehlermeldung - die einer Vorschau bleibt.
+        hideNotice('workspaceNotice', 'poll');
       } catch (error) {
         status.textContent = `Fehler beim Polling: ${error.message}`;
+        // Eine Meldung zu einer Vorschau oder Gutschrift hat Vorrang und wird nicht überschrieben.
+        const notice = document.getElementById('workspaceNotice');
+        if (!notice || notice.hidden || notice.dataset.source === 'poll') {
+          showNotice('workspaceNotice', 'error', `<strong>Polling:</strong> ${escapeHtml(error.message)}`,
+            { withLogLink: true, source: 'poll' });
+        }
       }
     }
 
@@ -5634,6 +5984,14 @@
         document.getElementById('headerSettingsBtn')?.addEventListener('click', openSettingsOverlay);
         document.getElementById('settingsOverlayCloseBtn')?.addEventListener('click', closeSettingsOverlay);
         document.getElementById('settingsOverlaySaveBtn')?.addEventListener('click', saveSettings);
+        document.getElementById('headerErrorBtn')?.addEventListener('click', openErrorLog);
+        document.getElementById('errorLogRefreshBtn')?.addEventListener('click', loadErrorLog);
+        document.getElementById('errorLogCopyBtn')?.addEventListener('click', copyErrorLog);
+        document.getElementById('errorLogDownloadBtn')?.addEventListener('click', downloadErrorLog);
+        document.getElementById('errorLogClearBtn')?.addEventListener('click', clearErrorLog);
+        // Auch Fehler aus Zeitplänen und abgebrochene Sync-Läufe sollen auffallen, ohne dass jemand nachsieht.
+        refreshErrorBadge();
+        window.setInterval(refreshErrorBadge, 5 * 60 * 1000);
 
         const pollingBtn = document.getElementById('togglePollingBtn');
         const saveBtn = document.getElementById('saveSettingsBtn');

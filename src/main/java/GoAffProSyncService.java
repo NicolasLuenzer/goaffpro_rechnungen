@@ -104,6 +104,25 @@ public class GoAffProSyncService {
         if (t != null) t.printStackTrace();
         appendLogQuietly(config, "error", source, 0L, null,
                 context + " abgebrochen: " + describeThrowable(t), stackTraceOf(t));
+        FailureListener listener = failureListener;
+        if (listener != null) {
+            try {
+                listener.failed(context, context + " abgebrochen: " + describeThrowable(t), t);
+            } catch (Exception ignored) {
+                // Das Fehlerprotokoll der Anwendung darf den Sync nie stören.
+            }
+        }
+    }
+
+    /** Empfänger für abgebrochene Läufe - das Fehlerprotokoll der Anwendung, gesetzt von WebUiServer. */
+    interface FailureListener {
+        void failed(String context, String message, Throwable t);
+    }
+
+    private static volatile FailureListener failureListener;
+
+    static void setFailureListener(FailureListener listener) {
+        failureListener = listener;
     }
 
     private static Map<String, Object> failedRunStatus(String mode, Throwable t) {

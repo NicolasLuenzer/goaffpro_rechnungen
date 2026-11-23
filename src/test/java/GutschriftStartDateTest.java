@@ -12,7 +12,8 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Gutschriften führen keine stornierten Provisionen aus der Zeit vor dem Start der
  * S+R-Provisionen (01.10.2026). Ausgeblendet wird je Bestellung bzw. Belohnung und nur, was
- * sich zu 0 aufhebt - sonst wird die Belegerstellung abgebrochen.
+ * sich zu 0 aufhebt. Bleibt ein Restsaldo, fragt die Belegerstellung nach; nach Bestätigung
+ * stehen diese Altbuchungen auf dem Beleg.
  */
 class GutschriftStartDateTest {
     private static final ObjectMapper MAPPER = new ObjectMapper();
@@ -23,6 +24,28 @@ class GutschriftStartDateTest {
         Method m = WebUiServer.class.getDeclaredMethod("splitBeforeGutschriftStart", JsonNode.class, Properties.class);
         m.setAccessible(true);
         return m.invoke(null, payment, config);
+    }
+
+    private static Object split(JsonNode payment, Properties config, boolean listUnbalanced) throws Exception {
+        Method m = WebUiServer.class.getDeclaredMethod("splitBeforeGutschriftStart", JsonNode.class, Properties.class,
+                boolean.class);
+        m.setAccessible(true);
+        return m.invoke(null, payment, config, listUnbalanced);
+    }
+
+    private static String question(Object split) throws Exception {
+        Class<?> splitClass = Class.forName("WebUiServer$StartDateSplit");
+        Method m = WebUiServer.class.getDeclaredMethod("gutschriftStartQuestion", splitClass, String.class, Properties.class);
+        m.setAccessible(true);
+        return (String) m.invoke(null, split, "3597878", new Properties());
+    }
+
+    private static JsonNode responseBody(Object split, String reason) throws Exception {
+        Class<?> splitClass = Class.forName("WebUiServer$StartDateSplit");
+        Method m = WebUiServer.class.getDeclaredMethod("startBlockResponseBody", splitClass, String.class, String.class,
+                Properties.class);
+        m.setAccessible(true);
+        return MAPPER.readTree((String) m.invoke(null, split, "3597878", reason, new Properties()));
     }
 
     private static Object call(Object target, String method) throws Exception {
@@ -128,14 +151,15 @@ class GutschriftStartDateTest {
     }
 
     @Test
-    void nichtStornierteAltprovisionBlockiert() throws Exception {
+    void nichtStornierteAltprovisionFragtNach() throws Exception {
         JsonNode payment = payment("35.00",
                 tx("t1", "orders", 1, "insert", "10.00", "2026-09-10T09:00:00Z", "#1291"),
                 tx("t2", "orders", 2, "insert", "25.00", "2026-10-05T09:00:00Z", "#2002"));
         Object s = split(payment, new Properties());
 
         assertFalse(balanced(s));
-        assertEquals(0, hiddenCount(s), "Bei Restsaldo wird nichts ausgeblendet");
+        assertTrue((Boolean) call(s, "needsConfirmation"));
+        assertEquals(0, hiddenCount(s), "Bei Restsaldo wird ohne Bestätigung nichts ausgeblendet");
         assertEquals(List.of("t1", "t2"), visibleTxIds(s), "Der Zahllauf bleibt unverändert");
         assertEquals(List.of("Bestellung #1291: 10,00 €"), unbalanced(s));
 
@@ -144,10 +168,104 @@ class GutschriftStartDateTest {
         assertTrue(reason.contains("#1291"), "Die betroffene Bestellung muss genannt werden");
         assertTrue(reason.contains("01.10.2026"));
         assertTrue(reason.contains("keine Belegnummer"), "Es darf klar sein, dass keine Nummer verbraucht wurde");
+        assertTrue(reason.contains("nur nach Bestätigung"), reason);
+    }
+
+    // ── Zahllauf 3597878: Altbuchungen, die sich nur zusammen (fast) aufheben ──
+
+    /**
+     * Zwei Provisionskorrekturen vom Februar und eine manuelle Anpassung vom 30.09. - jede Gruppe
+     * für sich offen, zusammen -0,01 €. Dazu ein sauber storniertes Paar und eine Oktober-Provision.
+     */
+    private static JsonNode kempfle() throws Exception {
+        return payment("24.99",
+                tx("t1", "orders", 1, "insert", "10.00", "2026-09-10T09:00:00Z", "#1001"),
+                tx("t2", "orders", 1, "delete", "-10.00", "2026-09-20T09:00:00Z", "#1001"),
+                tx("t3", "orders", 5, "update", "-3.302200", "2026-02-25T14:02:46Z", "#10321"),
+                tx("t4", "orders", 6, "update", "-8.137800", "2026-02-25T14:02:58Z", "#10241"),
+                "{\"tx_id\":\"t5\",\"entity_type\":\"rewards\",\"entity_id\":10855187,\"event_type\":\"insert\","
+                        + "\"amount\":\"11.430000\",\"created_at\":\"2026-09-30T21:19:58Z\","
+                        + "\"metadata\":{\"reward_type\":\"wallet_adjustment\",\"status\":\"approved\"}}",
+                tx("t6", "orders", 2, "insert", "25.00", "2026-10-05T09:00:00Z", "#2002"));
     }
 
     @Test
-    void teilstornoBlockiert() throws Exception {
+    void altbuchungenOhneAusgleichFragenNachMitSummeUndAnpassung() throws Exception {
+        Object s = split(kempfle(), new Properties());
+
+        assertTrue((Boolean) call(s, "needsConfirmation"));
+        assertEquals(List.of("Bestellung #10321: -3,30 €", "Bestellung #10241: -8,14 €",
+                "Belohnung 10855187 (manuelle Anpassung): 11,43 €"), unbalanced(s));
+        assertEquals(6, visibleTxIds(s).size(), "Ohne Bestätigung bleibt der Zahllauf unverändert");
+
+        String reason = blockReason(s, new Properties());
+        assertTrue(reason.contains("zusammen -0,01 €"), reason);
+        assertTrue(reason.contains("Bestellung #10321: -3,30 €"), reason);
+
+        String q = question(s);
+        assertTrue(q.contains("\n• Bestellung #10321: -3,30 €\n• Bestellung #10241: -8,14 €\n"
+                + "• Belohnung 10855187 (manuelle Anpassung): 11,43 €\nZusammen: -0,01 €"), q);
+        assertTrue(q.contains("Trotzdem erstellen?"), q);
+
+        JsonNode body = responseBody(s, reason);
+        assertEquals("vor-provisionsstart-bestaetigen", body.path("code").asText());
+        assertTrue(body.path("confirmable").asBoolean());
+        assertEquals(reason, body.path("error").asText());
+        assertEquals(q, body.path("question").asText());
+        assertEquals(3, body.path("unbalanced").size());
+        assertEquals(3, body.path("unbalancedCount").asInt());
+        assertEquals(-0.01, body.path("unbalancedAmount").asDouble(), 1e-9);
+    }
+
+    @Test
+    void nachBestaetigungStehenAltbuchungenAufDemBeleg() throws Exception {
+        JsonNode payment = kempfle();
+        Object s = split(payment, new Properties(), true);
+
+        assertFalse((Boolean) call(s, "needsConfirmation"));
+        assertTrue((Boolean) call(s, "listed"));
+        assertEquals(2, hiddenCount(s), "Nur das ausgeglichene Paar verschwindet");
+        assertEquals(3, (Integer) call(s, "listedCount"));
+        assertEquals(-0.01, (Double) call(s, "listedAmount"), 1e-9);
+        assertEquals(List.of("t3", "t4", "t5", "t6"), visibleTxIds(s), "Reihenfolge bleibt, Altbuchungen mit Datum");
+        assertNull(blockReason(s, new Properties()));
+
+        double sum = 0;
+        for (JsonNode tx : visible(s).path("transactions")) sum += tx.path("amount").asDouble();
+        assertEquals(24.99, sum, 0.005, "Die Summe der Buchungen passt weiter zur Auszahlung");
+        assertEquals("25.02.2026 bis 05.10.2026", periodLabel(visible(s)), "Der Zeitraum beginnt mit der ältesten Altbuchung");
+        assertEquals(6, payment.path("transactions").size(), "Der ursprüngliche Zahllauf wird nicht verändert");
+    }
+
+    @Test
+    void bestaetigungAendertAusgeglicheneZahllaeufeNicht() throws Exception {
+        JsonNode payment = payment("25.00",
+                tx("t1", "orders", 1, "insert", "10.00", "2026-09-10T09:00:00Z", "#1001"),
+                tx("t2", "orders", 1, "delete", "-10.00", "2026-09-20T09:00:00Z", "#1001"),
+                tx("t3", "orders", 2, "insert", "25.00", "2026-10-05T09:00:00Z", "#2002"));
+        Object s = split(payment, new Properties(), true);
+
+        assertTrue(balanced(s));
+        assertFalse((Boolean) call(s, "listed"), "Ohne Restsaldo gibt es nichts zu bestätigen");
+        assertEquals(0, (Integer) call(s, "listedCount"));
+        assertEquals(2, hiddenCount(s));
+        assertEquals(List.of("t3"), visibleTxIds(s));
+    }
+
+    @Test
+    void ausschliesslichStornierteAltbuchungenSindKeineRueckfrage() throws Exception {
+        JsonNode payment = payment("0.00",
+                tx("t1", "orders", 1, "insert", "10.00", "2026-09-10T09:00:00Z", "#1001"),
+                tx("t2", "orders", 1, "delete", "-10.00", "2026-09-20T09:00:00Z", "#1001"));
+        Object s = split(payment, new Properties());
+        JsonNode body = responseBody(s, blockReason(s, new Properties()));
+
+        assertEquals("vor-provisionsstart", body.path("code").asText());
+        assertFalse(body.path("confirmable").asBoolean(), "Eine Gutschrift ohne jede Buchung lässt sich nicht bestätigen");
+    }
+
+    @Test
+    void teilstornoFragtNach() throws Exception {
         JsonNode payment = payment("32.00",
                 tx("t1", "orders", 1, "insert", "10.00", "2026-09-25T09:00:00Z", "#1001"),
                 tx("t2", "orders", 1, "update", "-3.00", "2026-10-03T09:00:00Z", "#1001"),

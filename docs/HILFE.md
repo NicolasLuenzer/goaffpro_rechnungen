@@ -23,6 +23,12 @@ Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierung
   - Zeigt den Beleg zur Sichtprüfung im Browser: gleiche Daten, gleiche Vorlage, gleiche Provisionsübersicht wie beim echten Erzeugen.
   - Statt einer Nummer steht „ENTWURF“ im Beleg, dazu ein Wasserzeichen „ENTWURF – kein gültiger Beleg“ auf jeder Seite.
   - Verbraucht keine Belegnummer, legt keine Datei ab, verschickt nichts und schreibt nichts ins Versandprotokoll. Eine E-Rechnungs-XML gibt es in der Vorschau nicht.
+  - Gibt es keine Vorschau, steht der Grund im Vorschaufenster und als rote Meldung über der Tabelle. Die Meldung bleibt stehen, bis man sie schließt; die graue Statuszeile darüber überschreibt das Polling jede Minute.
+  - Enthält der Zahllauf Altbuchungen vor dem Provisionsstart, die sich nicht aufheben (siehe 4a), zeigt die Vorschau den Beleg mit diesen Buchungen, und eine gelbe Meldung weist darauf hin.
+- **Meldungen über der Tabelle**
+  - Rot: Ein Beleg, eine Vorschau oder das Polling ist fehlgeschlagen. Der Knopf „Fehlerprotokoll“ führt zu den technischen Details.
+  - Gelb: Hinweis, z. B. auf Altbuchungen in der Vorschau.
+  - Klappt das Polling wieder, verschwindet seine Fehlermeldung von selbst.
 - **Filterfeld**
   - Filtert die Tabelle nach Name, Land, Steuernummer, Belegdatum usw.
 
@@ -74,6 +80,8 @@ Die Navigation ist bewusst flach aufgebaut: **Gutschriftservice**, **Validierung
   - Zahlläufe können entfernt werden.
 - **Speichern-Feedback**
   - Meldet, ob tatsächlich Änderungen erkannt wurden oder nicht.
+- **Fehlerprotokoll** (Kopfzeile → Einstellungen, ganz unten)
+  - Sammelt Fehler aus allen Bereichen zum Kopieren oder Herunterladen, siehe Abschnitt 16.
 
 ## 4) Exportlogik
 
@@ -123,8 +131,27 @@ Datum, wird als sicherer Rückfall eine Gutschrift erstellt.
 
 **Provisionen vor dem 01.10.2026** erscheinen nicht auf Gutschriften: Vom 01.01. bis 30.09.2026
 erhielten die Beraterinnen Codes statt Provision; die in GoAffPro trotzdem erfassten und wieder
-stornierten Buchungen werden ausgeblendet. Gleichen sie sich nicht vollständig aus, wird kein Beleg
-erzeugt und die Oberfläche nennt den Grund.
+stornierten Buchungen werden ausgeblendet. Ausgeblendet wird je Bestellung bzw. Belohnung und nur,
+was sich zu 0 aufhebt – der Betrag der Gutschrift passt dadurch weiter zur Auszahlung.
+
+**Altbuchungen, die sich nicht aufheben,** gibt es trotzdem. Beispiel Zahllauf 3597878: zwei
+Provisionskorrekturen vom 25.02.2026 (−3,30 € und −8,14 €) und eine manuelle Anpassung in GoAffPro
+vom 30.09.2026 (+11,43 €), zusammen −0,01 €. Für solche Fälle gilt:
+
+- Beim Erstellen der Gutschrift kommt eine **Rückfrage**. Sie nennt jede betroffene Bestellung bzw.
+  Belohnung mit ihrem Restsaldo und die Summe.
+- **Abbrechen:** Es entsteht kein Beleg, und es wird keine Belegnummer vergeben.
+- **Bestätigen:** Die Buchungen stehen mit Datum in den Einzeltransaktionen der Provisionsübersicht.
+  Die Kennzahlen nennen sie als „Aufgeführt trotz Datum vor 01.10.2026“ mit ihrem Saldo. Der
+  Zeitraum der Gutschrift beginnt dann mit der ältesten von ihnen. Die sauber stornierten Paare
+  bleiben ausgeblendet.
+- Beim Sammelexport kommt die Rückfrage für jeden betroffenen Zahllauf einzeln. Wer abbricht,
+  findet den Zahllauf in der Fehlerliste.
+- Die **Vorschau** zeigt den Beleg so, wie er nach der Bestätigung aussähe, mit gelbem Hinweis.
+- Manuelle Anpassungen (GoAffPro-Belohnungstyp `wallet_adjustment`) stehen in der Übersicht als
+  „Team (Reward) · manuelle Anpassung“.
+- Besteht ein Zahllauf ausschließlich aus stornierten Altbuchungen, entsteht weiterhin keine
+  Gutschrift – es gäbe nichts gutzuschreiben.
 
 Einstellungen dafür: Gruppe „Altfälle bis 31.12.2025“ (Stichtag, Anschrift, USt-IdNr. und
 Steuernummer der Alt-Gesellschaft). Die Rechnungsvorlagen sind im E-Mail-Designer als
@@ -172,7 +199,12 @@ keine neue fortlaufende Nummer, sondern eine **Version** der Stammnummer:
 - `POST /api/provisionen-goaffpro/poll` – neue Zahlungsdaten abrufen
 - `GET/POST /api/settings` – Einstellungen lesen/speichern
 - `POST /api/provisionen-goaffpro/export-pdf` – Tabellen-PDF-Export
-- `POST /api/provisionen-goaffpro/invoice-details-pdf` – Rechnungsdetails-PDF + JSON
+- `POST /api/provisionen-goaffpro/invoice-details-pdf` – Gutschrift bzw. Rechnung erzeugen (PDF, JSON, ZUGFeRD); `confirmUnbalancedBeforeStart: true` bestätigt die Rückfrage zu Altbuchungen (Antwort sonst HTTP 409 mit `confirmable`)
+- `GET /api/provisionen-goaffpro/invoice-preview-pdf?paymentId=…` – Vorschau als ENTWURF; Kopfzeile `X-Beleg-Hinweis` bei aufgeführten Altbuchungen
+- `GET /api/fehlerprotokoll` – Fehlerprotokoll mit Kopiertext (`?kurz=1&seit=…`: nur Anzahl neuer Einträge für die Kopfzeile)
+- `POST /api/fehlerprotokoll` – Fehler aus dem Browser melden
+- `POST /api/fehlerprotokoll/leeren` – Fehlerprotokoll leeren
+- `GET /api/fehlerprotokoll/download` – Fehlerprotokoll als Textdatei
 - `GET /api/version` – aktuelle Version
 - `GET /api/version/history` – letzte Versionen
 - `POST /api/analytics/fetch` – Auswertungsdaten
@@ -189,7 +221,11 @@ keine neue fortlaufende Nummer, sondern eine **Version** der Stammnummer:
 ## 7) Frontend-Funktionen (JavaScript, gruppiert)
 
 ### API/Initialisierung
-- `apiGet`, `apiPost`, `fetchExecutables`, `init`
+- `apiGet`, `apiPost`, `apiFetch`, `readApiJson`, `fetchExecutables`, `init`
+
+### Meldungen & Fehlerprotokoll
+- `showNotice`, `hideNotice`, `reportClientError`, `refreshErrorBadge`, `scheduleErrorBadgeRefresh`
+- `openErrorLog`, `loadErrorLog`, `copyErrorLog`, `downloadErrorLog`, `clearErrorLog`
 
 ### UI-Struktur & Navigation
 - `createTabAndPanel`, `createAnalyticsTabAndPanel`, `activateTab`, `renderSideNav`, `wireTabSwitching`, `wireMainSectionTabs`
@@ -205,6 +241,7 @@ keine neue fortlaufende Nummer, sondern eine **Version** der Stammnummer:
 
 ### Exporte & Details
 - `exportSelectedInvoiceDetailsPdfs`, `loadInvoiceDetailsPdf`, `pickFolder`, `wireFolderPickerFallback`
+- `openInvoicePreview`, `postInvoiceDetailsExport`, `postInvoiceDetailsExportConfirmed` (Rückfrage zu Altbuchungen)
 
 ### Analytics
 - `drawBarChart`, `renderAnalytics`, `wireAnalyticsDateRange`, `fetchAnalyticsData`
@@ -231,6 +268,7 @@ keine neue fortlaufende Nummer, sondern eine **Version** der Stammnummer:
   - API-Aufrufe gegen GoAffPro
   - E-Mail-Versand
   - Datensicherung und Import (`BackupService`: Archiv packen, Manifest lesen, Pfade umschreiben, Bestand ersetzen)
+  - Fehlerprotokoll (`ErrorLog`: Datei im Datenverzeichnis, Zusammenfassen von Wiederholungen, Schwärzen von Zugangsdaten)
 
 ---
 
@@ -453,3 +491,33 @@ spielt dafür keine Rolle.
 
 **Kundendaten:** Die Verkäufe zeigen Name und E-Mail der Kundin im Klartext – wie GoAffPro
 selbst. Telefon und Adresse werden nicht übernommen.
+
+## 16) Fehlerprotokoll
+
+Fehler standen bisher nur in der Konsole des Containers oder kurz in einer Statuszeile. Jetzt
+sammelt sie das **Fehlerprotokoll**: Kopfzeile → **Einstellungen** → ganz unten.
+
+- **Was hineinkommt:**
+  - jede Fehlerantwort des Servers, z. B. eine abgelehnte Vorschau oder ein Abbruch beim Erzeugen
+    einer Gutschrift, mit Bereich, Anfrage und – bei Programmfehlern – dem Stacktrace,
+  - Fehler im Browser (JavaScript-Fehler, unlesbare Server-Antworten),
+  - abgebrochene Zeitpläne (stündlicher/nächtlicher Sync, Wochenmail an Führungskräfte),
+    abgebrochene Sync-Läufe, Datensicherung und Import,
+  - eine fehlgeschlagene Mail an die Buchhaltung.
+- Eine **Rückfrage**, etwa zu Altbuchungen, ist kein Fehler und steht nicht im Protokoll.
+- **Gleiche Fehler** innerhalb von 10 Minuten werden zusammengefasst („3× bis …“).
+- **Kopfzeile:** Gibt es Einträge, die noch niemand angesehen hat, erscheint dort ein roter Knopf
+  „1 neuer Fehler“. Ein Klick öffnet das Protokoll; danach verschwindet der Knopf.
+- **Kopieren** legt den Text in die Zwischenablage: Version, System und alle Einträge mit
+  technischen Details, dazu im Anhang die jüngsten Sync-Fehler (höchstens 10, höchstens 7 Tage
+  alt). Diesen Text bei einem Problem mit einer kurzen Beschreibung weitergeben. Ohne https
+  klappt das automatische Kopieren nicht immer; dann steht der Text in einem Feld zum Markieren,
+  oder man nimmt **Herunterladen** (Textdatei).
+- **Leeren** löscht alle Einträge (mit Rückfrage). Ältere Sync-Fehler erscheinen danach auch nicht
+  mehr im Anhang.
+- **Speicherort:** `fehlerprotokoll.json` im Datenverzeichnis (`GOAFFPRO_SYNC_DATA_PATH`, im
+  Container `/app/data`). Höchstens 500 Einträge. Die Datei gehört bewusst nicht zur
+  Datensicherung, sie beschreibt nur die eigene Umgebung.
+- **Datenschutz:** API-Schlüssel und SMTP-Passwort werden vor dem Speichern geschwärzt, ebenso
+  Parameter wie `apiKey` oder `token` in Anfragen. Namen, E-Mail-Adressen und Beträge aus
+  Fehlermeldungen bleiben stehen – vor dem Weitergeben bitte bedenken.

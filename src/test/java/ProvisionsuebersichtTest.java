@@ -479,6 +479,50 @@ class ProvisionsuebersichtTest {
         assertTrue(text.contains("Ersetzt Gutschrift GS-1"), text);
     }
 
+    /**
+     * Nach Rückfrage bestätigt (Zahllauf 3597878): Altbuchungen ohne Ausgleich stehen mit Datum in
+     * den Einzeltransaktionen, die Kennzahlen sagen, wie viele es sind und welchen Saldo sie haben.
+     */
+    @Test
+    void aufgefuehrteAltbuchungenUndManuelleAnpassung() throws Exception {
+        ObjectNode payment = payment();
+        ArrayNode txs = payment.putArray("transactions");
+        txs.add(update("approved", "approved", "-3.302200", "2026-02-25T14:02:46Z", "#10321",
+                "10.076", "6.7738", "43.54", "43.54", "45.8", "30.79"));
+        ObjectNode adjustment = MAPPER.createObjectNode();
+        adjustment.put("entity_type", "rewards");
+        adjustment.put("entity_id", 10855187);
+        adjustment.put("amount", "11.43");
+        adjustment.put("created_at", "2026-09-30T21:19:58Z");
+        adjustment.putObject("metadata").put("reward_type", "wallet_adjustment").put("status", "approved");
+        txs.add(adjustment);
+        txs.add(tx("insert", 25.0, "2026-10-05T09:00:00Z", "#2002", "40.00", "30.00"));
+        payment.put("amount", "33.13");
+
+        Method m = WebUiServer.class.getDeclaredMethod("buildCommissionOverview", JsonNode.class, JsonNode.class,
+                Properties.class, String.class, String.class, kindClass(), int.class, int.class, double.class);
+        ObjectNode response = MAPPER.createObjectNode();
+        response.putArray("payments").add(payment);
+        Object overview = invoke(m, response, affiliate(""), config(), "GS-1", "", kind("GUTSCHRIFT"), 70, 2, 8.1278);
+        Document doc = Jsoup.parse(bodyHtml(overview));
+
+        String text = doc.text();
+        assertTrue(text.contains("Nicht aufgeführt (vor 01.10.2026) 70 stornierte Buchungen, Saldo 0,00 €"), text);
+        assertTrue(text.contains("Aufgeführt trotz Datum vor 01.10.2026 2 Buchungen ohne Ausgleich, Saldo 8,13 €"), text);
+        assertTrue(text.contains("Rundungsdifferenz (Betrag – Summe Provision) 0,00 €"),
+                "Die aufgeführten Altbuchungen gehören zur Summe: " + text);
+
+        List<List<String>> rows = txRows(doc);
+        assertEquals(List.of("25.02.2026 15:02", "Direkt (Order) · Korrektur", "#10321"), rows.get(0).subList(0, 3));
+        assertEquals(List.of("30.09.2026 23:19", "Team (Reward) · manuelle Anpassung", ""), rows.get(1).subList(0, 3));
+    }
+
+    @Test
+    void ohneAltbuchungenKeinZusatzhinweis() throws Exception {
+        String text = overviewDoc(payment()).text();
+        assertFalse(text.contains("Aufgeführt trotz Datum"), text);
+    }
+
     @Test
     void ustIdUndSonderzeichenWerdenSauberDargestellt() throws Exception {
         ObjectNode affiliate = affiliate("DE 123 456 789");
